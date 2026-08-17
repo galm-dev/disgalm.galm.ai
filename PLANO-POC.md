@@ -121,6 +121,33 @@ Servidor WS em node: sala por código, relay de SDP/ICE, *perfect negotiation*. 
 
 Sem isso o app "funciona" e é ruim de usar.
 
+## UI (0.2.0, baseada no Discord)
+
+- **Palco + tira**, clicar num tile promove ao palco. Grade uniforme daria 1/4 da área ao que importa.
+- **Volume separado por pessoa: voz e tela.** O Discord tem um só. Saiu quase de graça porque as tracks já estavam em elementos distintos desde a correção do bug de áudio, e resolve o caso real: abaixar o jogo sem perder a voz.
+- **Badges `LIVE` e `sem áudio`** no tile e no palco. O segundo nasce do caso do enzo: sem ele o erro é invisível para os dois lados.
+- Anel verde de quem fala, tela cheia, PiP, ensurdecer, mudo.
+- O receptor não distingue voz de tela olhando a track, então **quem compartilha anuncia o `streamId` da tela** pelo canal de sinalização. O mesmo anúncio alimenta os badges.
+
+### Qualidade da própria tela
+
+Presets (Código 1080p5 · Equilíbrio 1080p30 · Jogo 1440p60 · Máximo 4K60) e modo manual com resolução, fps e bitrate independentes.
+
+**O bitrate anda junto com resolução e fps de propósito.** 4K60 num teto de 2,5 Mbps fica *pior* que 1080p30: os mesmos bits espalhados por 4× mais pixels e 2× mais quadros. Deixar o teto fixo transformaria o controle numa armadilha.
+
+**A conta de 4K60 em malha não fecha em link residencial:**
+
+| Preset | Por par | Com 3 pares |
+|---|---|---|
+| Código | 1,5 Mbps | 4,5 Mbps |
+| Equilíbrio | 4 Mbps | 12 Mbps |
+| Jogo 1440p60 | 12 Mbps | **36 Mbps** |
+| Máximo 4K60 | 25 Mbps | **75 Mbps** |
+
+A UI mostra o custo estimado de subida ao vivo, e reporta **pedido vs obtido** — a captura não entrega 4K se o monitor não for 4K, e nesse caso o número escolhido é ficção. Escolha do Marcus, com o número à vista.
+
+`contentHint` passou a seguir o preset: `detail` só até 10 fps (ler código), `motion` acima. Foi o `detail` fixo que deixou tela de jogo parecendo travada.
+
 ## Defeitos encontrados em uso real
 
 Todos da **mesma raiz**, que eu tratei como três casos isolados antes de perceber: um elemento `<video>`/`<audio>` reproduz **apenas a primeira track de cada tipo** do `MediaStream`. Acumular tracks não dá erro — dá silêncio ou quadro congelado.
@@ -167,7 +194,7 @@ Preencher ao fechar cada PoC. Registrar o que foi **executado**, não o que foi 
 | 1 Áudio Linux — constraints | **passou (Firefox)** | `WebRTC_Loopback` visível no `enumerateDevices()`. `track.getSettings()`: `echoCancellation: false`, `noiseSuppression: false`, `autoGainControl: false`, `channelCount: 2`. O Firefox **respeitou** os três filtros — era o risco principal do caminho. |
 | 1 Áudio Linux — sinal | **passou (medido)** | Com o tom de teste: `AudioContext: running`, L = 439 Hz, R = 879 Hz, **−21,1 dBFS nos dois canais — o mesmo valor medido pelo `parecord` fora do navegador**. Ganho unitário confirmado também pelo caminho do browser, estéreo preservado ponta a ponta. A leitura anterior de −240 dBFS era ausência de áudio tocando, não defeito. |
 | 2 Tela Wayland | **passou (Firefox)** | Portal do KDE OK. `1920x1080 @ 30fps`, `resizeMode: crop-and-scale`, label `Primary Monitor`. `getDisplayMedia` **não trouxe track de áudio**, como previsto no Linux → o loopback do PoC 1 é obrigatório. Para o PoC 6: 30fps a 1080p é o oposto do que serve para código legível; baixar fps e subir bitrate. |
-| 3 Windows | pendente | |
+| 3 Windows | **passou (uso real)** | Áudio de sistema do Windows chegou e tocou (par "oi"). O caso do "enzo" — sem áudio — era **operacional**: no Chrome/Windows o "compartilhar áudio do sistema" só existe em **Tela inteira** ou **Guia**, nunca em janela, e vem desmarcado. Confirma a hipótese A e descarta defeito de plataforma. Implicação de produto: a UI precisa avisar quando o par compartilha **sem** track de áudio, senão o erro é invisível para os dois lados. |
 | 4 coturn — servidor | **passou (medido)** | Rodando em Docker (`disgalm-turn`, `--network host`), **sem depender do `pacman`**. `turnutils_uclient` pelo IP da LAN: 16 msgs enviadas, 16 recebidas, **0 perdidas**, jitter 0,06 ms — alocação + permission + channel data confirmados. Config e credenciais em `poc/local/` (fora do git). O 403 pelo loopback é esperado com `external-ip` mapeado, não é falha. |
 | 4 coturn — externo | **parcial** | Antes do forward: `Connection refused`. Depois: 16/16, 0 perdidos, RTT 1,6 ms. Mas **1,6 ms é baixo demais para ter trafegado pela internet** — é hairpin do roteador. Isso prova que a porta está mapeada, **não** que um peer externo alcança. Fecha só com teste de fora da LAN (celular em 4G). |
 | — contexto seguro | **resolvido para teste** | `server.js` sobe em **HTTPS na 8444** quando `poc/local/cert.pem` e `key.pem` existem, e cai para HTTP avisando quando não. Certificado autoassinado com SAN para `localhost`, LAN, tailnet e IP público. Bateria de sinalização revalidada **sobre WSS: 9/9**. A 8443 estava ocupada pelo **Tailscale** nesta máquina. |

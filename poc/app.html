@@ -1,192 +1,518 @@
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Disgalm</title>
 <style>
-  body { font: 14px/1.5 system-ui, sans-serif; margin: 1.5rem; }
-  button, input, select { font: inherit; padding: .45rem .7rem; }
-  #grade { display: grid; grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr)); gap: .8rem; margin-top: 1rem; }
-  figure { margin: 0; background: #0001; border-radius: 8px; padding: .4rem; }
-  video { width: 100%; background: #000; border-radius: 6px; aspect-ratio: 16/9; object-fit: contain; }
-  figcaption { font-size: .85em; padding-top: .3rem; display: flex; justify-content: space-between; }
-  #log { font: 12px/1.4 ui-monospace, monospace; background: #1116; padding: .6rem; border-radius: 6px;
-         max-height: 12rem; overflow-y: auto; margin-top: 1rem; white-space: pre-wrap; }
-  figcaption { flex-wrap: wrap; gap: .5rem; }
-  .vid, .aud { font: 11px/1.4 ui-monospace, monospace; opacity: .75; }
-  .auds { display: flex; flex-direction: column; }
-  .aviso { background: #fd06; padding: .5rem .7rem; border-radius: 6px; margin-top: .6rem; }
+  :root {
+    --bg: #313338; --bg2: #2b2d31; --bg3: #1e1f22; --bg4: #383a40;
+    --txt: #dbdee1; --dim: #949ba4;
+    --acc: #5865f2; --ok: #23a559; --bad: #da373c; --warn: #f0b132;
+    --r: 8px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; height: 100vh; display: flex; flex-direction: column;
+    background: var(--bg); color: var(--txt);
+    font: 15px/1.4 "gg sans", system-ui, sans-serif;
+  }
+  button { font: inherit; color: inherit; background: var(--bg4); border: 0;
+           border-radius: var(--r); padding: .55rem .9rem; cursor: pointer; }
+  button:hover:not(:disabled) { background: #4a4d55; }
+  button:disabled { opacity: .4; cursor: default; }
+  button.on { background: var(--acc); }
+  button.perigo { background: var(--bad); }
+  select, input[type=text] { font: inherit; color: inherit; background: var(--bg3);
+           border: 1px solid #00000040; border-radius: var(--r); padding: .5rem; }
+
+  /* ---------- entrada ---------- */
+  #entrada { margin: auto; background: var(--bg2); padding: 2rem; border-radius: 12px;
+             display: flex; flex-direction: column; gap: .8rem; width: min(22rem, 90vw); }
+  #entrada h1 { margin: 0 0 .5rem; font-size: 1.6rem; }
+  #entrada button { background: var(--acc); padding: .7rem; }
+
+  /* ---------- palco ---------- */
+  #sala { flex: 1; display: none; grid-template-rows: 1fr auto auto; min-height: 0; }
+  #sala.ativa { display: grid; }
+
+  #palco { position: relative; background: #000; min-height: 0; display: flex; }
+  #palco video { width: 100%; height: 100%; object-fit: contain; }
+  #vazio { margin: auto; color: var(--dim); text-align: center; padding: 2rem; }
+
+  #capa { position: absolute; inset: 0; display: flex; flex-direction: column;
+          justify-content: space-between; padding: .8rem; opacity: 0; transition: opacity .15s;
+          background: linear-gradient(#0007, transparent 25%, transparent 70%, #0009); }
+  #palco:hover #capa, #capa:focus-within { opacity: 1; }
+  #capa .topo, #capa .base { display: flex; align-items: center; gap: .6rem; }
+  #capa .base { justify-content: flex-end; }
+  .tag { background: #000000aa; border-radius: 99px; padding: .25rem .7rem; font-size: .85rem; }
+  .live { background: var(--bad); font-weight: 600; letter-spacing: .04em; }
+  .semaudio { background: var(--warn); color: #000; font-weight: 600; }
+  #capa input[type=range] { width: 8rem; accent-color: var(--acc); }
+
+  /* ---------- tira de participantes ---------- */
+  #tira { display: flex; gap: .6rem; padding: .6rem; overflow-x: auto; background: var(--bg2); }
+  .tile { flex: 0 0 11rem; background: var(--bg3); border-radius: var(--r); overflow: hidden;
+          cursor: pointer; border: 2px solid transparent; position: relative; }
+  .tile.focado { border-color: var(--acc); }
+  .tile.falando { border-color: var(--ok); }
+  .tile video { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #000; display: block; }
+  .tile .semvideo { width: 100%; aspect-ratio: 16/9; display: grid; place-items: center;
+                    font-size: 1.8rem; font-weight: 600; color: var(--dim); background: var(--bg4); }
+  .tile .nome { padding: .35rem .5rem; font-size: .85rem; display: flex; align-items: center;
+                gap: .35rem; justify-content: space-between; }
+  .tile .badges { display: flex; gap: .3rem; align-items: center; font-size: .7rem; }
+  .icone { width: 15px; height: 15px; color: var(--bad); flex: none; }
+  .tile .env { padding: .2rem .5rem 0; font: 10px/1.3 ui-monospace, monospace; color: var(--dim); }
+  .tile .env.limitado { color: var(--warn); }
+  .tile .vols { padding: 0 .5rem .5rem; display: none; }
+  .tile.aberto .vols { display: block; }
+  .vols label { display: flex; align-items: center; gap: .4rem; font-size: .75rem; color: var(--dim); }
+  .vols input { flex: 1; accent-color: var(--acc); min-width: 0; }
+
+  /* ---------- barra ---------- */
+  #barra { display: flex; gap: .5rem; padding: .7rem; background: var(--bg3);
+           align-items: center; flex-wrap: wrap; }
+  #barra .esq { display: flex; gap: .5rem; flex: 1; flex-wrap: wrap; }
+  #diag { font: 11px/1.4 ui-monospace, monospace; color: var(--dim); }
+
+  /* ---------- log ---------- */
+  details#logbox { background: var(--bg3); border-top: 1px solid #00000040; }
+  details#logbox summary { padding: .4rem .8rem; cursor: pointer; font-size: .8rem; color: var(--dim); }
+  #log { font: 11px/1.5 ui-monospace, monospace; padding: 0 .8rem .8rem;
+         max-height: 11rem; overflow-y: auto; white-space: pre-wrap; color: var(--dim); }
 </style>
 
-<h1>Disgalm</h1>
-
 <div id="entrada">
-  <input id="sala" placeholder="código da sala" value="galm">
-  <input id="nome" placeholder="seu nome" size="12">
+  <h1>Disgalm</h1>
+  <input id="sala-cod" type="text" placeholder="código da sala" value="galm">
+  <input id="nome" type="text" placeholder="seu nome">
   <button id="entrar">Entrar</button>
 </div>
 
-<div id="controles" hidden>
-  <button id="btela">Compartilhar tela</button>
-  <button id="bmic">Mutar microfone</button>
-  <label>áudio do sistema: <select id="loopdev"></select></label>
-  <span id="status"></span>
-  <div id="aviso-som" class="aviso" hidden></div>
+<div id="sala">
+  <div id="palco">
+    <video id="v-palco" autoplay playsinline></video>
+    <div id="vazio">Ninguém está compartilhando tela.<br><small>Clique num participante para focar.</small></div>
+    <div id="capa">
+      <div class="topo">
+        <span class="tag" id="palco-nome"></span>
+        <span class="tag live" id="palco-live" hidden>AO VIVO</span>
+        <span class="tag semaudio" id="palco-semaudio" hidden>sem áudio</span>
+      </div>
+      <div class="base">
+        <span class="tag" id="palco-stats"></span>
+        <label class="tag">🔊 <input type="range" id="palco-vol" min="0" max="1" step="0.01" value="1"></label>
+        <button id="b-pip" title="Picture-in-picture">⧉</button>
+        <button id="b-full" title="Tela cheia">⛶</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="tira"></div>
+
+  <div id="barra">
+    <div class="esq">
+      <button id="b-mic">🎤 Mudo</button>
+      <button id="b-surdo">🔇 Ensurdecer</button>
+      <button id="b-tela">🖥 Compartilhar</button>
+      <select id="loopdev" title="áudio do sistema (Linux)"></select>
+      <select id="preset" title="qualidade da sua tela">
+        <option value="codigo">Código · 1080p 5fps</option>
+        <option value="equil" selected>Equilíbrio · 1080p 30fps</option>
+        <option value="fluido">Fluido · 1080p 120fps</option>
+        <option value="jogo">Jogo · 1440p 60fps</option>
+        <option value="max">Máximo · 4K 60fps</option>
+        <option value="manual">Manual…</option>
+      </select>
+      <button id="b-recap" hidden></button>
+      <span id="manual" hidden>
+        <select id="res">
+          <option value="1280x720">720p</option>
+          <option value="1920x1080" selected>1080p</option>
+          <option value="2560x1440">1440p</option>
+          <option value="3840x2160">4K</option>
+        </select>
+        <select id="fps">
+          <option>5</option><option>10</option><option>15</option>
+          <option selected>30</option><option>60</option><option>120</option>
+        </select>
+        <select id="kbps">
+          <option value="1000">1 Mbps</option><option value="2500">2,5 Mbps</option>
+          <option value="4000" selected>4 Mbps</option><option value="8000">8 Mbps</option>
+          <option value="15000">15 Mbps</option><option value="25000">25 Mbps</option>
+          <option value="40000">40 Mbps</option>
+        </select>
+        <select id="orc" title="orçamento total de subida, dividido entre os pares">
+          <option value="0">sem teto total</option>
+          <option value="10000">total 10 Mbps</option>
+          <option value="20000" selected>total 20 Mbps</option>
+          <option value="40000">total 40 Mbps</option>
+          <option value="80000">total 80 Mbps</option>
+        </select>
+      </span>
+    </div>
+    <span id="diag"></span>
+    <button id="b-sair" class="perigo">Sair</button>
+  </div>
 </div>
 
-<div id="grade"></div>
-<div id="log"></div>
+<details id="logbox">
+  <summary>diagnóstico</summary>
+  <div id="log"></div>
+</details>
 
 <script>
 const $ = id => document.getElementById(id)
 const log = (...a) => { $('log').textContent += a.join(' ') + '\n'; $('log').scrollTop = 1e9 }
 
-const CAP_VIDEO = 2_500_000 // ver conta de banda no PLANO-POC.md
+// Presets de qualidade da própria tela. O bitrate ANDA JUNTO com resolução e
+// fps de propósito: 4K60 num teto de 2,5 Mbps fica pior que 1080p30, porque o
+// encoder gasta os bits espalhando-os por 4x mais pixels e 2x mais quadros.
+// 'detail' preserva resolução sacrificando quadros (ler código); 'motion' faz
+// o contrário (jogo) — foi o 'detail' que deixou tela de jogo parecendo travada.
+const PRESETS = {
+  codigo: { w: 1920, h: 1080, fps: 5,  kbps: 1500,  hint: 'detail' },
+  equil:  { w: 1920, h: 1080, fps: 30, kbps: 4000,  hint: 'motion' },
+  fluido: { w: 1920, h: 1080, fps: 120, kbps: 15000, hint: 'motion' },
+  jogo:   { w: 2560, h: 1440, fps: 60, kbps: 12000, hint: 'motion' },
+  max:    { w: 3840, h: 2160, fps: 60, kbps: 25000, hint: 'motion' },
+}
+let qualidade = { ...PRESETS.equil }
 
-let ws, meuId, ice
-const pares = new Map()   // id -> {pc, polite, fazendoOferta, ignorandoOferta, nome}
-let micStream, telaStream
+// Em malha você envia uma cópia para CADA par, e as conexões não coordenam
+// entre si: cada uma sonda a banda sozinha e a que subir primeiro fica com
+// ela. Declarar o teto POR PAR faz a subida total crescer a cada pessoa que
+// entra. Declarar o total e dividir é o que evita uma conexão matar a outra.
+const kbpsPorPar = () => {
+  const orc = +($('orc')?.value || 0)
+  if (!orc) return qualidade.kbps
+  return Math.min(qualidade.kbps, Math.floor(orc / Math.max(1, pares.size)))
+}
+
+let ws, meuId, ice, micStream, telaStream
+let foco = null, surdo = false
+
+// Sem mic é o mesmo que mudo do ponto de vista de quem olha o tile.
+const estouMudo = () => !micStream || !micStream.getAudioTracks()[0]?.enabled
+const pares = new Map()
+
+// ---------- estado anunciado ----------
+// O receptor não tem como saber, olhando a track, se um áudio é voz ou tela.
+// Quem compartilha anuncia o streamId da tela; isso também alimenta o badge
+// AO VIVO e o aviso de "compartilhando sem áudio".
+function anunciar(para) {
+  const est = {
+    compartilhando: !!telaStream,
+    streamId: telaStream?.id || null,
+    temAudio: !!telaStream?.getAudioTracks().length,
+    mudo: estouMudo(),
+    surdo,
+  }
+  const alvos = para ? [para] : [...pares.keys()]
+  for (const id of alvos) sinalizar(id, { estado: est })
+}
 
 // ---------- mídia local ----------
 
 async function listarLoopback() {
   const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput')
-  $('loopdev').innerHTML = '<option value="">(nenhum)</option>' +
+  $('loopdev').innerHTML = '<option value="">áudio do sistema: nenhum</option>' +
     devs.map(d => `<option value="${d.deviceId}">${d.label || 'sem label'}</option>`).join('')
-  const loop = devs.find(d => /loopback|monitor/i.test(d.label))
+  const loop = devs.find(d => /loopback|monitor|stereo mix/i.test(d.label))
   if (loop) $('loopdev').value = loop.deviceId
 }
 
 async function pegarMic() {
-  // voz: filtros LIGADOS de propósito, ao contrário do áudio do sistema.
-  // Falhar aqui NÃO impede entrar na sala: dá para só assistir ou só compartilhar.
   try {
     micStream = await navigator.mediaDevices.getUserMedia({
       audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
     })
+    medirFala('local', micStream)
   } catch (e) {
     micStream = null
-    log(`microfone indisponível (${e.name}: ${e.message}) — entrando sem voz`)
-    $('bmic').disabled = true
-    $('bmic').textContent = 'sem microfone'
+    log(`microfone indisponível (${e.name}) — entrando sem voz`)
+    $('b-mic').disabled = true
+    $('b-mic').textContent = '🎤 sem mic'
   }
-  mostrar('local', 'você', new MediaStream(), true)
 }
 
 async function compartilhar() {
   if (telaStream) return pararTela()
 
   telaStream = await navigator.mediaDevices.getDisplayMedia({
-    video: { frameRate: 10 }, // texto legível vale mais que fluidez
+    video: { width: { ideal: qualidade.w }, height: { ideal: qualidade.h },
+             frameRate: { ideal: qualidade.fps } },
     audio: true,
   })
 
-  // No Linux o getDisplayMedia não traz áudio. Cai no loopback do PipeWire.
   if (telaStream.getAudioTracks().length === 0) {
     const dev = $('loopdev').value
     if (dev) {
       const s = await navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: { exact: dev }, echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2 },
+        audio: { deviceId: { exact: dev }, echoCancellation: false, noiseSuppression: false,
+                 autoGainControl: false, channelCount: 2 },
       })
       telaStream.addTrack(s.getAudioTracks()[0])
-      log('áudio do sistema via loopback do PipeWire')
+      log('áudio do sistema via loopback')
     } else {
-      $('aviso-som').hidden = false
-      $('aviso-som').textContent = 'Sem áudio: o getDisplayMedia não trouxe track (normal no Linux) e nenhum dispositivo de loopback foi escolhido.'
+      log('AVISO: compartilhando SEM áudio. No Windows marque "compartilhar áudio do sistema" ' +
+          'na aba Tela inteira; no Linux escolha o loopback na barra.')
     }
   }
 
   for (const t of telaStream.getTracks()) {
-    t.contentHint = t.kind === 'video' ? 'detail' : 'music'
+    t.contentHint = t.kind === 'video' ? qualidade.hint : 'music'
     t.onended = () => pararTela()
   }
-  mostrar('local', 'você', telaStream, true)
-  for (const [id, p] of pares) for (const t of telaStream.getTracks()) p.pc.addTrack(t, telaStream)
-  $('btela').textContent = 'Parar de compartilhar'
-  aplicarLimites()
+  for (const [, p] of pares) for (const t of telaStream.getTracks()) p.pc.addTrack(t, telaStream)
+  $('b-tela').textContent = '🖥 Parar'
+  $('b-tela').classList.add('on')
+  desenharTile('local')
+  focar('local')
+  anunciar()
+  aplicarQualidade()
+}
+
+// Recria a captura na qualidade atual e troca a track nos senders existentes.
+// replaceTrack não renegocia, então o receptor nem vê troca — e some o
+// transceiver morto que o par removeTrack/addTrack deixava a cada ciclo.
+async function recapturar() {
+  if (!telaStream) return
+  const q = qualidade
+  const novo = await navigator.mediaDevices.getDisplayMedia({
+    video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: q.fps } },
+    audio: true,
+  })
+
+  const trocar = async (antigo, novoT) => {
+    if (!novoT) return
+    for (const [, p] of pares)
+      for (const sd of p.pc.getSenders())
+        if (sd.track === antigo) await sd.replaceTrack(novoT)
+    if (antigo) { telaStream.removeTrack(antigo); antigo.stop() }
+    telaStream.addTrack(novoT)
+  }
+
+  const vNovo = novo.getVideoTracks()[0]
+  vNovo.contentHint = q.hint
+  vNovo.onended = () => pararTela()
+  await trocar(telaStream.getVideoTracks()[0], vNovo)
+
+  const aNovo = novo.getAudioTracks()[0]
+  if (aNovo) { aNovo.contentHint = 'music'; await trocar(telaStream.getAudioTracks()[0], aNovo) }
+
+  desenharTile('local')
+  if (foco === 'local') focar('local')
+  anunciar()
+  await aplicarQualidade()
 }
 
 function pararTela() {
   if (!telaStream) return
-  // Tirar dos senders ANTES de parar as tracks: depois de stop() a
-  // identificação de qual sender era da tela fica ambígua.
   const tracks = telaStream.getTracks()
   for (const [, p] of pares)
     for (const s of p.pc.getSenders())
       if (s.track && tracks.includes(s.track)) p.pc.removeTrack(s)
   for (const t of tracks) t.stop()
   telaStream = null
-  mostrar('local', 'você', new MediaStream(), true)
-  $('btela').textContent = 'Compartilhar tela'
-  $('aviso-som').hidden = true
+  $('b-tela').textContent = '🖥 Compartilhar'
+  $('b-tela').classList.remove('on')
+  desenharTile('local')
+  if (foco === 'local') focar(proximoComVideo())
+  anunciar()
 }
 
-async function aplicarLimites() {
+// Aplica resolução/fps na captura e bitrate/fps no encoder de cada par.
+// Depois relata PEDIDO vs OBTIDO: a captura não entrega 4K se o monitor não
+// for 4K, e nesse caso o número escolhido é ficção.
+async function aplicarQualidade() {
+  const q = qualidade
+  const vt = telaStream?.getVideoTracks()[0]
+
+  if (vt) {
+    vt.contentHint = q.hint
+    try {
+      await vt.applyConstraints({
+        width: { ideal: q.w, max: q.w }, height: { ideal: q.h, max: q.h },
+        frameRate: { ideal: q.fps, max: q.fps },
+      })
+    } catch (e) { log('applyConstraints:', e.message) }
+  }
+
   for (const [, p] of pares)
     for (const s of p.pc.getSenders()) {
       if (s.track?.kind !== 'video') continue
       const par = s.getParameters()
       par.encodings = par.encodings?.length ? par.encodings : [{}]
-      par.encodings[0].maxBitrate = CAP_VIDEO
+      par.encodings[0].maxBitrate = kbpsPorPar() * 1000
+      par.encodings[0].maxFramerate = q.fps
       await s.setParameters(par).catch(e => log('setParameters:', e.message))
     }
-}
 
-// ---------- grade ----------
+  const s = vt?.getSettings()
+  if (s) {
+    const obtido = `${s.width}x${s.height}@${Math.round(s.frameRate)}`
+    log(`qualidade: pedido ${q.w}x${q.h}@${q.fps} · obtido ${obtido}`)
 
-function mostrar(id, nome, stream, mudo) {
-  let fig = document.getElementById('fig-' + id)
-  if (!fig) {
-    fig = document.createElement('figure')
-    fig.id = 'fig-' + id
-    fig.innerHTML = `<video autoplay playsinline${mudo ? ' muted' : ''}></video>
-                     <div class="auds"></div>
-                     <figcaption><span>${nome}</span><span class="vid"></span><span class="est"></span></figcaption>`
-    $('grade').append(fig)
+    // A sessão de captura nasce com a taxa pedida no getDisplayMedia e não
+    // sobe depois: no Wayland é uma sessão do portal PipeWire já criada.
+    // Baixar funciona; subir exige capturar de novo.
+    const preciseRecap = Math.round(s.frameRate) < q.fps * 0.9
+    $('b-recap').hidden = !preciseRecap
+    $('b-recap').textContent = `↻ Recapturar p/ ${q.fps}fps`
+    if (preciseRecap)
+      log(`a captura está presa em ${Math.round(s.frameRate)}fps — a sessão foi criada nessa taxa. ` +
+          `Recapture para subir para ${q.fps}fps.`)
   }
-  fig.querySelector('video').srcObject = stream
+  atualizarDiag()
 }
 
-// Mede o áudio RECEBIDO por canal. Com o tom de teste (440 L / 880 R) tocando
-// no loopback do outro lado, isto prova se o estéreo sobreviveu ao Opus — o
-// munge de SDP pede stereo=1, mas pedir não é obter.
-// Uma track de áudio por elemento: um MediaStream com duas tracks de áudio
-// reproduz APENAS a primeira. Juntar mic e áudio do sistema no mesmo <video>
-// descarta o segundo em silêncio.
-function medirRemoto(id, track) {
-  const cont = document.querySelector(`#fig-${id} .auds`)
-  if (!cont) return
-  const stream = new MediaStream([track])
+// Malha: você envia sua tela para cada par separadamente. É a conta que decide
+// se 4K60 é viável no seu link, e ela cresce com o número de pessoas.
+function custoUpload() {
+  if (!telaStream) return ''
+  const por = kbpsPorPar(), n = Math.max(1, pares.size)
+  const tot = (por * n / 1000).toFixed(1)
+  const cortado = por < qualidade.kbps ? ` (teto ${qualidade.kbps / 1000} cortado p/ ${por / 1000})` : ''
+  return ` · subindo ~${tot} Mbps = ${por / 1000} × ${n}${cortado}`
+}
 
+// ---------- tiles e palco ----------
+
+const inicial = n => (n || '?').trim()[0].toUpperCase()
+
+// Mic cortado e fone cortado, desenhados à mão para ficarem legíveis a 15px.
+const ICONES = {
+  mudo: `<svg class="icone" viewBox="0 0 24 24" aria-label="microfone mudo"><title>microfone mudo</title>
+    <rect x="9" y="2.5" width="6" height="11" rx="3" fill="currentColor"/>
+    <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round"/>
+    <path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`,
+  surdo: `<svg class="icone" viewBox="0 0 24 24" aria-label="ensurdecido"><title>ensurdecido</title>
+    <path d="M4 14v-2a8 8 0 0 1 16 0v2" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round"/>
+    <rect x="2.5" y="13" width="4.5" height="7.5" rx="2.2" fill="currentColor"/>
+    <rect x="17" y="13" width="4.5" height="7.5" rx="2.2" fill="currentColor"/>
+    <path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`,
+}
+
+function dadosTile(id) {
+  if (id === 'local') return { nome: 'você', video: telaStream, local: true,
+    estado: { compartilhando: !!telaStream, temAudio: !!telaStream?.getAudioTracks().length,
+              mudo: estouMudo(), surdo } }
+  const p = pares.get(id)
+  return p && { nome: p.nome, video: p.video, estado: p.estado, local: false }
+}
+
+function desenharTile(id) {
+  const d = dadosTile(id)
+  if (!d) return document.getElementById('t-' + id)?.remove()
+
+  let el = document.getElementById('t-' + id)
+  if (!el) {
+    el = document.createElement('div')
+    el.id = 't-' + id
+    el.className = 'tile'
+    el.onclick = ev => {
+      if (ev.target.closest('.vols')) return          // mexer no volume não troca o foco
+      if (ev.target.closest('.nome')) el.classList.toggle('aberto')
+      else focar(id)
+    }
+    $('tira').append(el)
+  }
+
+  const temVideo = d.video?.getVideoTracks().length
+  el.innerHTML =
+    (temVideo ? '<video autoplay playsinline muted></video>' : `<div class="semvideo">${inicial(d.nome)}</div>`) +
+    `<div class="env"></div><div class="nome"><span>${d.nome}</span><span class="badges">
+       ${d.estado?.mudo ? ICONES.mudo : ''}
+       ${d.estado?.surdo ? ICONES.surdo : ''}
+       ${d.estado?.compartilhando ? '<span class="tag live">LIVE</span>' : ''}
+       ${d.estado?.compartilhando && !d.estado?.temAudio ? '<span class="tag semaudio">sem áudio</span>' : ''}
+     </span></div>` +
+    (d.local ? '' : `<div class="vols">
+       <label>voz <input type="range" min="0" max="1" step="0.01" value="1" data-tipo="voz"></label>
+       <label>tela <input type="range" min="0" max="1" step="0.01" value="1" data-tipo="tela"></label>
+     </div>`)
+
+  if (temVideo) el.querySelector('video').srcObject = d.video
+  el.classList.toggle('focado', foco === id)
+
+  for (const inp of el.querySelectorAll('.vols input')) {
+    const p = pares.get(id)
+    inp.value = p?.volumes[inp.dataset.tipo] ?? 1
+    inp.oninput = () => {
+      p.volumes[inp.dataset.tipo] = +inp.value
+      aplicarVolumes(id)
+      if (inp.dataset.tipo === 'tela' && foco === id) $('palco-vol').value = inp.value
+    }
+  }
+}
+
+function focar(id) {
+  foco = id
+  const d = id && dadosTile(id)
+  const temVideo = d?.video?.getVideoTracks().length
+  $('v-palco').srcObject = temVideo ? d.video : null
+  $('v-palco').style.display = temVideo ? '' : 'none'
+  $('vazio').style.display = temVideo ? 'none' : ''
+  $('v-palco').muted = true   // o áudio sai pelos elementos <audio>, não pelo palco
+  $('palco-nome').textContent = d?.nome || ''
+  $('palco-live').hidden = !d?.estado?.compartilhando
+  $('palco-semaudio').hidden = !(d?.estado?.compartilhando && !d?.estado?.temAudio)
+  $('palco-vol').disabled = !d || d.local
+  $('palco-vol').value = id && pares.get(id)?.volumes.tela || 1
+  for (const el of document.querySelectorAll('.tile')) el.classList.toggle('focado', el.id === 't-' + id)
+}
+
+const proximoComVideo = () =>
+  [...pares.keys()].find(id => pares.get(id).video.getVideoTracks().length) ||
+  (telaStream ? 'local' : null)
+
+// ---------- áudio recebido ----------
+
+function aplicarVolumes(id) {
+  const p = pares.get(id)
+  if (!p) return
+  for (const [, a] of p.audios) a.el.volume = surdo ? 0 : (p.volumes[a.tipo] ?? 1)
+}
+
+// Classifica a track pelo streamId anunciado por quem compartilha: o stream da
+// tela é o único que ele anuncia. Sem isso, voz e tela são indistinguíveis aqui.
+function classificar(id) {
+  const p = pares.get(id)
+  if (!p) return
+  for (const [sid, a] of p.audios) a.tipo = sid === p.estado?.streamId ? 'tela' : 'voz'
+  aplicarVolumes(id)
+}
+
+function receberAudio(id, track, streamId) {
+  const p = pares.get(id)
+  if (!p) return
   const el = document.createElement('audio')
   el.autoplay = true
-  el.srcObject = stream
+  el.srcObject = new MediaStream([track])   // uma track por elemento: ver PLANO-POC.md
   el.play?.().catch(e => log(`autoplay bloqueado (${e.name}) — clique na página`))
+  p.audios.set(streamId, { el, tipo: 'voz', track })
+  track.addEventListener('ended', () => { el.remove(); p.audios.delete(streamId); })
+  classificar(id)
+  if (p.audios.size === 1) medirFala(id, el.srcObject)  // primeira = voz, move o anel verde
+}
 
-  const rotulo = document.createElement('span')
-  rotulo.className = 'aud'
-  cont.append(el, rotulo)
-  track.addEventListener('ended', () => { el.remove(); rotulo.remove() })
-
-  const ctx = new AudioContext({ sampleRate: 48000 })
+// Anel verde de quem está falando, reaproveitando o medidor dos PoCs.
+function medirFala(id, stream) {
+  const ctx = new AudioContext()
   ctx.resume()
-  const split = ctx.createChannelSplitter(2)
-  ctx.createMediaStreamSource(stream).connect(split)
-  const an = [ctx.createAnalyser(), ctx.createAnalyser()]
-  an.forEach((a, i) => { a.fftSize = 8192; split.connect(a, i) })
-  const td = an.map(a => new Float32Array(a.fftSize))
-  const fd = an.map(a => new Float32Array(a.frequencyBinCount))
+  const an = ctx.createAnalyser()
+  an.fftSize = 2048
+  ctx.createMediaStreamSource(stream).connect(an)
+  const buf = new Float32Array(an.fftSize)
   const tick = () => {
-    if (!pares.has(id)) return
-    const txt = [0, 1].map(i => {
-      an[i].getFloatTimeDomainData(td[i])
-      let s = 0
-      for (const v of td[i]) s += v * v
-      const db = 20 * Math.log10(Math.sqrt(s / td[i].length) + 1e-12)
-      an[i].getFloatFrequencyData(fd[i])
-      let pk = 0
-      for (let k = 1; k < fd[i].length; k++) if (fd[i][k] > fd[i][pk]) pk = k
-      const hz = pk * ctx.sampleRate / an[i].fftSize
-      return `${i ? 'R' : 'L'} ${db.toFixed(0)}dB ${db > -60 ? hz.toFixed(0) + 'Hz' : '—'}`
-    }).join('  ')
-    rotulo.textContent = txt
+    if (id !== 'local' && !pares.has(id)) return
+    an.getFloatTimeDomainData(buf)
+    let s = 0
+    for (const v of buf) s += v * v
+    const db = 20 * Math.log10(Math.sqrt(s / buf.length) + 1e-12)
+    document.getElementById('t-' + id)?.classList.toggle('falando', db > -50)
     requestAnimationFrame(tick)
   }
   tick()
@@ -194,8 +520,6 @@ function medirRemoto(id, track) {
 
 // ---------- Opus estéreo ----------
 
-// Por padrão o Opus no WebRTC negocia mono e bitrate de voz. Para música/jogo
-// isso é audível e não há API para pedir: só mexendo no SDP.
 const OPUS = 'stereo=1;sprop-stereo=1;maxaveragebitrate=128000;useinbandfec=1'
 
 function opusEstereo(sdp) {
@@ -213,41 +537,38 @@ function opusEstereo(sdp) {
   return linhas.join('\r\n')
 }
 
-// substitui setLocalDescription() sem argumento, que não deixa mexer no SDP
 async function definirLocal(pc) {
   const sd = pc.signalingState === 'have-remote-offer' ? await pc.createAnswer() : await pc.createOffer()
   sd.sdp = opusEstereo(sd.sdp)
   await pc.setLocalDescription(sd)
 }
 
-// ---------- WebRTC, negociação perfeita ----------
+// ---------- WebRTC ----------
 
 function criarPar(id, nome, polite) {
   const pc = new RTCPeerConnection({ iceServers: ice })
-  const p = { pc, polite, fazendoOferta: false, ignorandoOferta: false, nome }
+  const p = { pc, polite, fazendoOferta: false, ignorandoOferta: false, nome,
+              video: new MediaStream(), audios: new Map(), volumes: { voz: 1, tela: 1 }, estado: {} }
   pares.set(id, p)
-
-  const remoto = new MediaStream()
-  mostrar(id, nome, remoto, false)
+  desenharTile(id)
 
   if (micStream) for (const t of micStream.getTracks()) pc.addTrack(t, micStream)
   if (telaStream) for (const t of telaStream.getTracks()) pc.addTrack(t, telaStream)
 
   pc.ontrack = e => {
+    const sid = e.streams[0]?.id || 'sem-stream'
     log(`track ${e.track.kind} de ${nome}`)
-    if (e.track.kind === 'audio') return medirRemoto(id, e.track)  // cada áudio no seu elemento
+    if (e.track.kind === 'audio') return receberAudio(id, e.track, sid)
 
-    // Um <video> renderiza apenas a PRIMEIRA track de vídeo do stream. Ao
-    // recompartilhar chega uma track nova, mas a antiga (morta) continua sendo
-    // a primeira, e o elemento segue exibindo o último quadro dela.
-    for (const antiga of remoto.getVideoTracks()) remoto.removeTrack(antiga)
-    remoto.addTrack(e.track)
-    const v = document.querySelector(`#fig-${id} video`)
-    if (v) v.srcObject = remoto
-    e.track.addEventListener('ended', () => remoto.removeTrack(e.track))
+    // Um <video> renderiza só a PRIMEIRA track de vídeo do stream: ao
+    // recompartilhar, a antiga (morta) continuaria congelando o quadro.
+    for (const antiga of p.video.getVideoTracks()) p.video.removeTrack(antiga)
+    p.video.addTrack(e.track)
+    e.track.addEventListener('ended', () => { p.video.removeTrack(e.track); desenharTile(id) })
+    desenharTile(id)
+    if (!foco || foco === 'local' && !telaStream) focar(id)
   }
-  // Quais tipos de candidato este lado conseguiu juntar. Sem 'relay' aqui,
-  // o TURN não respondeu a NÓS — e nenhum par atrás de NAT simétrico fecha.
+
   const tipos = new Set()
   pc.onicecandidate = e => {
     if (!e.candidate) return log(`candidatos de ${nome}: ${[...tipos].join(', ') || 'NENHUM'}`)
@@ -257,15 +578,9 @@ function criarPar(id, nome, polite) {
     }
     sinalizar(id, { candidate: e.candidate })
   }
-
-  // 701 = servidor STUN/TURN inalcançável. É o diagnóstico direto.
-  pc.onicecandidateerror = e => {
-    log(`ICE erro ${e.errorCode} em ${e.url} — ${e.errorText}`)
-  }
+  pc.onicecandidateerror = e => log(`ICE erro ${e.errorCode} em ${e.url} — ${e.errorText}`)
 
   pc.oniceconnectionstatechange = () => {
-    const el = document.querySelector(`#fig-${id} .est`)
-    if (el) el.textContent = pc.iceConnectionState
     log(`${nome}: ${pc.iceConnectionState}`)
     if (pc.iceConnectionState === 'connected') { tipoDeCaminho(id, pc); acompanharVideo(id, pc) }
     if (pc.iceConnectionState === 'failed') porQueFalhou(id, pc)
@@ -282,20 +597,16 @@ function criarPar(id, nome, polite) {
   return p
 }
 
-// Diz se o par ficou direto (host/srflx) ou passou pelo TURN (relay).
-// É o que decide se o seu link está pagando o tráfego de todo mundo.
 async function tipoDeCaminho(id, pc) {
   const st = await pc.getStats()
   let atual
   st.forEach(r => { if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.nominated) atual = r })
   if (!atual) return
-  const local = st.get(atual.localCandidateId), remoto = st.get(atual.remoteCandidateId)
-  const via = local?.candidateType === 'relay' || remoto?.candidateType === 'relay' ? 'RELAY (TURN)' : 'direto'
-  log(`caminho com ${pares.get(id)?.nome}: ${via} — ${local?.candidateType}/${remoto?.candidateType}`)
+  const l = st.get(atual.localCandidateId), r = st.get(atual.remoteCandidateId)
+  const via = l?.candidateType === 'relay' || r?.candidateType === 'relay' ? 'RELAY (TURN)' : 'direto'
+  log(`caminho com ${pares.get(id)?.nome}: ${via} — ${l?.candidateType}/${r?.candidateType}`)
 }
 
-// Quando o ICE falha, mostra os pares de candidato tentados — sem isso
-// "failed" não diz se faltou relay, se o TURN não respondeu, ou outra coisa.
 async function porQueFalhou(id, pc) {
   const st = await pc.getStats()
   const cand = new Map()
@@ -309,8 +620,6 @@ async function porQueFalhou(id, pc) {
   log(`por que falhou com ${pares.get(id)?.nome}:\n${linhas.join('\n') || '  nenhum par formado'}`)
 }
 
-// Vídeo travado com áudio bom é problema de banda/encoder, não de conexão.
-// Só os números separam "congelado" de "1 quadro a cada 3 segundos".
 function acompanharVideo(id, pc) {
   let antes
   const timer = setInterval(async () => {
@@ -318,18 +627,35 @@ function acompanharVideo(id, pc) {
     const st = await pc.getStats()
     let v
     st.forEach(r => { if (r.type === 'inbound-rtp' && r.kind === 'video') v = r })
-    if (!v) return
-    const el = document.querySelector(`#fig-${id} .vid`)
-    if (antes) {
-      const dt = (v.timestamp - antes.timestamp) / 1000
-      const kbps = Math.round((v.bytesReceived - antes.bytesReceived) * 8 / dt / 1000)
-      const fps = ((v.framesDecoded - antes.framesDecoded) / dt).toFixed(1)
-      const perda = v.packetsLost - (antes.packetsLost ?? 0)
-      if (el) el.textContent =
-        `${v.frameWidth || '?'}x${v.frameHeight || '?'} · ${fps}fps · ${kbps}kbps` +
-        `${perda > 0 ? ' · perdeu ' + perda : ''}${v.freezeCount ? ' · freezes ' + v.freezeCount : ''}`
-    }
+    if (!v || !antes) { antes = v; return }
+    const dt = (v.timestamp - antes.timestamp) / 1000
+    const kbps = Math.round((v.bytesReceived - antes.bytesReceived) * 8 / dt / 1000)
+    const fps = ((v.framesDecoded - antes.framesDecoded) / dt).toFixed(1)
+    const perda = v.packetsLost - (antes.packetsLost ?? 0)
+    const txt = `${v.frameWidth || '?'}x${v.frameHeight || '?'} · ${fps}fps · ${kbps}kbps` +
+                `${perda > 0 ? ' · perdeu ' + perda : ''}${v.freezeCount ? ' · freezes ' + v.freezeCount : ''}`
+    if (foco === id) $('palco-stats').textContent = txt
     antes = v
+
+    // O que EU envio a ESTE par. Em malha cada conexão tem seu próprio encoder
+    // e sua própria estimativa de banda, então dois receptores do mesmo emissor
+    // podem receber qualidades diferentes. qualityLimitationReason diz o porquê.
+    let o, cp
+    st.forEach(r => {
+      if (r.type === 'outbound-rtp' && r.kind === 'video') o = r
+      if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') cp = r
+    })
+    const env = document.querySelector(`#t-${id} .env`)
+    if (env) {
+      if (!o) { env.textContent = ''; return }
+      const banda = cp?.availableOutgoingBitrate
+        ? ` · cabe ${Math.round(cp.availableOutgoingBitrate / 1000)}kbps` : ''
+      const motivo = o.qualityLimitationReason && o.qualityLimitationReason !== 'none'
+        ? ` · LIMITADO: ${o.qualityLimitationReason}` : ''
+      env.textContent = `→ ${o.frameWidth || '?'}x${o.frameHeight || '?'}` +
+        ` @${Math.round(o.framesPerSecond || 0)}fps${banda}${motivo}`
+      env.classList.toggle('limitado', !!motivo)
+    }
   }, 2000)
 }
 
@@ -338,6 +664,13 @@ async function receberSinal(id, data) {
   if (!p) return
   const { pc } = p
   try {
+    if (data.estado) {
+      p.estado = data.estado
+      classificar(id)
+      desenharTile(id)
+      if (foco === id) focar(id)
+      return
+    }
     if (data.description) {
       const colisao = data.description.type === 'offer' && (p.fazendoOferta || pc.signalingState !== 'stable')
       p.ignorandoOferta = !p.polite && colisao
@@ -355,65 +688,129 @@ async function receberSinal(id, data) {
 
 // ---------- sinalização ----------
 
-const sinalizar = (to, data) => ws.send(JSON.stringify({ t: 'signal', to, data }))
-
-// Rede de segurança: sem isto, qualquer promise rejeitada some e a UI trava calada.
-addEventListener('unhandledrejection', e => log('ERRO não tratado:', e.reason?.message || e.reason))
-addEventListener('error', e => log('ERRO:', e.message))
+const sinalizar = (to, data) => ws?.readyState === 1 && ws.send(JSON.stringify({ t: 'signal', to, data }))
 
 async function entrarNaSala() {
   ice = await (await fetch('/ice')).json()
   log('ICE:', ice.map(s => s.urls).flat().join(' '))
   await pegarMic()
   await listarLoopback()
-  $('entrada').hidden = true
-  $('controles').hidden = false
+  $('entrada').style.display = 'none'
+  $('sala').classList.add('ativa')
+  desenharTile('local')
 
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`)
-  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: $('sala').value, name: $('nome').value || 'anon' }))
+  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: $('sala-cod').value, name: $('nome').value || 'anon' }))
   ws.onclose = () => log('sinalização caiu')
   ws.onmessage = async ev => {
     const m = JSON.parse(ev.data)
     if (m.t === 'cheia') return alert('sala cheia (limite de 4)')
     if (m.t === 'welcome') {
       meuId = m.id
-      $('status').textContent = ` id ${m.id} · ${m.peers.length} já na sala`
-      // quem chega é polite e espera a oferta de quem já estava
-      for (const par of m.peers) criarPar(par.id, par.name, true)
+      for (const par of m.peers) criarPar(par.id, par.name, true)   // quem chega é polite
+      atualizarDiag()
     }
     if (m.t === 'peer-join') {
-      // quem já estava é impolite e inicia a oferta
-      criarPar(m.id, m.name, false)
-      $('status').textContent = ` id ${meuId} · ${pares.size} pares`
+      criarPar(m.id, m.name, false)                                 // quem já estava oferta
+      anunciar(m.id)
+      redividir()
     }
     if (m.t === 'signal') receberSinal(m.from, m.data)
     if (m.t === 'peer-left') {
-      pares.get(m.id)?.pc.close()
+      const p = pares.get(m.id)
+      p?.pc.close()
+      for (const [, a] of p?.audios || []) a.el.remove()
       pares.delete(m.id)
-      document.getElementById('fig-' + m.id)?.remove()
+      document.getElementById('t-' + m.id)?.remove()
+      if (foco === m.id) focar(proximoComVideo())
+      redividir()
       log('saiu:', m.id)
     }
   }
 }
 
+const atualizarDiag = () => $('diag').textContent = `${pares.size + 1}/4 na sala` + custoUpload()
+
+// Entrou ou saiu gente: o orçamento total se redivide por um número diferente
+// de pares. Fica fora de atualizarDiag para não recursar com aplicarQualidade.
+const redividir = () => { atualizarDiag(); if (telaStream) aplicarQualidade() }
+
+// ---------- controles ----------
+
+addEventListener('unhandledrejection', e => log('ERRO não tratado:', e.reason?.message || e.reason))
+addEventListener('error', e => log('ERRO:', e.message))
+
 $('entrar').onclick = async () => {
   $('entrar').disabled = true
-  try {
-    await entrarNaSala()
-  } catch (e) {
+  try { await entrarNaSala() }
+  catch (e) {
     log(`falhou ao entrar — ${e.name}: ${e.message}`)
-    $('entrada').hidden = false
-    $('controles').hidden = true
-  } finally {
-    $('entrar').disabled = false
-  }
+    $('entrada').style.display = ''
+    $('sala').classList.remove('ativa')
+  } finally { $('entrar').disabled = false }
 }
 
-$('btela').onclick = () => compartilhar().catch(e => log(`tela — ${e.name}: ${e.message}`))
-$('bmic').onclick = () => {
-  if (!micStream) return
-  const t = micStream.getAudioTracks()[0]
+$('b-tela').onclick = () => compartilhar().catch(e => log(`tela — ${e.name}: ${e.message}`))
+
+$('b-mic').onclick = () => {
+  const t = micStream?.getAudioTracks()[0]
+  if (!t) return
   t.enabled = !t.enabled
-  $('bmic').textContent = t.enabled ? 'Mutar microfone' : 'Desmutar microfone'
+  $('b-mic').textContent = t.enabled ? '🎤 Mudo' : '🔇 Mudo'
+  $('b-mic').classList.toggle('on', !t.enabled)
+  desenharTile('local')
+  anunciar()
 }
+
+$('b-surdo').onclick = () => {
+  surdo = !surdo
+  $('b-surdo').classList.toggle('on', surdo)
+  for (const id of pares.keys()) aplicarVolumes(id)
+  desenharTile('local')
+  anunciar()
+}
+
+$('palco-vol').oninput = e => {
+  const p = pares.get(foco)
+  if (!p) return
+  p.volumes.tela = +e.target.value
+  aplicarVolumes(foco)
+  desenharTile(foco)
+}
+
+$('b-full').onclick = () => document.fullscreenElement
+  ? document.exitFullscreen()
+  : $('palco').requestFullscreen().catch(e => log('tela cheia:', e.message))
+
+$('b-pip').onclick = () => document.pictureInPictureElement
+  ? document.exitPictureInPicture()
+  : $('v-palco').requestPictureInPicture().catch(e => log('PiP:', e.message))
+
+$('b-sair').onclick = () => location.reload()
+
+function lerManual() {
+  const [w, h] = $('res').value.split('x').map(Number)
+  qualidade = { w, h, fps: +$('fps').value, kbps: +$('kbps').value,
+                hint: +$('fps').value <= 10 ? 'detail' : 'motion' }
+}
+
+$('preset').onchange = () => {
+  const v = $('preset').value
+  $('manual').hidden = v !== 'manual'
+  if (v === 'manual') lerManual()
+  else {
+    qualidade = { ...PRESETS[v] }
+    $('res').value = `${qualidade.w}x${qualidade.h}`
+    $('fps').value = String(qualidade.fps)
+    $('kbps').value = String(qualidade.kbps)
+  }
+  aplicarQualidade()
+}
+
+$('b-recap').onclick = () => recapturar().catch(e => log(`recaptura: ${e.name}: ${e.message}`))
+$('orc').onchange = () => aplicarQualidade()
+for (const id of ['res', 'fps', 'kbps'])
+  $(id).onchange = () => { lerManual(); aplicarQualidade() }
+
+$('loopdev').onchange = () => log('áudio do sistema:', $('loopdev').selectedOptions[0]?.textContent)
 </script>
