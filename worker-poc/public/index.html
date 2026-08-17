@@ -1,0 +1,160 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Disgalm — PoC de Durable Object</title>
+<style>
+  :root { --bg:#313338; --bg2:#2b2d31; --bg3:#1e1f22; --txt:#dbdee1; --dim:#949ba4;
+          --acc:#5865f2; --ok:#23a559; --bad:#da373c; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:1.5rem; background:var(--bg); color:var(--txt);
+         font:15px/1.5 system-ui, sans-serif; }
+  h1 { margin:0 0 .3rem; font-size:1.4rem; }
+  p.sub { margin:0 0 1.5rem; color:var(--dim); }
+  .painel { display:grid; grid-template-columns:repeat(auto-fit,minmax(19rem,1fr)); gap:1rem; }
+  .cartao { background:var(--bg2); border-radius:10px; padding:1rem; border-top:3px solid var(--dim); }
+  .cartao.hib { border-top-color:var(--ok); }
+  .cartao.viva { border-top-color:var(--bad); }
+  .cartao h2 { margin:0 0 .2rem; font-size:1.05rem; }
+  .cartao .nota { color:var(--dim); font-size:.85rem; min-height:3.2rem; margin:0 0 .8rem; }
+  button { font:inherit; color:inherit; background:var(--acc); border:0; border-radius:8px;
+           padding:.5rem 1rem; cursor:pointer; }
+  button.parar { background:var(--bad); }
+  table { width:100%; border-collapse:collapse; margin-top:.8rem;
+          font:12px/1.6 ui-monospace, monospace; }
+  td { padding:.15rem 0; }
+  td:last-child { text-align:right; color:var(--dim); }
+  .grande { font:600 1.5rem/1.2 ui-monospace, monospace; }
+  #log { font:11px/1.5 ui-monospace, monospace; background:var(--bg3); color:var(--dim);
+         padding:.7rem; border-radius:8px; margin-top:1rem; max-height:12rem;
+         overflow-y:auto; white-space:pre-wrap; }
+  .ctrl { display:flex; gap:.6rem; align-items:center; margin-bottom:1rem; flex-wrap:wrap; }
+  select { font:inherit; color:inherit; background:var(--bg3); border:1px solid #0004;
+           border-radius:8px; padding:.45rem; }
+  .aviso { background:#f0b13222; border-left:3px solid #f0b132; padding:.7rem 1rem;
+           border-radius:0 8px 8px 0; margin-top:1.5rem; font-size:.9rem; }
+</style>
+
+<h1>PoC de Durable Object</h1>
+<p class="sub">Mede quanto do limite gratuito (13.000 GB-s/dia) uma sala de sinalização consome.
+Os dois modos fazem a mesma coisa; mudam só em como aceitam o WebSocket.</p>
+
+<div class="ctrl">
+  <label>ping a cada
+    <select id="intervalo">
+      <option value="0">nunca (só conectar)</option>
+      <option value="10">10 s</option>
+      <option value="30" selected>30 s</option>
+      <option value="300">5 min</option>
+    </select>
+  </label>
+  <span id="geral"></span>
+</div>
+
+<div class="painel">
+  <div class="cartao hib">
+    <h2>Hibernada</h2>
+    <p class="nota"><code>ctx.acceptWebSocket()</code> — o objeto sai da memória enquanto ninguém
+       fala, sem derrubar ninguém. Cobra só o tempo ativo.</p>
+    <button data-modo="hib">Conectar</button>
+    <div class="grande" data-t="hib">00:00</div>
+    <table>
+      <tr><td>estado</td><td data-e="hib">desconectado</td></tr>
+      <tr><td>mensagens</td><td data-m="hib">0</td></tr>
+      <tr><td>conectados na sala</td><td data-c="hib">—</td></tr>
+      <tr><td>tempo de parede</td><td data-gb="hib">—</td></tr>
+    </table>
+  </div>
+
+  <div class="cartao viva">
+    <h2>Viva (sem hibernar)</h2>
+    <p class="nota"><code>servidor.accept()</code> — o objeto fica residente enquanto a conexão
+       existir. Cobra tempo de parede mesmo em silêncio.</p>
+    <button data-modo="viva">Conectar</button>
+    <div class="grande" data-t="viva">00:00</div>
+    <table>
+      <tr><td>estado</td><td data-e="viva">desconectado</td></tr>
+      <tr><td>mensagens</td><td data-m="viva">0</td></tr>
+      <tr><td>conectados na sala</td><td data-c="viva">—</td></tr>
+      <tr><td>tempo de parede</td><td data-gb="viva">—</td></tr>
+    </table>
+  </div>
+</div>
+
+<div class="aviso">
+  <strong>O número desta página não é a cobrança.</strong> Ele é só o tempo de parede × 128 MB,
+  ou seja, o teto <em>se nada hibernasse</em>. Quanto a Cloudflare realmente contou está em
+  <b>Workers &amp; Pages → disgalm-do-poc → Metrics</b>, e leva alguns minutos para aparecer.
+  A comparação que interessa é esse número contra o do painel.
+</div>
+
+<div id="log"></div>
+
+<script>
+const $ = s => document.querySelector(s)
+const log = m => { const l = $('#log'); l.textContent += m + '\n'; l.scrollTop = 1e9 }
+const MB = 0.128 // GB por instância de DO, para estimar GB-s
+
+const estado = {}
+
+function mmss(ms) {
+  const s = Math.floor(ms / 1000)
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`
+}
+
+function conectar(modo) {
+  const e = estado[modo]
+  if (e?.ws) return desconectar(modo)
+
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+  const url = `${proto}://${location.host}/ws?modo=${modo === 'viva' ? 'viva' : 'hib'}&sala=poc`
+  const ws = new WebSocket(url)
+  const novo = { ws, msgs: 0, inicio: Date.now(), timer: null, ping: null }
+  estado[modo] = novo
+
+  ws.onopen = () => {
+    $(`[data-e="${modo}"]`).textContent = 'conectado'
+    document.querySelector(`[data-modo="${modo}"]`).textContent = 'Desconectar'
+    document.querySelector(`[data-modo="${modo}"]`).classList.add('parar')
+    log(`[${modo}] conectado`)
+
+    const seg = +$('#intervalo').value
+    if (seg) novo.ping = setInterval(() => ws.readyState === 1 && ws.send('ping'), seg * 1000)
+
+    novo.timer = setInterval(() => {
+      const dt = Date.now() - novo.inicio
+      $(`[data-t="${modo}"]`).textContent = mmss(dt)
+      $(`[data-gb="${modo}"]`).textContent = `${(dt / 1000 * MB).toFixed(1)} GB-s se não hibernar`
+    }, 1000)
+  }
+
+  ws.onmessage = ev => {
+    novo.msgs++
+    $(`[data-m="${modo}"]`).textContent = novo.msgs
+    try {
+      const d = JSON.parse(ev.data)
+      $(`[data-c="${modo}"]`).textContent = d.conectados
+      if (d.viaAnexo) log(`[${modo}] objeto tinha hibernado — sessão recuperada do anexo`)
+    } catch {}
+  }
+
+  ws.onclose = () => { log(`[${modo}] desconectado`); limpar(modo) }
+  ws.onerror = () => log(`[${modo}] erro de conexão`)
+}
+
+function desconectar(modo) { estado[modo]?.ws?.close(); limpar(modo) }
+
+function limpar(modo) {
+  const e = estado[modo]
+  if (!e) return
+  clearInterval(e.timer); clearInterval(e.ping)
+  e.ws = null
+  $(`[data-e="${modo}"]`).textContent = 'desconectado'
+  const b = document.querySelector(`[data-modo="${modo}"]`)
+  b.textContent = 'Conectar'; b.classList.remove('parar')
+}
+
+for (const b of document.querySelectorAll('[data-modo]'))
+  b.onclick = () => conectar(b.dataset.modo)
+
+$('#geral').textContent = 'limite gratuito: 13.000 GB-s/dia · 100 mil requisições/dia'
+log('Deixe os dois conectados pelo mesmo tempo e compare no painel da Cloudflare.')
+</script>

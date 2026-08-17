@@ -1,0 +1,14 @@
+{
+  "name": "disgalm-do-poc",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Mede o consumo de Durable Object no plano gratuito: hibernada vs residente.",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "check": "wrangler deploy --dry-run --outdir=.wrangler/dryrun"
+  },
+  "devDependencies": {
+    "wrangler": "^4"
+  }
+}

@@ -1,0 +1,25 @@
+name = "disgalm-do-poc"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+# A página de teste. Requisição de asset estático não conta no limite.
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "HIBERNADA"
+class_name = "SalaHibernada"
+
+[[durable_objects.bindings]]
+name = "VIVA"
+class_name = "SalaViva"
+
+# new_sqlite_classes, NÃO new_classes: só o backend SQLite existe no plano
+# gratuito. Com new_classes o deploy exige plano pago.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["SalaHibernada", "SalaViva"]
+
+[observability]
+enabled = true
