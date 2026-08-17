@@ -148,6 +148,42 @@ A UI mostra o custo estimado de subida ao vivo, e reporta **pedido vs obtido** �
 
 `contentHint` passou a seguir o preset: `detail` só até 10 fps (ler código), `motion` acima. Foi o `detail` fixo que deixou tela de jogo parecendo travada.
 
+## Medição: Durable Object no plano gratuito (2026-08-17)
+
+Pergunta: a sinalização cabe no limite gratuito da Cloudflare (13.000 GB-s/dia)?
+
+Duas classes de DO idênticas, diferindo só em como aceitam o WebSocket. **1 minuto de conexão em cada**, sem tráfego (ping desligado, que é o que uma sala parada faz de verdade).
+
+| | `SalaHibernada` | `SalaViva` |
+|---|---|---|
+| Aceita com | `ctx.acceptWebSocket()` | `servidor.accept()` |
+| **Billable duration** | **0,02 GB-s** | **48,63 GB-s** |
+| WebSocket inbound | 6 *hibernatable* | 4 *non-hibernatable* |
+| Memória de pico | 983 kB | 786 kB |
+
+**~2.400× de diferença** para o mesmo trabalho. A classificação `hibernatable` / `non-hibernatable` vem do próprio runtime, então é confirmação da plataforma e não inferência a partir do número.
+
+**Conclusão:** cabe no plano gratuito com folga, **desde que use hibernação**. Sem ela, ~1.380 GB-s por call de 3h, ou seja teto de ~9 calls/dia. Com ela, ruído.
+
+**Achado não previsto:** o gráfico do `SalaViva` continua gerando picos às 20:40 e 20:45, depois de os testes terminarem por volta de 20:35. 1 minuto de conexão produziu ~48 GB-s, equivalente a ~6 minutos de residência. O modo não-hibernante **continua cobrando depois que o cliente foi embora**.
+
+**O que isto decide:** que a Cloudflare é viável e gratuita para a sinalização, e que hibernação é obrigatória e não opcional. **O que não decide:** se vale migrar — o Funnel funciona hoje e subir o `server.js` num host não custa reescrita nenhuma. O PoC comprou o número, não a decisão.
+
+Os "Errors" (2 e 3) são desconexão de cliente, não falha; no `SalaViva` o detalhamento mostra `Client disconnected 2`. No `SalaHibernada` o contador diz 2 mas o detalhamento está zerado — atraso de categorização, **não verificado**.
+
+### Segunda rodada, ~8 min (pendente de leitura)
+
+Os números acima são da janela de **1 minuto (~20:30–20:40)**. Depois deles rodou uma segunda leva de **7:56 em cada modo**, então o acumulado do dia soma as duas. Ao analisar, filtrar por janela ou tratar como ponto independente — não comparar contra a tabela acima sem separar.
+
+Previsão registrada antes de olhar, para servir de teste:
+
+| | Esperado |
+|---|---|
+| `SalaViva` | 61 GB-s de tempo de parede, mais a cauda pós-desconexão observada na 1ª rodada → algo entre **61 e 90 GB-s** |
+| `SalaHibernada` | continuar em **ruído**, na casa de centésimos |
+
+Se o `SalaHibernada` crescer proporcional ao tempo conectado, a conclusão da 1ª rodada cai e a hibernação não estaria funcionando como medido.
+
 ## Defeitos encontrados em uso real
 
 Todos da **mesma raiz**, que eu tratei como três casos isolados antes de perceber: um elemento `<video>`/`<audio>` reproduz **apenas a primeira track de cada tipo** do `MediaStream`. Acumular tracks não dá erro — dá silêncio ou quadro congelado.
