@@ -1,0 +1,10 @@
+{
+  "name": "disgalm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Compartilhamento de tela e áudio entre amigos, via WebRTC. Sem dependências.",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

@@ -1,0 +1,165 @@
+<meta charset="utf-8">
+<title>Disgalm — PoC 1 e 2: captura</title>
+<style>
+  body { font: 14px/1.5 system-ui, sans-serif; margin: 2rem; max-width: 60rem; }
+  button { font: inherit; padding: .5rem .9rem; margin: 0 .4rem .4rem 0; cursor: pointer; }
+  pre { background: #1116; padding: .8rem; border-radius: 6px; overflow-x: auto; }
+  .ok { color: #0a0; font-weight: 600; }
+  .bad { color: #c00; font-weight: 600; }
+  video { width: 100%; max-width: 40rem; background: #000; border-radius: 6px; }
+  .meter { display: inline-block; width: 14rem; height: .8rem; background: #ccc4; vertical-align: middle; }
+  .meter > i { display: block; height: 100%; background: #0a0; width: 0; }
+  section { border-top: 1px solid #8884; padding-top: 1rem; margin-top: 1rem; }
+</style>
+
+<h1>Disgalm — PoC 1 e 2</h1>
+<p>Rode com música tocando no sistema. Ou use o tom de teste: <code>paplay tone.wav</code></p>
+
+<section>
+  <h2>PoC 1 — Áudio do desktop (loopback do PipeWire)</h2>
+  <button id="perm">1. Pedir permissão e listar dispositivos</button>
+  <select id="devs"></select>
+  <button id="cap">2. Capturar dispositivo selecionado</button>
+  <div id="a-verdict"></div>
+  <p>
+    <button id="tone">▶ Tocar tom de teste (440 Hz L / 880 Hz R)</button>
+    <audio id="toneEl" src="tone.wav" loop></audio>
+    <span id="ctxstate"></span>
+  </p>
+  <p>
+    L <span class="meter"><i id="mL"></i></span> <span id="dL">—</span> &nbsp;
+    R <span class="meter"><i id="mR"></i></span> <span id="dR">—</span>
+  </p>
+  <div id="sig-verdict"></div>
+  <pre id="a-info">—</pre>
+  <button id="rec">3. Gravar 8s e reproduzir</button>
+  <audio id="play" controls></audio>
+</section>
+
+<section>
+  <h2>PoC 2 — Captura de tela (portal do Wayland/KDE)</h2>
+  <button id="scr">Capturar tela</button>
+  <div id="v-verdict"></div>
+  <pre id="v-info">—</pre>
+  <video id="prev" autoplay muted playsinline></video>
+</section>
+
+<script>
+const $ = id => document.getElementById(id)
+const show = (el, ok, msg) => el.innerHTML = `<span class="${ok ? 'ok' : 'bad'}">${ok ? 'PASSOU' : 'FALHOU'}</span> — ${msg}`
+
+// ---------- PoC 1 ----------
+$('perm').onclick = async () => {
+  // sem permissão concedida, enumerateDevices esconde os labels
+  try { (await navigator.mediaDevices.getUserMedia({ audio: true })).getTracks().forEach(t => t.stop()) } catch (e) {}
+  const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput')
+  $('devs').innerHTML = devs.map(d => `<option value="${d.deviceId}">${d.label || '(sem label)'}</option>`).join('')
+  const loop = devs.find(d => /loopback/i.test(d.label))
+  if (loop) $('devs').value = loop.deviceId
+  show($('a-verdict'), !!loop, loop
+    ? `WebRTC_Loopback visível para o navegador (${devs.length} entradas de áudio)`
+    : `WebRTC_Loopback NÃO aparece. ${devs.length} entradas listadas — o módulo do PipeWire está carregado?`)
+}
+
+let audioStream
+$('cap').onclick = async () => {
+  audioStream?.getTracks().forEach(t => t.stop())
+  audioStream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      deviceId: { exact: $('devs').value },
+      echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+      channelCount: 2,
+    },
+  })
+  const track = audioStream.getAudioTracks()[0]
+  const s = track.getSettings()
+  // o navegador pode ignorar o que foi pedido — o que vale é getSettings()
+  const filtrosOff = s.echoCancellation === false && s.noiseSuppression === false && s.autoGainControl === false
+  const estereo = s.channelCount === 2
+  show($('a-verdict'), filtrosOff && estereo,
+    `filtros ${filtrosOff ? 'desligados' : 'AINDA LIGADOS (mata música)'}, canais=${s.channelCount ?? '?'}`)
+  $('a-info').textContent = 'track.getSettings():\n' + JSON.stringify(s, null, 2)
+  medir(audioStream)
+}
+
+function medir(stream) {
+  const ctx = new AudioContext({ sampleRate: 48000 })
+  // política de autoplay pode deixar o contexto suspenso: aí o medidor marca
+  // silêncio mesmo com áudio passando. Mostrar o estado evita esse falso negativo.
+  ctx.resume()
+  const mostraEstado = () => {
+    const ok = ctx.state === 'running'
+    $('ctxstate').innerHTML = `AudioContext: <span class="${ok ? 'ok' : 'bad'}">${ctx.state}</span>`
+  }
+  ctx.onstatechange = mostraEstado
+  mostraEstado()
+  const split = ctx.createChannelSplitter(2)
+  ctx.createMediaStreamSource(stream).connect(split)
+  const an = [ctx.createAnalyser(), ctx.createAnalyser()]
+  an.forEach((a, i) => { a.fftSize = 8192; split.connect(a, i) })
+  const buf = an.map(a => new Float32Array(a.fftSize))
+  const spec = an.map(a => new Float32Array(a.frequencyBinCount))
+  const hz = i => i * ctx.sampleRate / an[0].fftSize
+  const pico = [0, 0], nivel = [-240, -240]
+  const tick = () => {
+    ;[0, 1].forEach(i => {
+      an[i].getFloatTimeDomainData(buf[i])
+      let sum = 0
+      for (const v of buf[i]) sum += v * v
+      const db = 20 * Math.log10(Math.sqrt(sum / buf[i].length) + 1e-12)
+      an[i].getFloatFrequencyData(spec[i])
+      let pk = 0
+      for (let k = 1; k < spec[i].length; k++) if (spec[i][k] > spec[i][pk]) pk = k
+      const nome = i ? 'R' : 'L'
+      $('m' + nome).style.width = Math.max(0, Math.min(100, (db + 60) / 60 * 100)) + '%'
+      $('d' + nome).textContent = `${db.toFixed(1)} dBFS · pico ${hz(pk).toFixed(0)} Hz`
+      pico[i] = hz(pk); nivel[i] = db
+    })
+    // veredito de sinal: só com o tom de teste tocando, L deve dar 440 e R 880.
+    // Se os dois derem a mesma frequência, houve downmix para mono no caminho.
+    if (nivel[0] > -60 || nivel[1] > -60) {
+      const perto = (f, alvo) => Math.abs(f - alvo) < 30
+      const certo = perto(pico[0], 440) && perto(pico[1], 880)
+      const mono = Math.abs(pico[0] - pico[1]) < 5
+      show($('sig-verdict'), certo, certo
+        ? 'sinal chegando, L=440 Hz e R=880 Hz — estéreo preservado ponta a ponta'
+        : mono ? 'L e R com a MESMA frequência — downmix para mono no caminho'
+               : `sinal chegando, mas L=${pico[0].toFixed(0)} Hz R=${pico[1].toFixed(0)} Hz (esperado 440/880 — só vale com o tom de teste)`)
+    } else {
+      $('sig-verdict').innerHTML = '<span class="bad">SEM SINAL</span> — nada tocando, ou o AudioContext está suspenso. Clique em "Tocar tom de teste".'
+    }
+    requestAnimationFrame(tick)
+  }
+  tick()
+}
+
+$('tone').onclick = () => {
+  const el = $('toneEl')
+  if (el.paused) { el.play(); $('tone').textContent = '■ Parar tom de teste' }
+  else { el.pause(); el.currentTime = 0; $('tone').textContent = '▶ Tocar tom de teste (440 Hz L / 880 Hz R)' }
+}
+
+$('rec').onclick = async () => {
+  if (!audioStream) return alert('capture o dispositivo primeiro')
+  const chunks = []
+  const mr = new MediaRecorder(audioStream, { audioBitsPerSecond: 128000 })
+  mr.ondataavailable = e => chunks.push(e.data)
+  mr.onstop = () => { $('play').src = URL.createObjectURL(new Blob(chunks)); $('play').play() }
+  mr.start()
+  $('rec').textContent = 'gravando…'
+  setTimeout(() => { mr.stop(); $('rec').textContent = '3. Gravar 8s e reproduzir' }, 8000)
+}
+
+// ---------- PoC 2 ----------
+$('scr').onclick = async () => {
+  const st = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+  $('prev').srcObject = st
+  const v = st.getVideoTracks()[0]
+  const temAudio = st.getAudioTracks().length > 0
+  show($('v-verdict'), true,
+    `vídeo OK. Track de áudio do getDisplayMedia: ${temAudio ? 'VEIO (raro no Linux)' : 'não veio — usar o loopback do PoC 1'}`)
+  $('v-info').textContent =
+    'video.getSettings():\n' + JSON.stringify(v.getSettings(), null, 2) +
+    '\n\nlabel: ' + v.label
+}
+</script>
