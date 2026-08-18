@@ -208,32 +208,56 @@ Todos da **mesma raiz**, que eu tratei como três casos isolados antes de perceb
 
 **Conhecido e não corrigido:** cada ciclo de compartilhar/parar usa `removeTrack` + `addTrack`, o que renegocia e aparentemente deixa transceiver morto (o `ontrack` remoto dispara de novo a cada ciclo). O SDP cresce a cada rodada. O certo é `replaceTrack`, que dispensa renegociação.
 
-## Arquitetura (0.3.0)
+## Arquitetura (0.4.0)
 
-Sinalização e página na Cloudflare; TURN e captura em casa.
+Tudo na Cloudflare, exceto o que não pode sair da máquina.
 
 ```mermaid
 graph LR
-  subgraph nuvem["Cloudflare (grátis)"]
-    W[Worker: assets + /ice] --> D[Durable Object: uma por sala]
+  subgraph nuvem["Cloudflare — plano gratuito"]
+    W["Worker: cliente + /ice"] --> D["Durable Object: uma por sala"]
+    T["TURN: relay quando o P2P falha"]
   end
-  subgraph casa["marucs-note"]
-    T[coturn]
+  subgraph pc["No PC de quem compartilha"]
+    L["módulo do PipeWire: áudio do sistema como microfone"]
   end
-  A[navegador A] -- wss: SDP/ICE --> D
-  B[navegador B] -- wss: SDP/ICE --> D
-  A <-- mídia P2P, DTLS/SRTP --> B
-  A -. relay quando o P2P falha .-> T
-  B -. relay quando o P2P falha .-> T
+  A["navegador A"] -->|"wss: SDP e ICE"| D
+  B["navegador B"] -->|"wss: SDP e ICE"| D
+  A <-->|"mídia P2P, DTLS/SRTP"| B
+  A -.->|"relay"| T
+  B -.->|"relay"| T
+  L -.-> A
 ```
 
-O Worker nunca vê mídia — só repassa SDP e ICE. O TURN não precisa de TLS: a mídia é DTLS/SRTP de ponta a ponta por conta própria.
+**Nada entra na máquina.** Sem port-forward, sem coturn, sem Funnel, sem processo. Sobrou o módulo do PipeWire, que é local por natureza: captura de áudio do sistema não tem versão em nuvem. Ele morre no reboot e o `loopback.sh` recria.
+
+**O Worker nunca vê mídia** — só repassa SDP e ICE. Já o TURN vê tudo, e por isso a conta de banda dele é a que importa: 1 TB grátis por mês, ~165 h no preset Equilíbrio e ~29 h no 4K60.
+
+**As credenciais do TURN são efêmeras.** O Worker chama a API da Cloudflare a cada `/ice` e devolve usuário e senha temporários; o par (key id, api token) fica em secrets e **nunca chega ao navegador**. É melhor que o coturn, onde a senha estática ia na página e ficava com quem a abrisse.
+
+### O que a noite provou e o que derrubou
+
+| Decisão inicial | Como terminou |
+|---|---|
+| IP público e port-forward em casa | **desnecessários** — nada entra na máquina |
+| coturn próprio | substituído; nunca passou de teste com hairpin |
+| Mesh P2P para 4 | mantida; o teto é a subida de quem compartilha |
+| Chrome/Edge obrigatório | mantida; Firefox não capta áudio de sistema |
+| Captura nativa do navegador | mantida; OBS nunca foi necessário |
+
+O relay externo só foi **provado** com o TURN da Cloudflare, forçando `iceTransportPolicy: 'relay'` entre duas redes. O coturn passou a noite inteira sem essa prova.
+
+### Detalhes que custaram tempo
 
 **Um cliente, dois backends.** Sala e nome vão na URL porque o Worker precisa deles **antes** do upgrade, para escolher a Durable Object; o `server.js` local ignora a query e usa a mensagem `join`, que o Worker por sua vez ignora. O mesmo `public/index.html` roda nos dois.
 
-**`public/` contém só cliente.** Assets do Worker são publicados na web: apontá-los para um diretório com `cert.pem` e `turn.env` dentro publicaria a chave privada e a senha do TURN por URL. Os segredos ficam em `local/`, e o `.gitignore` não protegeria nada aqui — o wrangler lê disco, não git.
+**`public/` contém só cliente.** Assets do Worker são publicados na web: apontá-los para um diretório com `cert.pem` e `turn.env` dentro publicaria a chave privada por URL. Os segredos ficam em `local/`, e o `.gitignore` não protegeria nada aqui — o wrangler lê disco, não git.
 
-Duas armadilhas de ambiente, ambas caras: `node:22-alpine` é musl e o `workerd` é glibc, então `wrangler dev` morre com ENOENT; e rodar o container com `-u $(id -u)` faz o `workerd` **pendurar sem erro nenhum** em vez de reclamar de permissão.
+**Um elemento de mídia reproduz só a primeira track de cada tipo.** Foi a raiz de quatro defeitos distintos. Voz e áudio do sistema, tela e câmera: cada um precisa do seu elemento, e o emissor anuncia o `streamId` de cada fonte porque o receptor não distingue olhando a track.
+
+**`removeTrack` no emissor não encerra a track no receptor** — ela só fica muda, `ended` nunca dispara, e o `<video>` congela no último quadro. Por isso o anúncio é a fonte da verdade: track cujo `streamId` sumiu do anúncio está morta.
+
+**Duas armadilhas de ambiente:** `node:22-alpine` é musl e o `workerd` é glibc, então `wrangler dev` morre com ENOENT; e rodar o container com `-u $(id -u)` faz o `workerd` **pendurar sem erro nenhum** em vez de reclamar de permissão.
 
 ## Entregável
 
