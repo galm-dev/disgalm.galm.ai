@@ -7,17 +7,46 @@ import { DurableObject } from 'cloudflare:workers'
 
 const MAX = 4  // ver a conta de banda em PLANO-POC.md
 
-const env2ice = env => {
+// O TURN da Cloudflare não tem usuário e senha fixos: credenciais são geradas
+// por API, com validade. O par (key id, api token) fica em secrets e NUNCA
+// chega ao navegador — só o usuário/senha efêmeros descem para o cliente.
+async function turnCloudflare(env) {
+  if (!env.CF_TURN_KEY_ID || !env.CF_TURN_API_TOKEN) return []
+  try {
+    const r = await fetch(
+      `https://rtc.live.cloudflare.com/v1/turn/keys/${env.CF_TURN_KEY_ID}/credentials/generate-ice-servers`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${env.CF_TURN_API_TOKEN}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ ttl: 86400 }),
+      })
+    if (!r.ok) { console.log('TURN Cloudflare: HTTP', r.status); return [] }
+    return (await r.json()).iceServers || []
+  } catch (e) {
+    console.log('TURN Cloudflare falhou:', e.message)
+    return []
+  }
+}
+
+// coturn de casa, como segunda opção. Ter os dois é de graça e cobre o caso de
+// um deles estar inalcançável para algum par — que é exatamente o defeito que
+// nunca conseguimos descartar no coturn (só houve teste com hairpin).
+const turnDeCasa = env => {
+  if (!env.TURN_HOST || !env.TURN_USER || !env.TURN_PASS) return []
+  // Se TURN_HOST já é a Cloudflare, esta entrada duplicaria os endereços dela
+  // com uma senha estática que lá não existe — e o navegador gasta dezenas de
+  // tentativas com erro 701 antes de desistir.
+  if (/turn\.cloudflare\.com$/.test(env.TURN_HOST)) return []
   const host = `${env.TURN_HOST}:${env.TURN_PORT || '3478'}`
-  if (!env.TURN_HOST || !env.TURN_USER || !env.TURN_PASS)
-    return [{ urls: 'stun:stun.cloudflare.com:3478' }]
-  return [
-    { urls: `stun:${host}` },
-    {
-      urls: [`turn:${host}?transport=udp`, `turn:${host}?transport=tcp`],
-      username: env.TURN_USER, credential: env.TURN_PASS,
-    },
-  ]
+  return [{
+    urls: [`turn:${host}?transport=udp`, `turn:${host}?transport=tcp`],
+    username: env.TURN_USER, credential: env.TURN_PASS,
+  }]
+}
+
+async function env2ice(env) {
+  const lista = [...await turnCloudflare(env), ...turnDeCasa(env)]
+  return lista.length ? lista : [{ urls: 'stun:stun.cloudflare.com:3478' }]
 }
 
 export class Sala extends DurableObject {
@@ -89,7 +118,7 @@ export default {
     const url = new URL(req.url)
 
     if (url.pathname === '/ice')
-      return Response.json(env2ice(env), { headers: { 'cache-control': 'no-store' } })
+      return Response.json(await env2ice(env), { headers: { 'cache-control': 'no-store' } })
 
     if (url.pathname === '/ws') {
       if (req.headers.get('Upgrade') !== 'websocket')

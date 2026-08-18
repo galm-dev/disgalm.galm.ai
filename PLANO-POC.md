@@ -247,14 +247,19 @@ Sem framework e **sem uma única dependência** — o `pnpm` da máquina está q
 
 Subir: `./loopback.sh && node server.js` → `https://localhost:8444/`
 
-## Portas no modem → `<ip-da-lan>`
+## Portas no modem — nenhuma (desde 2026-08-18)
 
-| Porta | Proto | Para quê |
+Todos os port-forwards foram fechados. Nada entra na máquina.
+
+| Porta | Era para | Por que saiu |
 |---|---|---|
-| `3478` | UDP | TURN/STUN, caminho principal |
-| `3478` | TCP | TURN over TCP, rede restritiva |
-| `49160–49200` | UDP | faixa de relay do coturn |
-| `8444` | TCP | app + sinalização WSS (ou traduzir 443 externa → 8444) |
+| `3478/udp`, `3478/tcp` | coturn | relay passou para a Cloudflare |
+| `49160-49200/udp` | faixa de relay do coturn | idem |
+| `443/tcp` | o app | substituído pelo Worker |
+
+Fechar isto **não afeta o P2P**: WebRTC atravessa NAT por hole-punching com STUN e nunca precisou de forward. Os forwards existiam porque o coturn era um servidor aguardando conexão de entrada.
+
+Para voltar ao coturn seria preciso reabrir essas portas **e** corrigir o `external-ip` do `turnserver.conf`, que tem o IP residencial literal e provavelmente já mudou.
 
 ## Achados
 

@@ -53,6 +53,7 @@
   .tile { flex: 0 0 11rem; background: var(--bg3); border-radius: var(--r); overflow: hidden;
           cursor: pointer; border: 2px solid transparent; position: relative; }
   .tile.focado { border-color: var(--acc); }
+  .tile.eu video { transform: scaleX(-1); }   /* espelho: a própria câmera */
   .tile.falando { border-color: var(--ok); }
   .tile video { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #000; display: block; }
   .tile .semvideo { width: 100%; aspect-ratio: 16/9; display: grid; place-items: center;
@@ -85,6 +86,9 @@
   <h1>Disgalm</h1>
   <input id="sala-cod" type="text" placeholder="código da sala" value="galm">
   <input id="nome" type="text" placeholder="seu nome">
+  <label style="font-size:.85rem;color:var(--dim);display:flex;gap:.4rem;align-items:center">
+    <input type="checkbox" id="sorelay"> forçar relay (testa o TURN)
+  </label>
   <button id="entrar">Entrar</button>
 </div>
 
@@ -113,6 +117,8 @@
     <div class="esq">
       <button id="b-mic">🎤 Mudo</button>
       <button id="b-surdo">🔇 Ensurdecer</button>
+      <button id="b-cam">📹 Câmera</button>
+      <select id="camdev" title="qual câmera" hidden></select>
       <button id="b-tela">🖥 Compartilhar</button>
       <select id="loopdev" title="áudio do sistema (Linux)"></select>
       <select id="preset" title="qualidade da sua tela">
@@ -177,6 +183,7 @@ const PRESETS = {
   max:    { w: 3840, h: 2160, fps: 60, kbps: 25000, hint: 'motion' },
 }
 let qualidade = { ...PRESETS.equil }
+const CAP_CAM = 800_000   // rosto não precisa do bitrate de tela
 
 // Em malha você envia uma cópia para CADA par, e as conexões não coordenam
 // entre si: cada uma sonda a banda sozinha e a que subir primeiro fica com
@@ -188,7 +195,7 @@ const kbpsPorPar = () => {
   return Math.min(qualidade.kbps, Math.floor(orc / Math.max(1, pares.size)))
 }
 
-let ws, meuId, ice, micStream, telaStream
+let ws, meuId, ice, micStream, telaStream, camStream
 let foco = null, surdo = false
 
 // Sem mic é o mesmo que mudo do ponto de vista de quem olha o tile.
@@ -204,6 +211,10 @@ function anunciar(para) {
     compartilhando: !!telaStream,
     streamId: telaStream?.id || null,
     temAudio: !!telaStream?.getAudioTracks().length,
+    // O receptor não distingue tela de câmera olhando a track: as duas são
+    // vídeo. Quem transmite anuncia o streamId de cada uma.
+    camera: !!camStream,
+    idCam: camStream?.id || null,
     mudo: estouMudo(),
     surdo,
   }
@@ -233,6 +244,49 @@ async function pegarMic() {
     $('b-mic').disabled = true
     $('b-mic').textContent = '🎤 sem mic'
   }
+}
+
+async function listarCams() {
+  const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput')
+  $('camdev').innerHTML = devs.map(d => `<option value="${d.deviceId}">${d.label || 'câmera'}</option>`).join('')
+  $('camdev').hidden = devs.length < 2      // seletor só aparece se houver escolha
+}
+
+async function alternarCam() {
+  if (camStream) return pararCam()
+  const dev = $('camdev').value
+  camStream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      ...(dev ? { deviceId: { exact: dev } } : {}),
+      width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 },
+    },
+  })
+  const t = camStream.getVideoTracks()[0]
+  t.contentHint = 'motion'                  // rosto se move: quadros valem mais que nitidez
+  t.onended = () => pararCam()
+  for (const [, p] of pares) p.pc.addTrack(t, camStream)
+  $('b-cam').textContent = '📹 Parar câmera'
+  $('b-cam').classList.add('on')
+  await listarCams()                        // os rótulos só existem depois da permissão
+  desenharTile('local')
+  anunciar()
+  aplicarQualidade()
+}
+
+function pararCam() {
+  if (!camStream) return
+  const ts = camStream.getTracks()
+  for (const [, p] of pares)
+    for (const sd of p.pc.getSenders())
+      if (sd.track && ts.includes(sd.track)) p.pc.removeTrack(sd)
+  for (const t of ts) t.stop()
+  camStream = null
+  $('b-cam').textContent = '📹 Câmera'
+  $('b-cam').classList.remove('on')
+  desenharTile('local')
+  if (foco === 'local' && !telaStream) focar(proximoComVideo())
+  anunciar()
+  atualizarDiag()
 }
 
 async function compartilhar() {
@@ -343,8 +397,11 @@ async function aplicarQualidade() {
       if (s.track?.kind !== 'video') continue
       const par = s.getParameters()
       par.encodings = par.encodings?.length ? par.encodings : [{}]
-      par.encodings[0].maxBitrate = kbpsPorPar() * 1000
-      par.encodings[0].maxFramerate = q.fps
+      // Câmera e tela dividem o mesmo uplink mas não o mesmo teto: rosto em
+      // 800 kbps é bom, e o resto fica para a tela.
+      const ehCam = !!camStream?.getVideoTracks().includes(s.track)
+      par.encodings[0].maxBitrate = ehCam ? CAP_CAM : kbpsPorPar() * 1000
+      par.encodings[0].maxFramerate = ehCam ? 30 : q.fps
       await s.setParameters(par).catch(e => log('setParameters:', e.message))
     }
 
@@ -369,10 +426,12 @@ async function aplicarQualidade() {
 // Malha: você envia sua tela para cada par separadamente. É a conta que decide
 // se 4K60 é viável no seu link, e ela cresce com o número de pessoas.
 function custoUpload() {
-  if (!telaStream) return ''
-  const por = kbpsPorPar(), n = Math.max(1, pares.size)
+  if (!telaStream && !camStream) return ''
+  const n = Math.max(1, pares.size)
+  const por = (telaStream ? kbpsPorPar() : 0) + (camStream ? CAP_CAM / 1000 : 0)
   const tot = (por * n / 1000).toFixed(1)
-  const cortado = por < qualidade.kbps ? ` (teto ${qualidade.kbps / 1000} cortado p/ ${por / 1000})` : ''
+  const cortado = telaStream && kbpsPorPar() < qualidade.kbps
+    ? ` (teto ${qualidade.kbps / 1000} cortado p/ ${kbpsPorPar() / 1000})` : ''
   return ` · subindo ~${tot} Mbps = ${por / 1000} × ${n}${cortado}`
 }
 
@@ -396,11 +455,11 @@ const ICONES = {
 }
 
 function dadosTile(id) {
-  if (id === 'local') return { nome: 'você', video: telaStream, local: true,
+  if (id === 'local') return { nome: 'você', tela: telaStream, cam: camStream, local: true,
     estado: { compartilhando: !!telaStream, temAudio: !!telaStream?.getAudioTracks().length,
-              mudo: estouMudo(), surdo } }
+              camera: !!camStream, mudo: estouMudo(), surdo } }
   const p = pares.get(id)
-  return p && { nome: p.nome, video: p.video, estado: p.estado, local: false }
+  return p && { nome: p.nome, tela: p.tela, cam: p.cam, estado: p.estado, local: false }
 }
 
 function desenharTile(id) {
@@ -420,7 +479,8 @@ function desenharTile(id) {
     $('tira').append(el)
   }
 
-  const temVideo = d.video?.getVideoTracks().length
+  // O tile é a PESSOA (câmera ou inicial); a tela compartilhada vai no palco.
+  const temVideo = d.cam?.getVideoTracks().length
   el.innerHTML =
     (temVideo ? '<video autoplay playsinline muted></video>' : `<div class="semvideo">${inicial(d.nome)}</div>`) +
     `<div class="env"></div><div class="nome"><span>${d.nome}</span><span class="badges">
@@ -434,8 +494,9 @@ function desenharTile(id) {
        <label>tela <input type="range" min="0" max="1" step="0.01" value="1" data-tipo="tela"></label>
      </div>`)
 
-  if (temVideo) el.querySelector('video').srcObject = d.video
+  if (temVideo) el.querySelector('video').srcObject = d.cam
   el.classList.toggle('focado', foco === id)
+  el.classList.toggle('eu', !!d.local)
 
   for (const inp of el.querySelectorAll('.vols input')) {
     const p = pares.get(id)
@@ -451,8 +512,10 @@ function desenharTile(id) {
 function focar(id) {
   foco = id
   const d = id && dadosTile(id)
-  const temVideo = d?.video?.getVideoTracks().length
-  $('v-palco').srcObject = temVideo ? d.video : null
+  const fonte = d?.tela?.getVideoTracks().length ? d.tela
+              : d?.cam?.getVideoTracks().length ? d.cam : null
+  const temVideo = !!fonte
+  $('v-palco').srcObject = fonte
   $('v-palco').style.display = temVideo ? '' : 'none'
   $('vazio').style.display = temVideo ? 'none' : ''
   $('v-palco').muted = true   // o áudio sai pelos elementos <audio>, não pelo palco
@@ -465,8 +528,9 @@ function focar(id) {
 }
 
 const proximoComVideo = () =>
-  [...pares.keys()].find(id => pares.get(id).video.getVideoTracks().length) ||
-  (telaStream ? 'local' : null)
+  [...pares.keys()].find(id => pares.get(id).tela.getVideoTracks().length) ||
+  [...pares.keys()].find(id => pares.get(id).cam.getVideoTracks().length) ||
+  (telaStream || camStream ? 'local' : null)
 
 // ---------- áudio recebido ----------
 
@@ -478,6 +542,39 @@ function aplicarVolumes(id) {
 
 // Classifica a track pelo streamId anunciado por quem compartilha: o stream da
 // tela é o único que ele anuncia. Sem isso, voz e tela são indistinguíveis aqui.
+// Um <video> renderiza só a PRIMEIRA track de vídeo do stream. Manter no
+// máximo uma por destino, e a mais nova, senão track morta congela o quadro.
+function sincroniza(stream, tracks) {
+  for (const t of stream.getVideoTracks()) if (!tracks.includes(t)) stream.removeTrack(t)
+  for (const t of tracks) if (!stream.getVideoTracks().includes(t)) stream.addTrack(t)
+  for (const extra of stream.getVideoTracks().slice(0, -1)) stream.removeTrack(extra)
+}
+
+// Sem o streamId anunciado, tela e câmera seriam indistinguíveis aqui: as duas
+// são vídeo.
+//
+// E há um detalhe que não é óbvio: removeTrack no emissor NÃO encerra a track
+// no receptor — ela apenas fica muda, o evento 'ended' nunca dispara, e o
+// <video> segue exibindo o último quadro para sempre. Então quem manda é o
+// anúncio: track cujo streamId não é mais anunciado está morta e sai.
+function classificarVideo(id) {
+  const p = pares.get(id)
+  if (!p) return
+  const e = p.estado || {}
+  const sabemos = 'compartilhando' in e     // já recebemos anúncio deste par?
+  const cam = [], tela = []
+  for (const [sid, t] of p.videos) {
+    if (!sabemos) { tela.push(t); continue }   // antes do 1º anúncio, mostrar
+    if (sid === e.idCam) cam.push(t)
+    else if (sid === e.streamId) tela.push(t)
+    else p.videos.delete(sid)                  // fonte não anunciada: morta
+  }
+  sincroniza(p.cam, cam)
+  sincroniza(p.tela, tela)
+  desenharTile(id)
+  if (foco === id) focar(id)
+}
+
 function classificar(id) {
   const p = pares.get(id)
   if (!p) return
@@ -546,26 +643,31 @@ async function definirLocal(pc) {
 // ---------- WebRTC ----------
 
 function criarPar(id, nome, polite) {
-  const pc = new RTCPeerConnection({ iceServers: ice })
+  // 'relay' descarta candidatos host e srflx: se conectar assim, foi TURN de
+  // verdade. Sem isso, o par quase sempre fecha direto e o TURN nunca é exercido.
+  const pc = new RTCPeerConnection({
+    iceServers: ice,
+    iceTransportPolicy: $('sorelay').checked ? 'relay' : 'all',
+  })
   const p = { pc, polite, fazendoOferta: false, ignorandoOferta: false, nome,
-              video: new MediaStream(), audios: new Map(), volumes: { voz: 1, tela: 1 }, estado: {} }
+              // tela e câmera são as duas vídeo: só o streamId anunciado separa.
+              videos: new Map(), tela: new MediaStream(), cam: new MediaStream(),
+              audios: new Map(), volumes: { voz: 1, tela: 1 }, estado: {} }
   pares.set(id, p)
   desenharTile(id)
 
   if (micStream) for (const t of micStream.getTracks()) pc.addTrack(t, micStream)
   if (telaStream) for (const t of telaStream.getTracks()) pc.addTrack(t, telaStream)
+  if (camStream) for (const t of camStream.getTracks()) pc.addTrack(t, camStream)
 
   pc.ontrack = e => {
     const sid = e.streams[0]?.id || 'sem-stream'
     log(`track ${e.track.kind} de ${nome}`)
     if (e.track.kind === 'audio') return receberAudio(id, e.track, sid)
 
-    // Um <video> renderiza só a PRIMEIRA track de vídeo do stream: ao
-    // recompartilhar, a antiga (morta) continuaria congelando o quadro.
-    for (const antiga of p.video.getVideoTracks()) p.video.removeTrack(antiga)
-    p.video.addTrack(e.track)
-    e.track.addEventListener('ended', () => { p.video.removeTrack(e.track); desenharTile(id) })
-    desenharTile(id)
+    p.videos.set(sid, e.track)
+    e.track.addEventListener('ended', () => { p.videos.delete(sid); classificarVideo(id) })
+    classificarVideo(id)
     if (!foco || foco === 'local' && !telaStream) focar(id)
   }
 
@@ -604,7 +706,10 @@ async function tipoDeCaminho(id, pc) {
   if (!atual) return
   const l = st.get(atual.localCandidateId), r = st.get(atual.remoteCandidateId)
   const via = l?.candidateType === 'relay' || r?.candidateType === 'relay' ? 'RELAY (TURN)' : 'direto'
-  log(`caminho com ${pares.get(id)?.nome}: ${via} — ${l?.candidateType}/${r?.candidateType}`)
+  // Com dois TURN na lista, saber que houve relay não diz qual respondeu. O
+  // endereço do candidato relay é o do servidor que alocou.
+  const quem = l?.candidateType === 'relay' ? ` via ${l.address}` : ''
+  log(`caminho com ${pares.get(id)?.nome}: ${via}${quem} — ${l?.candidateType}/${r?.candidateType}`)
 }
 
 async function porQueFalhou(id, pc) {
@@ -667,8 +772,7 @@ async function receberSinal(id, data) {
     if (data.estado) {
       p.estado = data.estado
       classificar(id)
-      desenharTile(id)
-      if (foco === id) focar(id)
+      classificarVideo(id)
       return
     }
     if (data.description) {
@@ -695,6 +799,7 @@ async function entrarNaSala() {
   log('ICE:', ice.map(s => s.urls).flat().join(' '))
   await pegarMic()
   await listarLoopback()
+  await listarCams()
   $('entrada').style.display = 'none'
   $('sala').classList.add('ativa')
   desenharTile('local')
@@ -757,6 +862,15 @@ $('entrar').onclick = async () => {
 }
 
 $('b-tela').onclick = () => compartilhar().catch(e => log(`tela — ${e.name}: ${e.message}`))
+
+$('b-cam').onclick = () => alternarCam().catch(e => log(`câmera — ${e.name}: ${e.message}`))
+
+// Trocar de câmera com ela ligada: derruba e reabre no dispositivo novo.
+$('camdev').onchange = async () => {
+  if (!camStream) return
+  pararCam()
+  await alternarCam().catch(e => log(`câmera — ${e.name}: ${e.message}`))
+}
 
 $('b-mic').onclick = () => {
   const t = micStream?.getAudioTracks()[0]
