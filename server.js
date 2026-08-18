@@ -8,24 +8,24 @@ import { extname, join, normalize } from 'node:path'
 
 // getUserMedia e getDisplayMedia só existem em contexto seguro. localhost já é
 // seguro; qualquer outro endereço exige TLS, senão as APIs somem para os amigos.
-const local = f => new URL(`./poc/local/${f}`, import.meta.url)
+const local = f => new URL(`./local/${f}`, import.meta.url)
 const tls = await Promise.all([readFile(local('key.pem')), readFile(local('cert.pem'))])
   .then(([key, cert]) => ({ key, cert }))
   .catch(() => null)
 
 // 8443 está ocupada pelo Tailscale nesta máquina.
 const PORT = process.env.PORT || (tls ? 8444 : 8080)
-const RAIZ = new URL('./poc/', import.meta.url).pathname
+const RAIZ = new URL('./public/', import.meta.url).pathname
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11' // RFC 6455
 
 const TIPOS = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.wav': 'audio/wav' }
 
-// Credenciais do TURN vivem em poc/local/ (fora do git) e são servidas ao
+// Credenciais do TURN vivem em local/ (fora do git) e são servidas ao
 // cliente por aqui, para não ficarem escritas no HTML.
 async function iceServers() {
   try {
     const env = Object.fromEntries(
-      (await readFile(new URL('./poc/local/turn.env', import.meta.url), 'utf8'))
+      (await readFile(new URL('./local/turn.env', import.meta.url), 'utf8'))
         .split('\n').filter(Boolean).map(l => l.split('=').map(s => s.trim()))
     )
     const url = `${env.TURN_HOST}:${env.TURN_PORT}`
@@ -44,7 +44,7 @@ const servidor = (tls ? criarHttps : criarHttp)(tls || {}, async (req, res) => {
     return res.end(JSON.stringify(await iceServers()))
   }
   const caminho = normalize(req.url.split('?')[0]).replace(/^(\.\.[/\\])+/, '')
-  const arquivo = join(RAIZ, caminho === '/' ? 'app.html' : caminho)
+  const arquivo = join(RAIZ, caminho === '/' ? 'index.html' : caminho)
   try {
     const corpo = await readFile(arquivo)
     res.writeHead(200, { 'content-type': TIPOS[extname(arquivo)] || 'application/octet-stream' })

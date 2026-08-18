@@ -1,6 +1,6 @@
 {
   "name": "disgalm",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "description": "Compartilhamento de tela e áudio entre amigos, via WebRTC. Sem dependências.",

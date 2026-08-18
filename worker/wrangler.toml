@@ -1,0 +1,26 @@
+name = "disgalm"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+
+# O cliente. Aponta para ../public, que contém SÓ arquivos de cliente: os
+# segredos ficam em ../local, fora daqui. Assets são publicados na web, então
+# um diretório com cert.pem dentro viraria chave privada acessível por URL.
+[assets]
+directory = "../public"
+binding = "ASSETS"
+
+[[durable_objects.bindings]]
+name = "SALA"
+class_name = "Sala"
+
+# new_sqlite_classes: só o backend SQLite existe no plano gratuito.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Sala"]
+
+[observability]
+enabled = true
+
+# TURN_HOST, TURN_PORT, TURN_USER e TURN_PASS entram como secrets, nunca aqui:
+#   ./wrangler.sh secret put TURN_HOST
+# Sem eles o /ice devolve só um STUN público e o relay não existe.

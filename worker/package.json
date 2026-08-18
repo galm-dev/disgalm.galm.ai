@@ -1,0 +1,11 @@
+{
+  "name": "disgalm-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sinalização do Disgalm: Worker + Durable Object com hibernação.",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "check": "wrangler deploy --dry-run --outdir=.wrangler/dryrun"
+  },
+  "devDependencies": { "wrangler": "^4" }
+}

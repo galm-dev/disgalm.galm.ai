@@ -184,6 +184,17 @@ Previsão registrada antes de olhar, para servir de teste:
 
 Se o `SalaHibernada` crescer proporcional ao tempo conectado, a conclusão da 1ª rodada cai e a hibernação não estaria funcionando como medido.
 
+**Resultado (acumulado do painel, descontando a 1ª rodada):**
+
+| | 1ª rodada | Acumulado | Incremento dos ~8 min |
+|---|---|---|---|
+| `SalaHibernada` | 0,02 | 0,04 | **+0,02 GB-s** |
+| `SalaViva` | 48,63 | 81,56 | **+32,93 GB-s** |
+
+A previsão do `SalaHibernada` acertou. **A do `SalaViva` errou:** previ 61–90 GB-s e vieram 33. O modelo supunha residência contínua a 128 MB (476 s × 0,128 = 61); os 33 medidos implicam ~257 s residentes, cerca de metade do tempo conectado. Ou o objeto não-hibernante também é descarregado às vezes, ou a duração cobrada não é tempo de parede puro — **não determinado**.
+
+Razão hibernada/viva: ~2.400× na 1ª rodada, ~1.600× na 2ª, ~2.000× no acumulado. A conclusão sobrevive a qualquer recorte, e agora está apoiada em duas durações diferentes em vez de uma.
+
 ## Defeitos encontrados em uso real
 
 Todos da **mesma raiz**, que eu tratei como três casos isolados antes de perceber: um elemento `<video>`/`<audio>` reproduz **apenas a primeira track de cada tipo** do `MediaStream`. Acumular tracks não dá erro — dá silêncio ou quadro congelado.
@@ -196,6 +207,33 @@ Todos da **mesma raiz**, que eu tratei como três casos isolados antes de perceb
 | Vídeo travado com áudio bom | Suspeita: `contentHint='detail'` manda o encoder sacrificar quadros para preservar resolução. Ótimo para ler código, péssimo para assistir jogo. | **não confirmado** — instrumentado com fps/kbps/freezes |
 
 **Conhecido e não corrigido:** cada ciclo de compartilhar/parar usa `removeTrack` + `addTrack`, o que renegocia e aparentemente deixa transceiver morto (o `ontrack` remoto dispara de novo a cada ciclo). O SDP cresce a cada rodada. O certo é `replaceTrack`, que dispensa renegociação.
+
+## Arquitetura (0.3.0)
+
+Sinalização e página na Cloudflare; TURN e captura em casa.
+
+```mermaid
+graph LR
+  subgraph nuvem["Cloudflare (grátis)"]
+    W[Worker: assets + /ice] --> D[Durable Object: uma por sala]
+  end
+  subgraph casa["marucs-note"]
+    T[coturn]
+  end
+  A[navegador A] -- wss: SDP/ICE --> D
+  B[navegador B] -- wss: SDP/ICE --> D
+  A <-- mídia P2P, DTLS/SRTP --> B
+  A -. relay quando o P2P falha .-> T
+  B -. relay quando o P2P falha .-> T
+```
+
+O Worker nunca vê mídia — só repassa SDP e ICE. O TURN não precisa de TLS: a mídia é DTLS/SRTP de ponta a ponta por conta própria.
+
+**Um cliente, dois backends.** Sala e nome vão na URL porque o Worker precisa deles **antes** do upgrade, para escolher a Durable Object; o `server.js` local ignora a query e usa a mensagem `join`, que o Worker por sua vez ignora. O mesmo `public/index.html` roda nos dois.
+
+**`public/` contém só cliente.** Assets do Worker são publicados na web: apontá-los para um diretório com `cert.pem` e `turn.env` dentro publicaria a chave privada e a senha do TURN por URL. Os segredos ficam em `local/`, e o `.gitignore` não protegeria nada aqui — o wrangler lê disco, não git.
+
+Duas armadilhas de ambiente, ambas caras: `node:22-alpine` é musl e o `workerd` é glibc, então `wrangler dev` morre com ENOENT; e rodar o container com `-u $(id -u)` faz o `workerd` **pendurar sem erro nenhum** em vez de reclamar de permissão.
 
 ## Entregável
 

@@ -699,8 +699,14 @@ async function entrarNaSala() {
   $('sala').classList.add('ativa')
   desenharTile('local')
 
-  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`)
-  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: $('sala-cod').value, name: $('nome').value || 'anon' }))
+  // Sala e nome vão na URL porque o Worker precisa deles ANTES do upgrade,
+  // para escolher o Durable Object. O server.js local ignora a query e usa a
+  // mensagem 'join'; o Worker ignora o 'join'. Um cliente serve aos dois.
+  const cod = $('sala-cod').value.trim().toLowerCase()
+  const meuNome = $('nome').value || 'anon'
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+  ws = new WebSocket(`${proto}://${location.host}/ws?sala=${encodeURIComponent(cod)}&nome=${encodeURIComponent(meuNome)}`)
+  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: cod, name: meuNome }))
   ws.onclose = () => log('sinalização caiu')
   ws.onmessage = async ev => {
     const m = JSON.parse(ev.data)

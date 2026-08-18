@@ -15,5 +15,5 @@ exec docker run --rm -it \
   -v "$PWD:/app" -w /app \
   -u "$(id -u):$(id -g)" \
   -e HOME=/app -e npm_config_cache=/tmp/npm \
-  node:22-alpine \
+  node:22-slim \
   npx wrangler "$@"
