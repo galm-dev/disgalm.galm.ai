@@ -20,22 +20,42 @@ const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11' // RFC 6455
 
 const TIPOS = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.wav': 'audio/wav' }
 
-// Credenciais do TURN vivem em local/ (fora do git) e são servidas ao
-// cliente por aqui, para não ficarem escritas no HTML.
+// Chaves do TURN vivem em local/ (fora do git). Quando são da Cloudflare,
+// o navegador recebe apenas credenciais efêmeras geradas pela API.
 async function iceServers() {
+  const env = {}
   try {
-    const env = Object.fromEntries(
-      (await readFile(new URL('./local/turn.env', import.meta.url), 'utf8'))
-        .split('\n').filter(Boolean).map(l => l.split('=').map(s => s.trim()))
-    )
-    const url = `${env.TURN_HOST}:${env.TURN_PORT}`
-    return [
-      { urls: `stun:${url}` },
-      { urls: [`turn:${url}?transport=udp`, `turn:${url}?transport=tcp`], username: env.TURN_USER, credential: env.TURN_PASS },
-    ]
+    for (const linha of (await readFile(new URL('./local/turn.env', import.meta.url), 'utf8')).split('\n')) {
+      const i = linha.indexOf('=')
+      if (i > 0) env[linha.slice(0, i).trim()] = linha.slice(i + 1).trim()
+    }
   } catch {
-    return [{ urls: 'stun:stun.l.google.com:19302' }]
+    return [{ urls: 'stun:stun.cloudflare.com:3478' }]
   }
+
+  const lista = []
+  if (env.CF_TURN_KEY_ID && env.CF_TURN_API_TOKEN) {
+    try {
+      const r = await fetch(
+        `https://rtc.live.cloudflare.com/v1/turn/keys/${env.CF_TURN_KEY_ID}/credentials/generate-ice-servers`,
+        {
+          method: 'POST',
+          headers: { authorization: `Bearer ${env.CF_TURN_API_TOKEN}`, 'content-type': 'application/json' },
+          body: JSON.stringify({ ttl: 86400 }),
+        },
+      )
+      if (r.ok) lista.push(...((await r.json()).iceServers || []))
+    } catch { /* o TURN estático abaixo ainda pode estar disponível */ }
+  }
+  if (env.TURN_HOST && env.TURN_USER && env.TURN_PASS) {
+    const host = `${env.TURN_HOST}:${env.TURN_PORT || '3478'}`
+    lista.push({
+      urls: [`turn:${host}?transport=udp`, `turn:${host}?transport=tcp`],
+      username: env.TURN_USER,
+      credential: env.TURN_PASS,
+    })
+  }
+  return lista.length ? lista : [{ urls: 'stun:stun.cloudflare.com:3478' }]
 }
 
 const servidor = (tls ? criarHttps : criarHttp)(tls || {}, async (req, res) => {
