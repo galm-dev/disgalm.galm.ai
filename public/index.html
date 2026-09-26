@@ -1,127 +1,178 @@
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Disgalm</title>
-<style>
-  :root {
-    --bg: #313338; --bg2: #2b2d31; --bg3: #1e1f22; --bg4: #383a40;
-    --txt: #dbdee1; --dim: #949ba4;
-    --acc: #5865f2; --ok: #23a559; --bad: #da373c; --warn: #f0b132;
-    --r: 8px;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; height: 100vh; display: flex; flex-direction: column;
-    background: var(--bg); color: var(--txt);
-    font: 15px/1.4 "gg sans", system-ui, sans-serif;
-  }
-  button { font: inherit; color: inherit; background: var(--bg4); border: 0;
-           border-radius: var(--r); padding: .55rem .9rem; cursor: pointer; }
-  button:hover:not(:disabled) { background: #4a4d55; }
-  button:disabled { opacity: .4; cursor: default; }
-  button.on { background: var(--acc); }
-  button.perigo { background: var(--bad); }
-  select, input[type=text] { font: inherit; color: inherit; background: var(--bg3);
-           border: 1px solid #00000040; border-radius: var(--r); padding: .5rem; }
-
-  /* ---------- entrada ---------- */
-  #entrada { margin: auto; background: var(--bg2); padding: 2rem; border-radius: 12px;
-             display: flex; flex-direction: column; gap: .8rem; width: min(22rem, 90vw); }
-  #entrada h1 { margin: 0 0 .5rem; font-size: 1.6rem; }
-  #entrada button { background: var(--acc); padding: .7rem; }
-
-  /* ---------- palco ---------- */
-  #sala { flex: 1; display: none; grid-template-rows: 1fr auto auto; min-height: 0; }
-  #sala.ativa { display: grid; }
-
-  #palco { position: relative; background: #000; min-height: 0; display: flex; }
-  #palco video { width: 100%; height: 100%; object-fit: contain; }
-  #vazio { margin: auto; color: var(--dim); text-align: center; padding: 2rem; }
-
-  #capa { position: absolute; inset: 0; display: flex; flex-direction: column;
-          justify-content: space-between; padding: .8rem; opacity: 0; transition: opacity .15s;
-          background: linear-gradient(#0007, transparent 25%, transparent 70%, #0009); }
-  #palco:hover #capa, #capa:focus-within { opacity: 1; }
-  #capa .topo, #capa .base { display: flex; align-items: center; gap: .6rem; }
-  #capa .base { justify-content: flex-end; }
-  .tag { background: #000000aa; border-radius: 99px; padding: .25rem .7rem; font-size: .85rem; }
-  .live { background: var(--bad); font-weight: 600; letter-spacing: .04em; }
-  .semaudio { background: var(--warn); color: #000; font-weight: 600; }
-  #capa input[type=range] { width: 8rem; accent-color: var(--acc); }
-
-  /* ---------- tira de participantes ---------- */
-  #tira { display: flex; gap: .6rem; padding: .6rem; overflow-x: auto; background: var(--bg2); }
-  .tile { flex: 0 0 11rem; background: var(--bg3); border-radius: var(--r); overflow: hidden;
-          cursor: pointer; border: 2px solid transparent; position: relative; }
-  .tile.focado { border-color: var(--acc); }
-  .tile.eu video { transform: scaleX(-1); }   /* espelho: a própria câmera */
-  .tile.falando { border-color: var(--ok); }
-  .tile video { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: #000; display: block; }
-  .tile .semvideo { width: 100%; aspect-ratio: 16/9; display: grid; place-items: center;
-                    font-size: 1.8rem; font-weight: 600; color: var(--dim); background: var(--bg4); }
-  .tile .nome { padding: .35rem .5rem; font-size: .85rem; display: flex; align-items: center;
-                gap: .35rem; justify-content: space-between; }
-  .tile .badges { display: flex; gap: .3rem; align-items: center; font-size: .7rem; }
-  .icone { width: 15px; height: 15px; color: var(--bad); flex: none; }
-  .tile .env { padding: .2rem .5rem 0; font: 10px/1.3 ui-monospace, monospace; color: var(--dim); }
-  .tile .env.limitado { color: var(--warn); }
-  .tile .vols { padding: 0 .5rem .5rem; display: none; }
-  .tile.aberto .vols { display: block; }
-  .vols label { display: flex; align-items: center; gap: .4rem; font-size: .75rem; color: var(--dim); }
-  .vols input { flex: 1; accent-color: var(--acc); min-width: 0; }
-
-  /* ---------- barra ---------- */
-  #barra { display: flex; gap: .5rem; padding: .7rem; background: var(--bg3);
-           align-items: center; flex-wrap: wrap; }
-  #barra .esq { display: flex; gap: .5rem; flex: 1; flex-wrap: wrap; }
-  #diag { font: 11px/1.4 ui-monospace, monospace; color: var(--dim); }
-
-  /* ---------- log ---------- */
-  details#logbox { background: var(--bg3); border-top: 1px solid #00000040; }
-  details#logbox summary { padding: .4rem .8rem; cursor: pointer; font-size: .8rem; color: var(--dim); }
-  #log { font: 11px/1.5 ui-monospace, monospace; padding: 0 .8rem .8rem;
-         max-height: 11rem; overflow-y: auto; white-space: pre-wrap; color: var(--dim); }
-</style>
-
-<div id="entrada">
-  <h1>Disgalm</h1>
-  <input id="sala-cod" type="text" placeholder="código da sala" value="galm">
-  <input id="nome" type="text" placeholder="seu nome">
-  <label style="font-size:.85rem;color:var(--dim);display:flex;gap:.4rem;align-items:center">
-    <input type="checkbox" id="sorelay"> forçar relay (testa o TURN)
-  </label>
-  <button id="entrar">Entrar</button>
-</div>
-
-<div id="sala">
-  <div id="palco">
-    <video id="v-palco" autoplay playsinline></video>
-    <div id="vazio">Ninguém está compartilhando tela.<br><small>Clique num participante para focar.</small></div>
-    <div id="capa">
-      <div class="topo">
-        <span class="tag" id="palco-nome"></span>
-        <span class="tag live" id="palco-live" hidden>AO VIVO</span>
-        <span class="tag semaudio" id="palco-semaudio" hidden>sem áudio</span>
-      </div>
-      <div class="base">
-        <span class="tag" id="palco-stats"></span>
-        <label class="tag">🔊 <input type="range" id="palco-vol" min="0" max="1" step="0.01" value="1"></label>
-        <button id="b-pip" title="Picture-in-picture">⧉</button>
-        <button id="b-full" title="Tela cheia">⛶</button>
-      </div>
-    </div>
+<!doctype html>
+<html lang="pt-BR">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width, initial-scale=1"
+  />
+  <meta name="theme-color" content="#111214" /><title>Disgalm · Sua sala</title>
+  <link rel="stylesheet" href="/style.css" />
+  <div id="entrada">
+    <form class="entry-card" id="entry-form">
+      <div class="wordmark">disgalm<span>.</span></div>
+      <h1>A galera está aqui.</h1>
+      <p>Entre na sala. Compartilhe a tela, o jogo e a conversa.</p>
+      <label for="nome">Seu nome</label
+      ><input
+        id="nome"
+        type="text"
+        placeholder="Como a galera te chama?"
+        autocomplete="nickname"
+        maxlength="24"
+      />
+      <label for="sala-cod">Sala</label
+      ><input
+        id="sala-cod"
+        type="text"
+        placeholder="Código da sala"
+        value="galm"
+        required
+      />
+      <button id="entrar" type="submit">Entrar na sala →</button>
+      <details>
+        <summary>Opções de conexão</summary>
+        <label
+          ><input type="checkbox" id="sorelay" /> Forçar conexão via relay
+          (TURN)</label
+        >
+      </details>
+      <div id="entry-error" role="status" class="ui-notice"></div>
+      <div class="entry-foot">Até 4 pessoas · Sem criar conta</div>
+    </form>
   </div>
-
-  <div id="tira"></div>
-
-  <div id="barra">
-    <div class="esq">
-      <button id="b-mic">🎤 Mudo</button>
-      <button id="b-surdo">🔇 Ensurdecer</button>
-      <button id="b-cam">📹 Câmera</button>
-      <select id="camdev" title="qual câmera" hidden></select>
-      <button id="b-tela">🖥 Compartilhar</button>
-      <select id="loopdev" title="áudio do sistema (Linux)"></select>
-      <select id="preset" title="qualidade da sua tela">
+  <div id="sala" class="sem-foco">
+    <header class="app-top">
+      <strong>g.</strong> DISGALM
+      <span style="margin:0 10px;color:#444">/</span> uma sala pra galera
+    </header>
+    <nav class="rail" aria-label="Disgalm">
+      <div class="rail-logo">g.</div>
+      <div class="rail-line"></div>
+      <div class="rail-active" data-icon="voice" title="Sala de voz"></div>
+      <div class="rail-bottom">GALM</div>
+    </nav>
+    <aside class="sidebar">
+      <div class="sidebar-head"><span class="mini">g.</span> Disgalm</div>
+      <div class="sidebar-body">
+        <div class="eyebrow">SALA DE VOZ</div>
+        <div class="channel">
+          <span data-icon="voice"></span><strong id="channel-name">galm</strong
+          ><span class="count" id="people-count">1 / 4</span>
+        </div>
+        <div class="people" id="people"></div>
+        <div class="eyebrow">JUNTOS NA SALA</div>
+        <p class="sidebar-note">
+          Abra a câmera ou compartilhe sua tela.<br />A conversa continua por
+          aqui.
+        </p>
+      </div>
+      <div class="connection">
+        <div class="connection-status">
+          <span class="dot"></span
+          ><span id="connection-label">Conectando…</span>
+        </div>
+        <small id="connection-room">galm / Disgalm</small>
+      </div>
+      <div class="profile">
+        <span class="avatar-small" id="my-avatar">V</span>
+        <div style="min-width:0">
+          <div class="profile-name" id="my-name">Você</div>
+          <small id="my-status">Conectando…</small>
+        </div>
+      </div>
+    </aside>
+    <main class="room-main">
+      <header class="room-head">
+        <button id="b-sidebar" title="Ocultar barra lateral" aria-label="Ocultar barra lateral"><span data-icon="sidebar"></span></button>
+        <h2 id="room-title">galm</h2>
+        <span class="head-detail">Compartilhe o que está rolando.</span
+        ><button
+          id="b-grid"
+          title="Ver participantes"
+          aria-label="Ver participantes"
+        >
+          <span data-icon="grid"></span></button
+        ><button id="b-participants" title="Ocultar participantes" aria-label="Ocultar participantes"><span data-icon="people"></span></button
+        ><button id="b-invite" style="margin-left:0">
+          <span data-icon="invite"></span> Convidar
+        </button>
+      </header>
+      <div id="connection-alert" role="alert" hidden>
+        <div><strong>Conexão com a sala perdida</strong><br />Entre novamente para restabelecer a chamada.</div>
+        <button id="b-rejoin">Entrar novamente</button>
+      </div>
+      <div class="room-content">
+        <div id="palco">
+          <video id="v-palco" autoplay playsinline muted></video>
+          <div id="vazio">
+            <span class="empty-icon" data-icon="screen"></span
+            ><strong>Sua próxima tela começa aqui.</strong>
+            <p>
+              Compartilhe uma janela, uma aba ou o jogo.<br />A galera acompanha
+              com você.
+            </p>
+          </div>
+          <div id="capa">
+            <div class="topo">
+              <span class="tag" id="palco-nome"></span
+              ><span class="tag live" id="palco-live" hidden>AO VIVO</span
+              ><span class="tag semaudio" id="palco-semaudio" hidden
+                >sem áudio</span
+              >
+            </div>
+            <div class="base">
+              <span class="tag" id="palco-stats"></span
+              ><label class="tag" aria-label="Volume da tela"
+                ><input
+                  type="range"
+                  id="palco-vol"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value="1"
+                  aria-label="Volume da tela" /></label
+              ><button id="b-pip" title="Picture-in-picture">⧉</button
+              ><button id="b-maximize" title="Maximizar na janela">↗</button
+              ><button id="b-full" title="Tela cheia">⛶</button>
+            </div>
+          </div>
+        </div>
+        <div id="tira" aria-label="Participantes"></div>
+      </div>
+      <div class="toolbar-wrap">
+        <p id="ui-notice" class="ui-notice" role="status"></p>
+        <div id="barra">
+          <div class="control-group">
+            <button id="b-mic" title="Silenciar microfone">Microfone</button
+            ><button id="b-surdo" title="Silenciar tudo">Áudio</button
+            ><button id="b-cam" title="Ligar câmera">Câmera</button>
+          </div>
+          <div class="control-group">
+            <button id="b-tela" title="Compartilhar tela">Tela</button
+            ><button id="b-settings" title="Ajustes da chamada">Ajustes</button>
+          </div>
+          <button id="b-sair" class="perigo" title="Sair da sala">Sair</button>
+        </div>
+        <div class="toolbar-caption" id="quality-caption">
+          Tela em <strong>1080p · 30 fps</strong>
+        </div>
+        <p class="room-hint">
+          Clique em uma pessoa para focar. No nome, ajuste o volume.
+        </p>
+      </div>
+    </main>
+  </div>
+  <dialog id="ajustes" aria-labelledby="settings-title">
+    <div class="dialog-head">
+      <h2 id="settings-title">Ajustes da chamada</h2>
+      <button id="b-close-settings" aria-label="Fechar ajustes">✕</button>
+    </div>
+    <div class="settings-body">
+      <label for="camdev">Câmera</label
+      ><select id="camdev" title="qual câmera" hidden></select>
+      <label for="loopdev">Áudio do sistema</label
+      ><select id="loopdev" title="áudio do sistema (Linux)"></select>
+      <label for="preset">Qualidade da tela</label
+      ><select id="preset" title="qualidade da sua tela">
         <option value="codigo">Código · 1080p 5fps</option>
         <option value="equil" selected>Equilíbrio · 1080p 30fps</option>
         <option value="fluido">Fluido · 1080p 120fps</option>
@@ -131,806 +182,1186 @@
       </select>
       <button id="b-recap" hidden></button>
       <span id="manual" hidden>
-        <select id="res">
+        <label for="res">Resolução</label
+        ><select id="res">
           <option value="1280x720">720p</option>
           <option value="1920x1080" selected>1080p</option>
           <option value="2560x1440">1440p</option>
           <option value="3840x2160">4K</option>
         </select>
-        <select id="fps">
-          <option>5</option><option>10</option><option>15</option>
-          <option selected>30</option><option>60</option><option>120</option>
+        <label for="fps">Quadros por segundo</label
+        ><select id="fps">
+          <option>5</option>
+          <option>10</option>
+          <option>15</option>
+          <option selected>30</option>
+          <option>60</option>
+          <option>120</option>
         </select>
-        <select id="kbps">
-          <option value="1000">1 Mbps</option><option value="2500">2,5 Mbps</option>
-          <option value="4000" selected>4 Mbps</option><option value="8000">8 Mbps</option>
-          <option value="15000">15 Mbps</option><option value="25000">25 Mbps</option>
+        <label for="kbps">Bitrate por pessoa</label
+        ><select id="kbps">
+          <option value="1000">1 Mbps</option>
+          <option value="2500">2,5 Mbps</option>
+          <option value="4000" selected>4 Mbps</option>
+          <option value="8000">8 Mbps</option>
+          <option value="15000">15 Mbps</option>
+          <option value="25000">25 Mbps</option>
           <option value="40000">40 Mbps</option>
         </select>
-        <select id="orc" title="orçamento total de subida, dividido entre os pares">
-          <option value="0">sem teto total</option>
-          <option value="10000">total 10 Mbps</option>
-          <option value="20000" selected>total 20 Mbps</option>
-          <option value="40000">total 40 Mbps</option>
-          <option value="80000">total 80 Mbps</option>
-        </select>
       </span>
+
+      <label for="orc">Teto total de vídeo enviado</label>
+      <select
+        id="orc"
+        title="orçamento total de subida, dividido entre os pares"
+      >
+        <option value="0">sem teto total</option>
+        <option value="10000">total 10 Mbps</option>
+        <option value="20000" selected>total 20 Mbps</option>
+        <option value="40000">total 40 Mbps</option>
+        <option value="80000">total 80 Mbps</option>
+      </select>
+      <div id="diag"></div>
+      <details id="logbox">
+        <summary>Diagnóstico da conexão</summary>
+        <div id="log"></div>
+        <button id="b-relatorio">Baixar relatório de diagnóstico</button>
+      </details>
     </div>
-    <span id="diag"></span>
-    <button id="b-sair" class="perigo">Sair</button>
-  </div>
-</div>
-
-<details id="logbox">
-  <summary>diagnóstico</summary>
-  <div id="log"></div>
-</details>
-
-<script>
-const $ = id => document.getElementById(id)
-const log = (...a) => { $('log').textContent += a.join(' ') + '\n'; $('log').scrollTop = 1e9 }
-
-// Presets de qualidade da própria tela. O bitrate ANDA JUNTO com resolução e
-// fps de propósito: 4K60 num teto de 2,5 Mbps fica pior que 1080p30, porque o
-// encoder gasta os bits espalhando-os por 4x mais pixels e 2x mais quadros.
-// 'detail' preserva resolução sacrificando quadros (ler código); 'motion' faz
-// o contrário (jogo) — foi o 'detail' que deixou tela de jogo parecendo travada.
-const PRESETS = {
-  codigo: { w: 1920, h: 1080, fps: 5,  kbps: 1500,  hint: 'detail' },
-  equil:  { w: 1920, h: 1080, fps: 30, kbps: 4000,  hint: 'motion' },
-  fluido: { w: 1920, h: 1080, fps: 120, kbps: 15000, hint: 'motion' },
-  jogo:   { w: 2560, h: 1440, fps: 60, kbps: 12000, hint: 'motion' },
-  max:    { w: 3840, h: 2160, fps: 60, kbps: 25000, hint: 'motion' },
-}
-let qualidade = { ...PRESETS.equil }
-const CAP_CAM = 800_000   // rosto não precisa do bitrate de tela
-
-// Em malha você envia uma cópia para CADA par, e as conexões não coordenam
-// entre si: cada uma sonda a banda sozinha e a que subir primeiro fica com
-// ela. Declarar o teto POR PAR faz a subida total crescer a cada pessoa que
-// entra. Declarar o total e dividir é o que evita uma conexão matar a outra.
-const kbpsPorPar = () => {
-  const orc = +($('orc')?.value || 0)
-  if (!orc) return qualidade.kbps
-  return Math.min(qualidade.kbps, Math.floor(orc / Math.max(1, pares.size)))
-}
-
-let ws, meuId, ice, micStream, telaStream, camStream
-let foco = null, surdo = false
-
-// Sem mic é o mesmo que mudo do ponto de vista de quem olha o tile.
-const estouMudo = () => !micStream || !micStream.getAudioTracks()[0]?.enabled
-const pares = new Map()
-
-// ---------- estado anunciado ----------
-// O receptor não tem como saber, olhando a track, se um áudio é voz ou tela.
-// Quem compartilha anuncia o streamId da tela; isso também alimenta o badge
-// AO VIVO e o aviso de "compartilhando sem áudio".
-function anunciar(para) {
-  const est = {
-    compartilhando: !!telaStream,
-    streamId: telaStream?.id || null,
-    temAudio: !!telaStream?.getAudioTracks().length,
-    // O receptor não distingue tela de câmera olhando a track: as duas são
-    // vídeo. Quem transmite anuncia o streamId de cada uma.
-    camera: !!camStream,
-    idCam: camStream?.id || null,
-    mudo: estouMudo(),
-    surdo,
-  }
-  const alvos = para ? [para] : [...pares.keys()]
-  for (const id of alvos) sinalizar(id, { estado: est })
-}
-
-// ---------- mídia local ----------
-
-async function listarLoopback() {
-  const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput')
-  $('loopdev').innerHTML = '<option value="">áudio do sistema: nenhum</option>' +
-    devs.map(d => `<option value="${d.deviceId}">${d.label || 'sem label'}</option>`).join('')
-  const loop = devs.find(d => /loopback|monitor|stereo mix/i.test(d.label))
-  if (loop) $('loopdev').value = loop.deviceId
-}
-
-async function pegarMic() {
-  try {
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-    })
-    medirFala('local', micStream)
-  } catch (e) {
-    micStream = null
-    log(`microfone indisponível (${e.name}) — entrando sem voz`)
-    $('b-mic').disabled = true
-    $('b-mic').textContent = '🎤 sem mic'
-  }
-}
-
-async function listarCams() {
-  const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput')
-  $('camdev').innerHTML = devs.map(d => `<option value="${d.deviceId}">${d.label || 'câmera'}</option>`).join('')
-  $('camdev').hidden = devs.length < 2      // seletor só aparece se houver escolha
-}
-
-async function alternarCam() {
-  if (camStream) return pararCam()
-  const dev = $('camdev').value
-  camStream = await navigator.mediaDevices.getUserMedia({
-    video: {
-      ...(dev ? { deviceId: { exact: dev } } : {}),
-      width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 },
-    },
-  })
-  const t = camStream.getVideoTracks()[0]
-  t.contentHint = 'motion'                  // rosto se move: quadros valem mais que nitidez
-  t.onended = () => pararCam()
-  for (const [, p] of pares) p.pc.addTrack(t, camStream)
-  $('b-cam').textContent = '📹 Parar câmera'
-  $('b-cam').classList.add('on')
-  await listarCams()                        // os rótulos só existem depois da permissão
-  desenharTile('local')
-  anunciar()
-  aplicarQualidade()
-}
-
-function pararCam() {
-  if (!camStream) return
-  const ts = camStream.getTracks()
-  for (const [, p] of pares)
-    for (const sd of p.pc.getSenders())
-      if (sd.track && ts.includes(sd.track)) p.pc.removeTrack(sd)
-  for (const t of ts) t.stop()
-  camStream = null
-  $('b-cam').textContent = '📹 Câmera'
-  $('b-cam').classList.remove('on')
-  desenharTile('local')
-  if (foco === 'local' && !telaStream) focar(proximoComVideo())
-  anunciar()
-  atualizarDiag()
-}
-
-async function compartilhar() {
-  if (telaStream) return pararTela()
-
-  telaStream = await navigator.mediaDevices.getDisplayMedia({
-    video: { width: { ideal: qualidade.w }, height: { ideal: qualidade.h },
-             frameRate: { ideal: qualidade.fps } },
-    audio: true,
-  })
-
-  if (telaStream.getAudioTracks().length === 0) {
-    const dev = $('loopdev').value
-    if (dev) {
-      const s = await navigator.mediaDevices.getUserMedia({
-        audio: { deviceId: { exact: dev }, echoCancellation: false, noiseSuppression: false,
-                 autoGainControl: false, channelCount: 2 },
-      })
-      telaStream.addTrack(s.getAudioTracks()[0])
-      log('áudio do sistema via loopback')
-    } else {
-      log('AVISO: compartilhando SEM áudio. No Windows marque "compartilhar áudio do sistema" ' +
-          'na aba Tela inteira; no Linux escolha o loopback na barra.')
-    }
-  }
-
-  for (const t of telaStream.getTracks()) {
-    t.contentHint = t.kind === 'video' ? qualidade.hint : 'music'
-    t.onended = () => pararTela()
-  }
-  for (const [, p] of pares) for (const t of telaStream.getTracks()) p.pc.addTrack(t, telaStream)
-  $('b-tela').textContent = '🖥 Parar'
-  $('b-tela').classList.add('on')
-  desenharTile('local')
-  focar('local')
-  anunciar()
-  aplicarQualidade()
-}
-
-// Recria a captura na qualidade atual e troca a track nos senders existentes.
-// replaceTrack não renegocia, então o receptor nem vê troca — e some o
-// transceiver morto que o par removeTrack/addTrack deixava a cada ciclo.
-async function recapturar() {
-  if (!telaStream) return
-  const q = qualidade
-  const novo = await navigator.mediaDevices.getDisplayMedia({
-    video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: q.fps } },
-    audio: true,
-  })
-
-  const trocar = async (antigo, novoT) => {
-    if (!novoT) return
-    for (const [, p] of pares)
-      for (const sd of p.pc.getSenders())
-        if (sd.track === antigo) await sd.replaceTrack(novoT)
-    if (antigo) { telaStream.removeTrack(antigo); antigo.stop() }
-    telaStream.addTrack(novoT)
-  }
-
-  const vNovo = novo.getVideoTracks()[0]
-  vNovo.contentHint = q.hint
-  vNovo.onended = () => pararTela()
-  await trocar(telaStream.getVideoTracks()[0], vNovo)
-
-  const aNovo = novo.getAudioTracks()[0]
-  if (aNovo) { aNovo.contentHint = 'music'; await trocar(telaStream.getAudioTracks()[0], aNovo) }
-
-  desenharTile('local')
-  if (foco === 'local') focar('local')
-  anunciar()
-  await aplicarQualidade()
-}
-
-function pararTela() {
-  if (!telaStream) return
-  const tracks = telaStream.getTracks()
-  for (const [, p] of pares)
-    for (const s of p.pc.getSenders())
-      if (s.track && tracks.includes(s.track)) p.pc.removeTrack(s)
-  for (const t of tracks) t.stop()
-  telaStream = null
-  $('b-tela').textContent = '🖥 Compartilhar'
-  $('b-tela').classList.remove('on')
-  desenharTile('local')
-  if (foco === 'local') focar(proximoComVideo())
-  anunciar()
-}
-
-// Aplica resolução/fps na captura e bitrate/fps no encoder de cada par.
-// Depois relata PEDIDO vs OBTIDO: a captura não entrega 4K se o monitor não
-// for 4K, e nesse caso o número escolhido é ficção.
-async function aplicarQualidade() {
-  const q = qualidade
-  const vt = telaStream?.getVideoTracks()[0]
-
-  if (vt) {
-    vt.contentHint = q.hint
-    try {
-      await vt.applyConstraints({
-        width: { ideal: q.w, max: q.w }, height: { ideal: q.h, max: q.h },
-        frameRate: { ideal: q.fps, max: q.fps },
-      })
-    } catch (e) { log('applyConstraints:', e.message) }
-  }
-
-  for (const [, p] of pares)
-    for (const s of p.pc.getSenders()) {
-      if (s.track?.kind !== 'video') continue
-      const par = s.getParameters()
-      par.encodings = par.encodings?.length ? par.encodings : [{}]
-      // Câmera e tela dividem o mesmo uplink mas não o mesmo teto: rosto em
-      // 800 kbps é bom, e o resto fica para a tela.
-      const ehCam = !!camStream?.getVideoTracks().includes(s.track)
-      par.encodings[0].maxBitrate = ehCam ? CAP_CAM : kbpsPorPar() * 1000
-      par.encodings[0].maxFramerate = ehCam ? 30 : q.fps
-      await s.setParameters(par).catch(e => log('setParameters:', e.message))
+  </dialog>
+  <script>
+    const $ = id => document.getElementById(id)
+    // Cada linha leva a hora: sem ela, o relatório não diz se a queda veio antes
+    // ou depois da troca de caminho. O buffer vai inteiro para o relatório.
+    const eventos = []
+    const log = (...a) => {
+      const linha = `${new Date().toISOString().slice(11, 23)} ${a.join(' ')}`
+      eventos.push(linha)
+      if (eventos.length > 2000) eventos.shift()
+      $('log').textContent += linha + '\n'
+      $('log').scrollTop = 1e9
     }
 
-  const s = vt?.getSettings()
-  if (s) {
-    const obtido = `${s.width}x${s.height}@${Math.round(s.frameRate)}`
-    log(`qualidade: pedido ${q.w}x${q.h}@${q.fps} · obtido ${obtido}`)
-
-    // A sessão de captura nasce com a taxa pedida no getDisplayMedia e não
-    // sobe depois: no Wayland é uma sessão do portal PipeWire já criada.
-    // Baixar funciona; subir exige capturar de novo.
-    const preciseRecap = Math.round(s.frameRate) < q.fps * 0.9
-    $('b-recap').hidden = !preciseRecap
-    $('b-recap').textContent = `↻ Recapturar p/ ${q.fps}fps`
-    if (preciseRecap)
-      log(`a captura está presa em ${Math.round(s.frameRate)}fps — a sessão foi criada nessa taxa. ` +
-          `Recapture para subir para ${q.fps}fps.`)
-  }
-  atualizarDiag()
-}
-
-// Malha: você envia sua tela para cada par separadamente. É a conta que decide
-// se 4K60 é viável no seu link, e ela cresce com o número de pessoas.
-function custoUpload() {
-  if (!telaStream && !camStream) return ''
-  const n = Math.max(1, pares.size)
-  const por = (telaStream ? kbpsPorPar() : 0) + (camStream ? CAP_CAM / 1000 : 0)
-  const tot = (por * n / 1000).toFixed(1)
-  const cortado = telaStream && kbpsPorPar() < qualidade.kbps
-    ? ` (teto ${qualidade.kbps / 1000} cortado p/ ${kbpsPorPar() / 1000})` : ''
-  return ` · subindo ~${tot} Mbps = ${por / 1000} × ${n}${cortado}`
-}
-
-// ---------- tiles e palco ----------
-
-const inicial = n => (n || '?').trim()[0].toUpperCase()
-
-// Mic cortado e fone cortado, desenhados à mão para ficarem legíveis a 15px.
-const ICONES = {
-  mudo: `<svg class="icone" viewBox="0 0 24 24" aria-label="microfone mudo"><title>microfone mudo</title>
-    <rect x="9" y="2.5" width="6" height="11" rx="3" fill="currentColor"/>
-    <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor"
-          stroke-width="2" stroke-linecap="round"/>
-    <path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`,
-  surdo: `<svg class="icone" viewBox="0 0 24 24" aria-label="ensurdecido"><title>ensurdecido</title>
-    <path d="M4 14v-2a8 8 0 0 1 16 0v2" fill="none" stroke="currentColor"
-          stroke-width="2" stroke-linecap="round"/>
-    <rect x="2.5" y="13" width="4.5" height="7.5" rx="2.2" fill="currentColor"/>
-    <rect x="17" y="13" width="4.5" height="7.5" rx="2.2" fill="currentColor"/>
-    <path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`,
-}
-
-function dadosTile(id) {
-  if (id === 'local') return { nome: 'você', tela: telaStream, cam: camStream, local: true,
-    estado: { compartilhando: !!telaStream, temAudio: !!telaStream?.getAudioTracks().length,
-              camera: !!camStream, mudo: estouMudo(), surdo } }
-  const p = pares.get(id)
-  return p && { nome: p.nome, tela: p.tela, cam: p.cam, estado: p.estado, local: false }
-}
-
-function desenharTile(id) {
-  const d = dadosTile(id)
-  if (!d) return document.getElementById('t-' + id)?.remove()
-
-  let el = document.getElementById('t-' + id)
-  if (!el) {
-    el = document.createElement('div')
-    el.id = 't-' + id
-    el.className = 'tile'
-    el.onclick = ev => {
-      if (ev.target.closest('.vols')) return          // mexer no volume não troca o foco
-      if (ev.target.closest('.nome')) el.classList.toggle('aberto')
-      else focar(id)
+    // Presets de qualidade da própria tela. O bitrate ANDA JUNTO com resolução e
+    // fps de propósito: 4K60 num teto de 2,5 Mbps fica pior que 1080p30, porque o
+    // encoder gasta os bits espalhando-os por 4x mais pixels e 2x mais quadros.
+    // 'detail' preserva resolução sacrificando quadros (ler código); 'motion' faz
+    // o contrário (jogo) — foi o 'detail' que deixou tela de jogo parecendo travada.
+    // O que cai primeiro sob falta de banda NÃO vem da dica: aplicarQualidade fixa
+    // degradationPreference na tela, porque 'motion' sozinho manda o Chrome manter
+    // os quadros e encolher a imagem até 320x180.
+    const PRESETS = {
+      codigo: { w: 1920, h: 1080, fps: 5,  kbps: 1500,  hint: 'detail' },
+      equil:  { w: 1920, h: 1080, fps: 30, kbps: 4000,  hint: 'motion' },
+      fluido: { w: 1920, h: 1080, fps: 120, kbps: 15000, hint: 'motion' },
+      jogo:   { w: 2560, h: 1440, fps: 60, kbps: 12000, hint: 'motion' },
+      max:    { w: 3840, h: 2160, fps: 60, kbps: 25000, hint: 'motion' },
     }
-    $('tira').append(el)
-  }
+    let qualidade = { ...PRESETS.equil }
+    const CAP_CAM = 800_000   // rosto não precisa do bitrate de tela
 
-  // O tile é a PESSOA (câmera ou inicial); a tela compartilhada vai no palco.
-  const temVideo = d.cam?.getVideoTracks().length
-  el.innerHTML =
-    (temVideo ? '<video autoplay playsinline muted></video>' : `<div class="semvideo">${inicial(d.nome)}</div>`) +
-    `<div class="env"></div><div class="nome"><span>${d.nome}</span><span class="badges">
-       ${d.estado?.mudo ? ICONES.mudo : ''}
-       ${d.estado?.surdo ? ICONES.surdo : ''}
-       ${d.estado?.compartilhando ? '<span class="tag live">LIVE</span>' : ''}
-       ${d.estado?.compartilhando && !d.estado?.temAudio ? '<span class="tag semaudio">sem áudio</span>' : ''}
-     </span></div>` +
-    (d.local ? '' : `<div class="vols">
-       <label>voz <input type="range" min="0" max="1" step="0.01" value="1" data-tipo="voz"></label>
-       <label>tela <input type="range" min="0" max="1" step="0.01" value="1" data-tipo="tela"></label>
-     </div>`)
-
-  if (temVideo) el.querySelector('video').srcObject = d.cam
-  el.classList.toggle('focado', foco === id)
-  el.classList.toggle('eu', !!d.local)
-
-  for (const inp of el.querySelectorAll('.vols input')) {
-    const p = pares.get(id)
-    inp.value = p?.volumes[inp.dataset.tipo] ?? 1
-    inp.oninput = () => {
-      p.volumes[inp.dataset.tipo] = +inp.value
-      aplicarVolumes(id)
-      if (inp.dataset.tipo === 'tela' && foco === id) $('palco-vol').value = inp.value
+    // Em malha você envia uma cópia para CADA par, e as conexões não coordenam
+    // entre si: cada uma sonda a banda sozinha e a que subir primeiro fica com
+    // ela. Declarar o teto POR PAR faz a subida total crescer a cada pessoa que
+    // entra. Declarar o total e dividir é o que evita uma conexão matar a outra.
+    const kbpsPorPar = () => {
+      const orc = +($('orc')?.value || 0)
+      if (!orc) return qualidade.kbps
+      return Math.min(qualidade.kbps, Math.floor(orc / Math.max(1, pares.size)))
     }
-  }
-}
 
-function focar(id) {
-  foco = id
-  const d = id && dadosTile(id)
-  const fonte = d?.tela?.getVideoTracks().length ? d.tela
-              : d?.cam?.getVideoTracks().length ? d.cam : null
-  const temVideo = !!fonte
-  $('v-palco').srcObject = fonte
-  $('v-palco').style.display = temVideo ? '' : 'none'
-  $('vazio').style.display = temVideo ? 'none' : ''
-  $('v-palco').muted = true   // o áudio sai pelos elementos <audio>, não pelo palco
-  $('palco-nome').textContent = d?.nome || ''
-  $('palco-live').hidden = !d?.estado?.compartilhando
-  $('palco-semaudio').hidden = !(d?.estado?.compartilhando && !d?.estado?.temAudio)
-  $('palco-vol').disabled = !d || d.local
-  $('palco-vol').value = id && pares.get(id)?.volumes.tela || 1
-  for (const el of document.querySelectorAll('.tile')) el.classList.toggle('focado', el.id === 't-' + id)
-}
+    let ws, meuId, ice, micStream, telaStream, camStream
+    let foco = null, surdo = false
 
-const proximoComVideo = () =>
-  [...pares.keys()].find(id => pares.get(id).tela.getVideoTracks().length) ||
-  [...pares.keys()].find(id => pares.get(id).cam.getVideoTracks().length) ||
-  (telaStream || camStream ? 'local' : null)
+    // Sem mic é o mesmo que mudo do ponto de vista de quem olha o tile.
+    const estouMudo = () => !micStream || !micStream.getAudioTracks()[0]?.enabled
+    const pares = new Map()
 
-// ---------- áudio recebido ----------
-
-function aplicarVolumes(id) {
-  const p = pares.get(id)
-  if (!p) return
-  for (const [, a] of p.audios) a.el.volume = surdo ? 0 : (p.volumes[a.tipo] ?? 1)
-}
-
-// Classifica a track pelo streamId anunciado por quem compartilha: o stream da
-// tela é o único que ele anuncia. Sem isso, voz e tela são indistinguíveis aqui.
-// Um <video> renderiza só a PRIMEIRA track de vídeo do stream. Manter no
-// máximo uma por destino, e a mais nova, senão track morta congela o quadro.
-function sincroniza(stream, tracks) {
-  for (const t of stream.getVideoTracks()) if (!tracks.includes(t)) stream.removeTrack(t)
-  for (const t of tracks) if (!stream.getVideoTracks().includes(t)) stream.addTrack(t)
-  for (const extra of stream.getVideoTracks().slice(0, -1)) stream.removeTrack(extra)
-}
-
-// Sem o streamId anunciado, tela e câmera seriam indistinguíveis aqui: as duas
-// são vídeo.
-//
-// E há um detalhe que não é óbvio: removeTrack no emissor NÃO encerra a track
-// no receptor — ela apenas fica muda, o evento 'ended' nunca dispara, e o
-// <video> segue exibindo o último quadro para sempre. Então quem manda é o
-// anúncio: track cujo streamId não é mais anunciado está morta e sai.
-function classificarVideo(id) {
-  const p = pares.get(id)
-  if (!p) return
-  const e = p.estado || {}
-  const sabemos = 'compartilhando' in e     // já recebemos anúncio deste par?
-  const cam = [], tela = []
-  for (const [sid, t] of p.videos) {
-    if (!sabemos) { tela.push(t); continue }   // antes do 1º anúncio, mostrar
-    if (sid === e.idCam) cam.push(t)
-    else if (sid === e.streamId) tela.push(t)
-    else p.videos.delete(sid)                  // fonte não anunciada: morta
-  }
-  sincroniza(p.cam, cam)
-  sincroniza(p.tela, tela)
-  desenharTile(id)
-  if (foco === id) focar(id)
-}
-
-function classificar(id) {
-  const p = pares.get(id)
-  if (!p) return
-  for (const [sid, a] of p.audios) a.tipo = sid === p.estado?.streamId ? 'tela' : 'voz'
-  aplicarVolumes(id)
-}
-
-function receberAudio(id, track, streamId) {
-  const p = pares.get(id)
-  if (!p) return
-  const el = document.createElement('audio')
-  el.autoplay = true
-  el.srcObject = new MediaStream([track])   // uma track por elemento: ver PLANO-POC.md
-  el.play?.().catch(e => log(`autoplay bloqueado (${e.name}) — clique na página`))
-  p.audios.set(streamId, { el, tipo: 'voz', track })
-  track.addEventListener('ended', () => { el.remove(); p.audios.delete(streamId); })
-  classificar(id)
-  if (p.audios.size === 1) medirFala(id, el.srcObject)  // primeira = voz, move o anel verde
-}
-
-// Anel verde de quem está falando, reaproveitando o medidor dos PoCs.
-function medirFala(id, stream) {
-  const ctx = new AudioContext()
-  ctx.resume()
-  const an = ctx.createAnalyser()
-  an.fftSize = 2048
-  ctx.createMediaStreamSource(stream).connect(an)
-  const buf = new Float32Array(an.fftSize)
-  const tick = () => {
-    if (id !== 'local' && !pares.has(id)) return
-    an.getFloatTimeDomainData(buf)
-    let s = 0
-    for (const v of buf) s += v * v
-    const db = 20 * Math.log10(Math.sqrt(s / buf.length) + 1e-12)
-    document.getElementById('t-' + id)?.classList.toggle('falando', db > -50)
-    requestAnimationFrame(tick)
-  }
-  tick()
-}
-
-// ---------- Opus estéreo ----------
-
-const OPUS = 'stereo=1;sprop-stereo=1;maxaveragebitrate=128000;useinbandfec=1'
-
-function opusEstereo(sdp) {
-  const linhas = sdp.split(/\r\n|\n/)
-  const pts = linhas.flatMap(l => l.match(/^a=rtpmap:(\d+) opus\/48000\/2$/)?.[1] ?? [])
-  for (const pt of pts) {
-    const i = linhas.findIndex(l => l.startsWith(`a=fmtp:${pt} `))
-    if (i >= 0) {
-      if (!linhas[i].includes('stereo=1')) linhas[i] += ';' + OPUS
-    } else {
-      const j = linhas.findIndex(l => l.startsWith(`a=rtpmap:${pt} `))
-      linhas.splice(j + 1, 0, `a=fmtp:${pt} ${OPUS}`)
-    }
-  }
-  return linhas.join('\r\n')
-}
-
-async function definirLocal(pc) {
-  const sd = pc.signalingState === 'have-remote-offer' ? await pc.createAnswer() : await pc.createOffer()
-  sd.sdp = opusEstereo(sd.sdp)
-  await pc.setLocalDescription(sd)
-}
-
-// ---------- WebRTC ----------
-
-function criarPar(id, nome, polite) {
-  // 'relay' descarta candidatos host e srflx: se conectar assim, foi TURN de
-  // verdade. Sem isso, o par quase sempre fecha direto e o TURN nunca é exercido.
-  const pc = new RTCPeerConnection({
-    iceServers: ice,
-    iceTransportPolicy: $('sorelay').checked ? 'relay' : 'all',
-  })
-  const p = { pc, polite, fazendoOferta: false, ignorandoOferta: false, nome,
-              // tela e câmera são as duas vídeo: só o streamId anunciado separa.
-              videos: new Map(), tela: new MediaStream(), cam: new MediaStream(),
-              audios: new Map(), volumes: { voz: 1, tela: 1 }, estado: {} }
-  pares.set(id, p)
-  desenharTile(id)
-
-  if (micStream) for (const t of micStream.getTracks()) pc.addTrack(t, micStream)
-  if (telaStream) for (const t of telaStream.getTracks()) pc.addTrack(t, telaStream)
-  if (camStream) for (const t of camStream.getTracks()) pc.addTrack(t, camStream)
-
-  pc.ontrack = e => {
-    const sid = e.streams[0]?.id || 'sem-stream'
-    log(`track ${e.track.kind} de ${nome}`)
-    if (e.track.kind === 'audio') return receberAudio(id, e.track, sid)
-
-    p.videos.set(sid, e.track)
-    e.track.addEventListener('ended', () => { p.videos.delete(sid); classificarVideo(id) })
-    classificarVideo(id)
-    if (!foco || foco === 'local' && !telaStream) focar(id)
-  }
-
-  const tipos = new Set()
-  pc.onicecandidate = e => {
-    if (!e.candidate) return log(`candidatos de ${nome}: ${[...tipos].join(', ') || 'NENHUM'}`)
-    if (!tipos.has(e.candidate.type)) {
-      tipos.add(e.candidate.type)
-      log(`candidato ${e.candidate.type}/${e.candidate.protocol} para ${nome}`)
-    }
-    sinalizar(id, { candidate: e.candidate })
-  }
-  pc.onicecandidateerror = e => log(`ICE erro ${e.errorCode} em ${e.url} — ${e.errorText}`)
-
-  pc.oniceconnectionstatechange = () => {
-    log(`${nome}: ${pc.iceConnectionState}`)
-    if (pc.iceConnectionState === 'connected') { tipoDeCaminho(id, pc); acompanharVideo(id, pc) }
-    if (pc.iceConnectionState === 'failed') porQueFalhou(id, pc)
-  }
-
-  pc.onnegotiationneeded = async () => {
-    try {
-      p.fazendoOferta = true
-      await definirLocal(pc)
-      sinalizar(id, { description: pc.localDescription })
-    } catch (e) { log('negotiationneeded:', e.message) }
-    finally { p.fazendoOferta = false }
-  }
-  return p
-}
-
-async function tipoDeCaminho(id, pc) {
-  const st = await pc.getStats()
-  let atual
-  st.forEach(r => { if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.nominated) atual = r })
-  if (!atual) return
-  const l = st.get(atual.localCandidateId), r = st.get(atual.remoteCandidateId)
-  const via = l?.candidateType === 'relay' || r?.candidateType === 'relay' ? 'RELAY (TURN)' : 'direto'
-  // Com dois TURN na lista, saber que houve relay não diz qual respondeu. O
-  // endereço do candidato relay é o do servidor que alocou.
-  const quem = l?.candidateType === 'relay' ? ` via ${l.address}` : ''
-  log(`caminho com ${pares.get(id)?.nome}: ${via}${quem} — ${l?.candidateType}/${r?.candidateType}`)
-}
-
-async function porQueFalhou(id, pc) {
-  const st = await pc.getStats()
-  const cand = new Map()
-  st.forEach(r => { if (r.type.endsWith('candidate')) cand.set(r.id, r) })
-  const linhas = []
-  st.forEach(r => {
-    if (r.type !== 'candidate-pair') return
-    const l = cand.get(r.localCandidateId), rm = cand.get(r.remoteCandidateId)
-    linhas.push(`  ${l?.candidateType}/${l?.protocol} → ${rm?.candidateType}: ${r.state}`)
-  })
-  log(`por que falhou com ${pares.get(id)?.nome}:\n${linhas.join('\n') || '  nenhum par formado'}`)
-}
-
-function acompanharVideo(id, pc) {
-  let antes
-  const timer = setInterval(async () => {
-    if (!pares.has(id)) return clearInterval(timer)
-    const st = await pc.getStats()
-    let v
-    st.forEach(r => { if (r.type === 'inbound-rtp' && r.kind === 'video') v = r })
-    if (!v || !antes) { antes = v; return }
-    const dt = (v.timestamp - antes.timestamp) / 1000
-    const kbps = Math.round((v.bytesReceived - antes.bytesReceived) * 8 / dt / 1000)
-    const fps = ((v.framesDecoded - antes.framesDecoded) / dt).toFixed(1)
-    const perda = v.packetsLost - (antes.packetsLost ?? 0)
-    const txt = `${v.frameWidth || '?'}x${v.frameHeight || '?'} · ${fps}fps · ${kbps}kbps` +
-                `${perda > 0 ? ' · perdeu ' + perda : ''}${v.freezeCount ? ' · freezes ' + v.freezeCount : ''}`
-    if (foco === id) $('palco-stats').textContent = txt
-    antes = v
-
-    // O que EU envio a ESTE par. Em malha cada conexão tem seu próprio encoder
-    // e sua própria estimativa de banda, então dois receptores do mesmo emissor
-    // podem receber qualidades diferentes. qualityLimitationReason diz o porquê.
-    let o, cp
-    st.forEach(r => {
-      if (r.type === 'outbound-rtp' && r.kind === 'video') o = r
-      if (r.type === 'candidate-pair' && r.nominated && r.state === 'succeeded') cp = r
-    })
-    const env = document.querySelector(`#t-${id} .env`)
-    if (env) {
-      if (!o) { env.textContent = ''; return }
-      const banda = cp?.availableOutgoingBitrate
-        ? ` · cabe ${Math.round(cp.availableOutgoingBitrate / 1000)}kbps` : ''
-      const motivo = o.qualityLimitationReason && o.qualityLimitationReason !== 'none'
-        ? ` · LIMITADO: ${o.qualityLimitationReason}` : ''
-      env.textContent = `→ ${o.frameWidth || '?'}x${o.frameHeight || '?'}` +
-        ` @${Math.round(o.framesPerSecond || 0)}fps${banda}${motivo}`
-      env.classList.toggle('limitado', !!motivo)
-    }
-  }, 2000)
-}
-
-async function receberSinal(id, data) {
-  const p = pares.get(id)
-  if (!p) return
-  const { pc } = p
-  try {
-    if (data.estado) {
-      p.estado = data.estado
-      classificar(id)
-      classificarVideo(id)
-      return
-    }
-    if (data.description) {
-      const colisao = data.description.type === 'offer' && (p.fazendoOferta || pc.signalingState !== 'stable')
-      p.ignorandoOferta = !p.polite && colisao
-      if (p.ignorandoOferta) return log(`oferta ignorada de ${p.nome} (impolite)`)
-      await pc.setRemoteDescription(data.description)
-      if (data.description.type === 'offer') {
-        await definirLocal(pc)
-        sinalizar(id, { description: pc.localDescription })
+    // ---------- estado anunciado ----------
+    // O receptor não tem como saber, olhando a track, se um áudio é voz ou tela.
+    // Quem compartilha anuncia o streamId da tela; isso também alimenta o badge
+    // AO VIVO e o aviso de "compartilhando sem áudio".
+    function anunciar(para) {
+      const est = {
+        compartilhando: !!telaStream,
+        streamId: telaStream?.id || null,
+        temAudio: !!telaStream?.getAudioTracks().length,
+        // O receptor não distingue tela de câmera olhando a track: as duas são
+        // vídeo. Quem transmite anuncia o streamId de cada uma.
+        camera: !!camStream,
+        idCam: camStream?.id || null,
+        mudo: estouMudo(),
+        surdo,
       }
-    } else if (data.candidate) {
-      try { await pc.addIceCandidate(data.candidate) } catch (e) { if (!p.ignorandoOferta) throw e }
+      const alvos = para ? [para] : [...pares.keys()]
+      for (const id of alvos) sinalizar(id, { estado: est })
     }
-  } catch (e) { log('sinal:', e.message) }
-}
 
-// ---------- sinalização ----------
+    // ---------- mídia local ----------
 
-const sinalizar = (to, data) => ws?.readyState === 1 && ws.send(JSON.stringify({ t: 'signal', to, data }))
+    async function listarLoopback() {
+      const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'audioinput')
+      $('loopdev').innerHTML = '<option value="">áudio do sistema: nenhum</option>' +
+        devs.map(d => `<option value="${d.deviceId}">${d.label || 'sem label'}</option>`).join('')
+      const loop = devs.find(d => /loopback|monitor|stereo mix/i.test(d.label))
+      if (loop) $('loopdev').value = loop.deviceId
+    }
 
-async function entrarNaSala() {
-  ice = await (await fetch('/ice')).json()
-  log('ICE:', ice.map(s => s.urls).flat().join(' '))
-  await pegarMic()
-  await listarLoopback()
-  await listarCams()
-  $('entrada').style.display = 'none'
-  $('sala').classList.add('ativa')
-  desenharTile('local')
+    async function pegarMic() {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        })
+        medirFala('local', micStream)
+      } catch (e) {
+        micStream = null
+        log(`microfone indisponível (${e.name}) — entrando sem voz`)
+        $('b-mic').disabled = true
+        controle('b-mic', 'Microfone indisponível')
+      }
+    }
 
-  // Sala e nome vão na URL porque o Worker precisa deles ANTES do upgrade,
-  // para escolher o Durable Object. O server.js local ignora a query e usa a
-  // mensagem 'join'; o Worker ignora o 'join'. Um cliente serve aos dois.
-  const cod = $('sala-cod').value.trim().toLowerCase()
-  const meuNome = $('nome').value || 'anon'
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-  ws = new WebSocket(`${proto}://${location.host}/ws?sala=${encodeURIComponent(cod)}&nome=${encodeURIComponent(meuNome)}`)
-  ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: cod, name: meuNome }))
-  ws.onclose = () => log('sinalização caiu')
-  ws.onmessage = async ev => {
-    const m = JSON.parse(ev.data)
-    if (m.t === 'cheia') return alert('sala cheia (limite de 4)')
-    if (m.t === 'welcome') {
-      meuId = m.id
-      for (const par of m.peers) criarPar(par.id, par.name, true)   // quem chega é polite
+    async function listarCams() {
+      const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput')
+      $('camdev').innerHTML = devs.map(d => `<option value="${d.deviceId}">${d.label || 'câmera'}</option>`).join('')
+      $('camdev').hidden = devs.length < 2      // seletor só aparece se houver escolha
+    }
+
+    async function alternarCam() {
+      if (camStream) return pararCam()
+      const dev = $('camdev').value
+      camStream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          ...(dev ? { deviceId: { exact: dev } } : {}),
+          width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 },
+        },
+      })
+      const t = camStream.getVideoTracks()[0]
+      t.contentHint = 'motion'                  // rosto se move: quadros valem mais que nitidez
+      t.onended = () => pararCam()
+      for (const [, p] of pares) p.pc.addTrack(t, camStream)
+      controle('b-cam', 'Desligar câmera')
+      $('b-cam').classList.add('on')
+      await listarCams()                        // os rótulos só existem depois da permissão
+      desenharTile('local')
+      anunciar()
+      aplicarQualidade()
+    }
+
+    function pararCam() {
+      if (!camStream) return
+      const ts = camStream.getTracks()
+      for (const [, p] of pares)
+        for (const sd of p.pc.getSenders())
+          if (sd.track && ts.includes(sd.track)) p.pc.removeTrack(sd)
+      for (const t of ts) t.stop()
+      camStream = null
+      controle('b-cam', 'Ligar câmera')
+      $('b-cam').classList.remove('on')
+      desenharTile('local')
+      if (foco === 'local' && !telaStream) focar(proximoComVideo())
+      anunciar()
       atualizarDiag()
     }
-    if (m.t === 'peer-join') {
-      criarPar(m.id, m.name, false)                                 // quem já estava oferta
-      anunciar(m.id)
-      redividir()
+
+    async function compartilhar() {
+      if (telaStream) return pararTela()
+
+      telaStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { width: { ideal: qualidade.w }, height: { ideal: qualidade.h },
+                 frameRate: { ideal: qualidade.fps } },
+        audio: true,
+      })
+
+      if (telaStream.getAudioTracks().length === 0) {
+        const dev = $('loopdev').value
+        if (dev) {
+          const s = await navigator.mediaDevices.getUserMedia({
+            audio: { deviceId: { exact: dev }, echoCancellation: false, noiseSuppression: false,
+                     autoGainControl: false, channelCount: 2 },
+          })
+          telaStream.addTrack(s.getAudioTracks()[0])
+          log('áudio do sistema via loopback')
+        } else {
+          log('AVISO: compartilhando SEM áudio. No Windows marque "compartilhar áudio do sistema" ' +
+              'na aba Tela inteira; no Linux escolha o loopback nos ajustes.')
+        }
+      }
+
+      for (const t of telaStream.getTracks()) {
+        t.contentHint = t.kind === 'video' ? qualidade.hint : 'music'
+        t.onended = () => pararTela()
+      }
+      for (const [, p] of pares) for (const t of telaStream.getTracks()) p.pc.addTrack(t, telaStream)
+      controle('b-tela', 'Parar compartilhamento')
+      $('b-tela').classList.add('on')
+      desenharTile('local')
+      focar('local')
+      anunciar()
+      aplicarQualidade()
     }
-    if (m.t === 'signal') receberSinal(m.from, m.data)
-    if (m.t === 'peer-left') {
-      const p = pares.get(m.id)
-      p?.pc.close()
-      for (const [, a] of p?.audios || []) a.el.remove()
-      pares.delete(m.id)
-      document.getElementById('t-' + m.id)?.remove()
-      if (foco === m.id) focar(proximoComVideo())
-      redividir()
-      log('saiu:', m.id)
+
+    // Recria a captura na qualidade atual e troca a track nos senders existentes.
+    // replaceTrack não renegocia, então o receptor nem vê troca — e some o
+    // transceiver morto que o par removeTrack/addTrack deixava a cada ciclo.
+    async function recapturar() {
+      if (!telaStream) return
+      const q = qualidade
+      const novo = await navigator.mediaDevices.getDisplayMedia({
+        video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: q.fps } },
+        audio: true,
+      })
+
+      const trocar = async (antigo, novoT) => {
+        if (!novoT) return
+        for (const [, p] of pares)
+          for (const sd of p.pc.getSenders())
+            if (sd.track === antigo) await sd.replaceTrack(novoT)
+        if (antigo) { telaStream.removeTrack(antigo); antigo.stop() }
+        telaStream.addTrack(novoT)
+      }
+
+      const vNovo = novo.getVideoTracks()[0]
+      vNovo.contentHint = q.hint
+      vNovo.onended = () => pararTela()
+      await trocar(telaStream.getVideoTracks()[0], vNovo)
+
+      const aNovo = novo.getAudioTracks()[0]
+      if (aNovo) { aNovo.contentHint = 'music'; await trocar(telaStream.getAudioTracks()[0], aNovo) }
+
+      desenharTile('local')
+      if (foco === 'local') focar('local')
+      anunciar()
+      await aplicarQualidade()
     }
-  }
-}
 
-const atualizarDiag = () => $('diag').textContent = `${pares.size + 1}/4 na sala` + custoUpload()
+    function pararTela() {
+      if (!telaStream) return
+      const tracks = telaStream.getTracks()
+      for (const [, p] of pares)
+        for (const s of p.pc.getSenders())
+          if (s.track && tracks.includes(s.track)) p.pc.removeTrack(s)
+      for (const t of tracks) t.stop()
+      telaStream = null
+      controle('b-tela', 'Compartilhar tela')
+      $('b-tela').classList.remove('on')
+      desenharTile('local')
+      if (foco === 'local') focar(proximoComVideo())
+      anunciar()
+    }
 
-// Entrou ou saiu gente: o orçamento total se redivide por um número diferente
-// de pares. Fica fora de atualizarDiag para não recursar com aplicarQualidade.
-const redividir = () => { atualizarDiag(); if (telaStream) aplicarQualidade() }
+    // Aplica resolução/fps na captura e bitrate/fps no encoder de cada par.
+    // Depois relata PEDIDO vs OBTIDO: a captura não entrega 4K se o monitor não
+    // for 4K, e nesse caso o número escolhido é ficção.
+    async function aplicarQualidade() {
+      const q = qualidade
+      const vt = telaStream?.getVideoTracks()[0]
 
-// ---------- controles ----------
+      if (vt) {
+        vt.contentHint = q.hint
+        try {
+          await vt.applyConstraints({
+            width: { ideal: q.w, max: q.w }, height: { ideal: q.h, max: q.h },
+            frameRate: { ideal: q.fps, max: q.fps },
+          })
+        } catch (e) { log('applyConstraints:', e.message) }
+      }
 
-addEventListener('unhandledrejection', e => log('ERRO não tratado:', e.reason?.message || e.reason))
-addEventListener('error', e => log('ERRO:', e.message))
+      for (const [, p] of pares)
+        for (const s of p.pc.getSenders()) {
+          if (s.track?.kind !== 'video') continue
+          const par = s.getParameters()
+          par.encodings = par.encodings?.length ? par.encodings : [{}]
+          // Câmera e tela dividem o mesmo uplink mas não o mesmo teto: rosto em
+          // 800 kbps é bom, e o resto fica para a tela.
+          const ehCam = !!camStream?.getVideoTracks().includes(s.track)
+          par.encodings[0].maxBitrate = ehCam ? CAP_CAM : kbpsPorPar() * 1000
+          par.encodings[0].maxFramerate = ehCam ? 30 : q.fps
+          // Tela ilegível é pior que tela lenta: sem banda, o encoder descarta
+          // quadros e mantém a resolução. A câmera segue a dica 'motion'.
+          if (!ehCam) par.degradationPreference = 'maintain-resolution'
+          await s.setParameters(par).catch(e => log('setParameters:', e.message))
+          const aplicada = s.getParameters().degradationPreference
+          if (!ehCam && aplicada !== 'maintain-resolution')
+            log(`navegador não aplicou maintain-resolution na tela (ficou ${aplicada ?? 'sem valor'})`)
+        }
 
-$('entrar').onclick = async () => {
-  $('entrar').disabled = true
-  try { await entrarNaSala() }
-  catch (e) {
-    log(`falhou ao entrar — ${e.name}: ${e.message}`)
-    $('entrada').style.display = ''
-    $('sala').classList.remove('ativa')
-  } finally { $('entrar').disabled = false }
-}
+      const s = vt?.getSettings()
+      if (s) {
+        const obtido = `${s.width}x${s.height}@${Math.round(s.frameRate)}`
+        log(`qualidade: pedido ${q.w}x${q.h}@${q.fps} · obtido ${obtido}`)
 
-$('b-tela').onclick = () => compartilhar().catch(e => log(`tela — ${e.name}: ${e.message}`))
+        // A sessão de captura nasce com a taxa pedida no getDisplayMedia e não
+        // sobe depois: no Wayland é uma sessão do portal PipeWire já criada.
+        // Baixar funciona; subir exige capturar de novo.
+        const preciseRecap = Math.round(s.frameRate) < q.fps * 0.9
+        $('b-recap').hidden = !preciseRecap
+        $('b-recap').textContent = `↻ Recapturar p/ ${q.fps}fps`
+        if (preciseRecap)
+          log(`a captura está presa em ${Math.round(s.frameRate)}fps — a sessão foi criada nessa taxa. ` +
+              `Recapture para subir para ${q.fps}fps.`)
+      }
+      atualizarDiag()
+    }
 
-$('b-cam').onclick = () => alternarCam().catch(e => log(`câmera — ${e.name}: ${e.message}`))
+    // Malha: você envia sua tela para cada par separadamente. É a conta que decide
+    // se 4K60 é viável no seu link, e ela cresce com o número de pessoas.
+    function custoUpload() {
+      if (!telaStream && !camStream) return ''
+      const n = Math.max(1, pares.size)
+      const por = (telaStream ? kbpsPorPar() : 0) + (camStream ? CAP_CAM / 1000 : 0)
+      const tot = (por * n / 1000).toFixed(1)
+      const cortado = telaStream && kbpsPorPar() < qualidade.kbps
+        ? ` (teto ${qualidade.kbps / 1000} cortado p/ ${kbpsPorPar() / 1000})` : ''
+      return ` · teto de vídeo ${tot} Mbps = ${por / 1000} × ${n}${cortado}`
+    }
 
-// Trocar de câmera com ela ligada: derruba e reabre no dispositivo novo.
-$('camdev').onchange = async () => {
-  if (!camStream) return
-  pararCam()
-  await alternarCam().catch(e => log(`câmera — ${e.name}: ${e.message}`))
-}
+    // ---------- tiles e palco ----------
 
-$('b-mic').onclick = () => {
-  const t = micStream?.getAudioTracks()[0]
-  if (!t) return
-  t.enabled = !t.enabled
-  $('b-mic').textContent = t.enabled ? '🎤 Mudo' : '🔇 Mudo'
-  $('b-mic').classList.toggle('on', !t.enabled)
-  desenharTile('local')
-  anunciar()
-}
+    const inicial = n => ((n || '').trim()[0] || '?').toUpperCase()
 
-$('b-surdo').onclick = () => {
-  surdo = !surdo
-  $('b-surdo').classList.toggle('on', surdo)
-  for (const id of pares.keys()) aplicarVolumes(id)
-  desenharTile('local')
-  anunciar()
-}
+    // Mic cortado e fone cortado, desenhados à mão para ficarem legíveis a 15px.
+    const ICONES = {
+      mudo: `<svg class="icone" viewBox="0 0 24 24" aria-label="microfone mudo"><title>microfone mudo</title>
+        <rect x="9" y="2.5" width="6" height="11" rx="3" fill="currentColor"/>
+        <path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round"/>
+        <path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`,
+      surdo: `<svg class="icone" viewBox="0 0 24 24" aria-label="ensurdecido"><title>ensurdecido</title>
+        <path d="M4 14v-2a8 8 0 0 1 16 0v2" fill="none" stroke="currentColor"
+              stroke-width="2" stroke-linecap="round"/>
+        <rect x="2.5" y="13" width="4.5" height="7.5" rx="2.2" fill="currentColor"/>
+        <rect x="17" y="13" width="4.5" height="7.5" rx="2.2" fill="currentColor"/>
+        <path d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>`,
+    }
 
-$('palco-vol').oninput = e => {
-  const p = pares.get(foco)
-  if (!p) return
-  p.volumes.tela = +e.target.value
-  aplicarVolumes(foco)
-  desenharTile(foco)
-}
+    function dadosTile(id) {
+      if (id === 'local') return { nome: $('nome').value.trim() || 'Você', tela: telaStream, cam: camStream, local: true,
+        estado: { compartilhando: !!telaStream, temAudio: !!telaStream?.getAudioTracks().length,
+                  camera: !!camStream, mudo: estouMudo(), surdo } }
+      const p = pares.get(id)
+      return p && { nome: p.nome, tela: p.tela, cam: p.cam, estado: p.estado, local: false }
+    }
 
-$('b-full').onclick = () => document.fullscreenElement
-  ? document.exitFullscreen()
-  : $('palco').requestFullscreen().catch(e => log('tela cheia:', e.message))
+    function desenharTile(id) {
+      const d = dadosTile(id)
+      if (!d) return document.getElementById('t-' + id)?.remove()
 
-$('b-pip').onclick = () => document.pictureInPictureElement
-  ? document.exitPictureInPicture()
-  : $('v-palco').requestPictureInPicture().catch(e => log('PiP:', e.message))
+      let el = document.getElementById('t-' + id)
+      if (!el) {
+        el = document.createElement('div')
+        el.id = 't-' + id
+        el.className = 'tile'
+        el.tabIndex = 0
+        el.setAttribute('aria-label', 'Focar participante; Enter para focar, Espaço para volumes')
+        el.onkeydown = ev => {
+          if (ev.target !== el) return
+          if (ev.key === 'Enter') { ev.preventDefault(); focar(id) }
+          if (ev.key === ' ') { ev.preventDefault(); el.classList.toggle('aberto') }
+        }
+        el.onclick = ev => {
+          if (ev.target.closest('.tile-maximize')) { focar(id); definirMaximizada(true); return }
+          if (ev.target.closest('.vols')) return          // mexer no volume não troca o foco
+          if (ev.target.closest('.nome')) el.classList.toggle('aberto')
+          else focar(id)
+        }
+        $('tira').append(el)
+      }
 
-$('b-sair').onclick = () => location.reload()
+      // O tile é a PESSOA (câmera ou inicial); a tela compartilhada vai no palco.
+      const temVideo = d.cam?.getVideoTracks().length
+      el.style.setProperty('--hue', corPessoa(d.nome))
+      el.innerHTML =
+        (temVideo ? '<video autoplay playsinline muted></video>' : `<div class="semvideo"><span class="avatar">${textoHtml(inicial(d.nome))}</span></div>`) +
+        (d.tela?.getVideoTracks().length || temVideo ? `<button class="tile-maximize" title="Maximizar vídeo" aria-label="Maximizar vídeo">${svgIcon('maximize')}</button>` : '') +
+        `<div class="env"></div><div class="nome"><span>${textoHtml(d.nome)}${d.local ? ' <span class="muted">(você)</span>' : ''}</span><span class="badges">
+           ${d.estado?.mudo ? ICONES.mudo : ''}
+           ${d.estado?.surdo ? ICONES.surdo : ''}
+           ${d.estado?.compartilhando ? '<span class="tag live">LIVE</span>' : ''}
+           ${d.estado?.compartilhando && !d.estado?.temAudio ? '<span class="tag semaudio">sem áudio</span>' : ''}
+         </span></div>` +
+        (d.local ? '' : `<div class="vols">
+           <label>voz <input type="range" min="0" max="1" step="0.01" value="1" data-tipo="voz"></label>
+           <label>tela <input type="range" min="0" max="1" step="0.01" value="1" data-tipo="tela"></label>
+         </div>`)
 
-function lerManual() {
-  const [w, h] = $('res').value.split('x').map(Number)
-  qualidade = { w, h, fps: +$('fps').value, kbps: +$('kbps').value,
-                hint: +$('fps').value <= 10 ? 'detail' : 'motion' }
-}
+      atualizarParticipantes()
+      if (temVideo) el.querySelector('video').srcObject = d.cam
+      el.classList.toggle('focado', foco === id)
+      el.classList.toggle('eu', !!d.local)
 
-$('preset').onchange = () => {
-  const v = $('preset').value
-  $('manual').hidden = v !== 'manual'
-  if (v === 'manual') lerManual()
-  else {
-    qualidade = { ...PRESETS[v] }
-    $('res').value = `${qualidade.w}x${qualidade.h}`
-    $('fps').value = String(qualidade.fps)
-    $('kbps').value = String(qualidade.kbps)
-  }
-  aplicarQualidade()
-}
+      for (const inp of el.querySelectorAll('.vols input')) {
+        const p = pares.get(id)
+        inp.value = p?.volumes[inp.dataset.tipo] ?? 1
+        inp.oninput = () => {
+          p.volumes[inp.dataset.tipo] = +inp.value
+          aplicarVolumes(id)
+          if (inp.dataset.tipo === 'tela' && foco === id) $('palco-vol').value = inp.value
+        }
+      }
+    }
 
-$('b-recap').onclick = () => recapturar().catch(e => log(`recaptura: ${e.name}: ${e.message}`))
-$('orc').onchange = () => aplicarQualidade()
-for (const id of ['res', 'fps', 'kbps'])
-  $(id).onchange = () => { lerManual(); aplicarQualidade() }
+    function focar(id) {
+      foco = id
+      const d = id && dadosTile(id)
+      const fonte = d?.tela?.getVideoTracks().length ? d.tela
+                  : d?.cam?.getVideoTracks().length ? d.cam : null
+      const temVideo = !!fonte
+      $('sala').classList.toggle('sem-foco', !temVideo)
+      if (!temVideo) definirMaximizada(false)
+      atualizarLayout()
+      $('v-palco').srcObject = fonte
+      $('v-palco').style.display = temVideo ? '' : 'none'
+      $('vazio').style.display = temVideo ? 'none' : ''
+      $('v-palco').muted = true   // o áudio sai pelos elementos <audio>, não pelo palco
+      $('palco-nome').textContent = d?.nome || ''
+      $('palco-stats').textContent = ''
+      $('palco-live').hidden = !d?.estado?.compartilhando
+      $('palco-semaudio').hidden = !(d?.estado?.compartilhando && !d?.estado?.temAudio)
+      $('palco-vol').disabled = !d || d.local
+      $('palco-vol').value = (id && pares.get(id)?.volumes.tela) ?? 1
+      for (const el of document.querySelectorAll('.tile')) el.classList.toggle('focado', el.id === 't-' + id)
+    }
 
-$('loopdev').onchange = () => log('áudio do sistema:', $('loopdev').selectedOptions[0]?.textContent)
-</script>
+    function definirMaximizada(ativa) {
+      $('sala').classList.toggle('maximizada', ativa)
+      atualizarLayout()
+    }
+    function atualizarLayout() {
+      const sala = $('sala')
+      const max = sala.classList.contains('maximizada')
+      const semVideo = sala.classList.contains('sem-foco')
+      for (const [id, oculto, nome] of [
+        ['b-sidebar', sala.classList.contains('lateral-oculta'), 'barra lateral'],
+        ['b-participants', sala.classList.contains('participantes-ocultos'), 'participantes'],
+      ]) {
+        const botao = $(id)
+        botao.title = `${oculto ? 'Mostrar' : 'Ocultar'} ${nome}`
+        botao.setAttribute('aria-label', botao.title)
+        botao.setAttribute('aria-pressed', String(oculto))
+        botao.disabled = max || (id === 'b-participants' && semVideo)
+      }
+      controle('b-maximize', max ? 'Restaurar tamanho' : 'Maximizar na janela')
+      $('b-maximize').setAttribute('aria-pressed', String(max))
+    }
+
+    const proximoComVideo = () =>
+      [...pares.keys()].find(id => pares.get(id).tela.getVideoTracks().length) ||
+      [...pares.keys()].find(id => pares.get(id).cam.getVideoTracks().length) ||
+      (telaStream || camStream ? 'local' : null)
+
+    // ---------- áudio recebido ----------
+
+    function aplicarVolumes(id) {
+      const p = pares.get(id)
+      if (!p) return
+      for (const [, a] of p.audios) a.el.volume = surdo ? 0 : (p.volumes[a.tipo] ?? 1)
+    }
+
+    // Classifica a track pelo streamId anunciado por quem compartilha: o stream da
+    // tela é o único que ele anuncia. Sem isso, voz e tela são indistinguíveis aqui.
+    // Um <video> renderiza só a PRIMEIRA track de vídeo do stream. Manter no
+    // máximo uma por destino, e a mais nova, senão track morta congela o quadro.
+    function sincroniza(stream, tracks) {
+      for (const t of stream.getVideoTracks()) if (!tracks.includes(t)) stream.removeTrack(t)
+      for (const t of tracks) if (!stream.getVideoTracks().includes(t)) stream.addTrack(t)
+      for (const extra of stream.getVideoTracks().slice(0, -1)) stream.removeTrack(extra)
+    }
+
+    // Sem o streamId anunciado, tela e câmera seriam indistinguíveis aqui: as duas
+    // são vídeo.
+    //
+    // E há um detalhe que não é óbvio: removeTrack no emissor NÃO encerra a track
+    // no receptor — ela apenas fica muda, o evento 'ended' nunca dispara, e o
+    // <video> segue exibindo o último quadro para sempre. Então quem manda é o
+    // anúncio: track cujo streamId não é mais anunciado está morta e sai.
+    function classificarVideo(id) {
+      const p = pares.get(id)
+      if (!p) return
+      const e = p.estado || {}
+      const sabemos = 'compartilhando' in e     // já recebemos anúncio deste par?
+      const cam = [], tela = []
+      for (const [sid, t] of p.videos) {
+        if (!sabemos) { tela.push(t); continue }   // antes do 1º anúncio, mostrar
+        if (sid === e.idCam) cam.push(t)
+        else if (sid === e.streamId) tela.push(t)
+        else p.videos.delete(sid)                  // fonte não anunciada: morta
+      }
+      sincroniza(p.cam, cam)
+      sincroniza(p.tela, tela)
+      desenharTile(id)
+      if (foco === id) focar(id)
+    }
+
+    function classificar(id) {
+      const p = pares.get(id)
+      if (!p) return
+      for (const [sid, a] of p.audios) a.tipo = sid === p.estado?.streamId ? 'tela' : 'voz'
+      aplicarVolumes(id)
+    }
+
+    function receberAudio(id, track, streamId) {
+      const p = pares.get(id)
+      if (!p) return
+      const el = document.createElement('audio')
+      el.autoplay = true
+      el.srcObject = new MediaStream([track])   // uma track por elemento: ver PLANO-POC.md
+      el.play?.().catch(e => log(`autoplay bloqueado (${e.name}) — clique na página`))
+      p.audios.set(streamId, { el, tipo: 'voz', track })
+      track.addEventListener('ended', () => { el.remove(); p.audios.delete(streamId); })
+      classificar(id)
+      if (p.audios.size === 1) medirFala(id, el.srcObject)  // primeira = voz, move o anel verde
+    }
+
+    // Anel verde de quem está falando, reaproveitando o medidor dos PoCs.
+    function medirFala(id, stream) {
+      const ctx = new AudioContext()
+      ctx.resume()
+      const an = ctx.createAnalyser()
+      an.fftSize = 2048
+      ctx.createMediaStreamSource(stream).connect(an)
+      const buf = new Float32Array(an.fftSize)
+      const tick = () => {
+        if (id !== 'local' && !pares.has(id)) return
+        an.getFloatTimeDomainData(buf)
+        let s = 0
+        for (const v of buf) s += v * v
+        const db = 20 * Math.log10(Math.sqrt(s / buf.length) + 1e-12)
+        document.getElementById('t-' + id)?.classList.toggle('falando', db > -50)
+        requestAnimationFrame(tick)
+      }
+      tick()
+    }
+
+    // ---------- Opus estéreo ----------
+
+    const OPUS = 'stereo=1;sprop-stereo=1;maxaveragebitrate=128000;useinbandfec=1'
+
+    function opusEstereo(sdp) {
+      const linhas = sdp.split(/\r\n|\n/)
+      const pts = linhas.flatMap(l => l.match(/^a=rtpmap:(\d+) opus\/48000\/2$/)?.[1] ?? [])
+      for (const pt of pts) {
+        const i = linhas.findIndex(l => l.startsWith(`a=fmtp:${pt} `))
+        if (i >= 0) {
+          if (!linhas[i].includes('stereo=1')) linhas[i] += ';' + OPUS
+        } else {
+          const j = linhas.findIndex(l => l.startsWith(`a=rtpmap:${pt} `))
+          linhas.splice(j + 1, 0, `a=fmtp:${pt} ${OPUS}`)
+        }
+      }
+      return linhas.join('\r\n')
+    }
+
+    async function definirLocal(pc) {
+      const sd = pc.signalingState === 'have-remote-offer' ? await pc.createAnswer() : await pc.createOffer()
+      sd.sdp = opusEstereo(sd.sdp)
+      await pc.setLocalDescription(sd)
+    }
+
+    // ---------- WebRTC ----------
+
+    function criarPar(id, nome, polite) {
+      // 'relay' descarta candidatos host e srflx: se conectar assim, foi TURN de
+      // verdade. Sem isso, o par quase sempre fecha direto e o TURN nunca é exercido.
+      const pc = new RTCPeerConnection({
+        iceServers: ice,
+        iceTransportPolicy: $('sorelay').checked ? 'relay' : 'all',
+      })
+      const p = { pc, polite, fazendoOferta: false, ignorandoOferta: false, nome,
+                  // tela e câmera são as duas vídeo: só o streamId anunciado separa.
+                  videos: new Map(), tela: new MediaStream(), cam: new MediaStream(),
+                  audios: new Map(), volumes: { voz: 1, tela: 1 }, estado: {},
+                  amostras: [], relato: null }
+      pares.set(id, p)
+      desenharTile(id)
+
+      // Quem recebe a imagem ruim não sabe por que o emissor degradou; quem envia
+      // sabe. Cada lado manda ao outro o próprio envio por este canal. Negociado
+      // com id fixo: os dois lados o criam e ninguém depende de ondatachannel.
+      // Par direto, então não custa mensagem no Durable Object da sinalização.
+      p.canal = pc.createDataChannel('telemetria', { negotiated: true, id: 0 })
+      p.canal.onmessage = e => {
+        try { p.relato = { ...JSON.parse(e.data), recebidoEm: Date.now() } }
+        catch { log(`relato inválido de ${nome}`) }
+      }
+
+      if (micStream) for (const t of micStream.getTracks()) pc.addTrack(t, micStream)
+      if (telaStream) for (const t of telaStream.getTracks()) pc.addTrack(t, telaStream)
+      if (camStream) for (const t of camStream.getTracks()) pc.addTrack(t, camStream)
+
+      pc.ontrack = e => {
+        const sid = e.streams[0]?.id || 'sem-stream'
+        log(`track ${e.track.kind} de ${nome}`)
+        if (e.track.kind === 'audio') return receberAudio(id, e.track, sid)
+
+        p.videos.set(sid, e.track)
+        e.track.addEventListener('ended', () => { p.videos.delete(sid); classificarVideo(id) })
+        classificarVideo(id)
+        if (!foco || foco === 'local' && !telaStream) focar(id)
+      }
+
+      const tipos = new Set()
+      pc.onicecandidate = e => {
+        if (!e.candidate) return log(`candidatos de ${nome}: ${[...tipos].join(', ') || 'NENHUM'}`)
+        if (!tipos.has(e.candidate.type)) {
+          tipos.add(e.candidate.type)
+          log(`candidato ${e.candidate.type}/${e.candidate.protocol} para ${nome}`)
+        }
+        sinalizar(id, { candidate: e.candidate })
+      }
+      pc.onicecandidateerror = e => log(`ICE erro ${e.errorCode} em ${e.url} — ${e.errorText}`)
+
+      pc.oniceconnectionstatechange = () => {
+        log(`${nome}: ${pc.iceConnectionState}`)
+        if (pc.iceConnectionState === 'connected') { tipoDeCaminho(id, pc); acompanharVideo(id, pc) }
+        if (pc.iceConnectionState === 'failed') porQueFalhou(id, pc)
+      }
+      pc.onconnectionstatechange = () => log(`${nome}: conexão ${pc.connectionState}`)
+
+      pc.onnegotiationneeded = async () => {
+        try {
+          p.fazendoOferta = true
+          await definirLocal(pc)
+          sinalizar(id, { description: pc.localDescription })
+        } catch (e) { log('negotiationneeded:', e.message) }
+        finally { p.fazendoOferta = false }
+      }
+      return p
+    }
+
+    async function tipoDeCaminho(id, pc) {
+      const st = await pc.getStats()
+      let atual
+      st.forEach(r => { if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.nominated) atual = r })
+      if (!atual) return
+      const l = st.get(atual.localCandidateId), r = st.get(atual.remoteCandidateId)
+      const via = l?.candidateType === 'relay' || r?.candidateType === 'relay' ? 'RELAY (TURN)' : 'direto'
+      // Com dois TURN na lista, saber que houve relay não diz qual respondeu. O
+      // endereço do candidato relay é o do servidor que alocou.
+      const quem = l?.candidateType === 'relay' ? ` via ${l.address}` : ''
+      log(`caminho com ${pares.get(id)?.nome}: ${via}${quem} — ${l?.candidateType}/${r?.candidateType}`)
+    }
+
+    async function porQueFalhou(id, pc) {
+      const st = await pc.getStats()
+      const cand = new Map()
+      st.forEach(r => { if (r.type.endsWith('candidate')) cand.set(r.id, r) })
+      const linhas = []
+      st.forEach(r => {
+        if (r.type !== 'candidate-pair') return
+        const l = cand.get(r.localCandidateId), rm = cand.get(r.remoteCandidateId)
+        linhas.push(`  ${l?.candidateType}/${l?.protocol} → ${rm?.candidateType}: ${r.state}`)
+      })
+      log(`por que falhou com ${pares.get(id)?.nome}:\n${linhas.join('\n') || '  nenhum par formado'}`)
+    }
+
+    function acompanharVideo(id, pc) {
+      const p = pares.get(id)
+      // ICE volta a 'connected' depois de cada 'disconnected': sem a trava, cada
+      // volta somava outro timer e duplicava as amostras.
+      if (!p || p.timer) return
+      const anteriores = new Map()
+      p.timer = setInterval(async () => {
+        if (pares.get(id) !== p) return clearInterval(p.timer)
+        try { await atualizarVideo(id, pc, anteriores) }
+        catch (e) { log(`estatísticas de vídeo: ${e.message}`) }
+      }, 2000)
+    }
+
+    // ---------- telemetria ----------
+    // Uma amostra por par a cada 2 s, com os dois lados: o que eu envio, o que
+    // recebo, o transporte, a configuração do encoder e o relato do emissor. As
+    // últimas 150 (5 min) vão para o relatório baixado nos ajustes.
+
+    const MAX_AMOSTRAS = 150
+    const saidos = []
+    const emKbps = bps => bps === undefined ? undefined : Math.round(bps * 8 / 1000)
+    const arred = (v, casas = 1) => typeof v === 'number' ? +v.toFixed(casas) : undefined
+    const emMs = s => typeof s === 'number' ? Math.round(s * 1000) : undefined
+
+    function resumoEnvio(st, r, retorno, taxa) {
+      if (!r) return null
+      const fonte = st.get(r.mediaSourceId)
+      return {
+        res: `${r.frameWidth ?? '?'}x${r.frameHeight ?? '?'}`,
+        fps: arred(taxa(r, 'framesEncoded')),
+        kbps: emKbps(taxa(r, 'bytesSent')),
+        alvoKbps: typeof r.targetBitrate === 'number' ? Math.round(r.targetBitrate / 1000) : undefined,
+        captura: fonte && `${fonte.width ?? '?'}x${fonte.height ?? '?'}`,
+        fpsCaptura: arred(fonte?.framesPerSecond),
+        limite: r.qualityLimitationReason,
+        tempoLimitado: r.qualityLimitationDurations,
+        trocasDeResolucao: r.qualityLimitationResolutionChanges,
+        codec: st.get(r.codecId)?.mimeType,
+        encoder: r.encoderImplementation,
+        nack: r.nackCount, pli: r.pliCount,
+        perda: retorno?.fractionLost,
+        rttMs: emMs(retorno?.roundTripTime),
+      }
+    }
+
+    function resumoRecebe(st, r, taxa) {
+      if (!r) return null
+      const perdidos = taxa(r, 'packetsLost'), chegaram = taxa(r, 'packetsReceived')
+      return {
+        res: `${r.frameWidth ?? '?'}x${r.frameHeight ?? '?'}`,
+        fps: arred(taxa(r, 'framesDecoded')),
+        kbps: emKbps(taxa(r, 'bytesReceived')),
+        perda: perdidos + chegaram > 0 ? arred(perdidos / (perdidos + chegaram), 3) : undefined,
+        descartadosPorS: arred(taxa(r, 'framesDropped')),
+        congelamentos: r.freezeCount,
+        congeladoS: arred(r.totalFreezesDuration),
+        jitterMs: emMs(r.jitter),
+        bufferMs: r.jitterBufferEmittedCount
+          ? Math.round(r.jitterBufferDelay / r.jitterBufferEmittedCount * 1000) : undefined,
+        codec: st.get(r.codecId)?.mimeType,
+        decoder: r.decoderImplementation,
+        nack: r.nackCount, pli: r.pliCount,
+      }
+    }
+
+    // TURN sobre TCP/TLS é o suspeito clássico de banda baixa com congelamento,
+    // por isso o caminho mostra o protocolo até o relay, não o do relay ao par.
+    function resumoTransporte(st, cp) {
+      if (!cp) return null
+      const l = st.get(cp.localCandidateId), r = st.get(cp.remoteCandidateId)
+      return {
+        caminho: l && r ? `${l.candidateType}/${l.relayProtocol ?? l.protocol} → ${r.candidateType}` : undefined,
+        relay: l?.candidateType === 'relay' ? l.url ?? l.address : undefined,
+        bweKbps: typeof cp.availableOutgoingBitrate === 'number'
+          ? Math.round(cp.availableOutgoingBitrate / 1000) : undefined,
+        rttMs: emMs(cp.currentRoundTripTime),
+      }
+    }
+
+    // O que o encoder recebeu de fato, lido de volta do sender: prova se o teto
+    // e a preferência de degradação pedidos foram aplicados.
+    function configEnvio(pc, track) {
+      const par = track && pc.getSenders?.().find(s => s.track === track)?.getParameters()
+      if (!par) return null
+      const e = par.encodings?.[0]
+      return {
+        maxKbps: e?.maxBitrate && e.maxBitrate / 1000, maxFps: e?.maxFramerate,
+        degradacao: par.degradationPreference, dica: track.contentHint,
+        pedido: `${qualidade.w}x${qualidade.h}@${qualidade.fps}`,
+      }
+    }
+
+    // Causa provável da imagem ruim, na ordem em que uma esconde a outra. Sem o
+    // relato do emissor, só dá para falar do trecho até aqui.
+    function diagnosticar(recebe, relato, nome) {
+      if (!recebe) return ''
+      const env = relato?.envio, tr = relato?.transporte, cfg = relato?.config
+      const perda = Math.max(recebe.perda ?? 0, env?.perda ?? 0)
+      if (env?.limite === 'cpu') return `CPU de ${nome} (encoder ${env.encoder ?? '?'})`
+      if (perda > 0.05) return `perda de ${Math.round(perda * 100)}% entre ${nome} e você`
+      // Com maintain-resolution o Chrome relata limite 'none' mesmo sem banda:
+      // a falta aparece como quadros capturados que o encoder não envia.
+      const semQuadros = env?.fps < env?.fpsCaptura * 0.5
+      if (env?.limite === 'bandwidth' || semQuadros) {
+        if (cfg?.maxKbps && env.alvoKbps >= cfg.maxKbps * 0.9)
+          return `teto de ${cfg.maxKbps}kbps configurado por ${nome}`
+        const tcp = tr?.caminho?.match(/^relay\/(tcp|tls)/)
+        return `banda de ${nome}: estimativa ${tr?.bweKbps ?? '?'}kbps${tcp ? ` via TURN/${tcp[1]}` : ''}` +
+          (semQuadros ? ` · ${env.fps} de ${env.fpsCaptura}fps` : '')
+      }
+      if (recebe.descartadosPorS > 1) return `seu navegador descarta quadros (decoder ${recebe.decoder ?? '?'})`
+      if (!relato) return 'sem relato do emissor'
+      return ''
+    }
+
+    // Só transições entram no log; o resto fica nas amostras.
+    function registrarMudancas(p, a) {
+      const caminho = a.transporte?.caminho
+      if (caminho && caminho !== p.caminho) log(`caminho com ${p.nome}: ${caminho}`)
+      p.caminho = caminho ?? p.caminho
+      const limite = a.envio?.limite
+      if (limite && limite !== p.limite && (limite !== 'none' || p.limite))
+        log(`envio para ${p.nome}: ${limite === 'none' ? 'sem limitação' : `limitado por ${limite}`} em ` +
+            `${a.envio.res} ${a.envio.fps ?? '?'}fps, estimativa ${a.transporte?.bweKbps ?? '?'}kbps`)
+      p.limite = limite ?? p.limite
+      if (a.causa && a.causa !== p.causa) log(`vídeo de ${p.nome}: ${a.causa}`)
+      p.causa = a.causa
+    }
+
+    async function atualizarVideo(id, pc, anteriores) {
+      const st = await pc.getStats()
+      const p = pares.get(id)
+      if (!p || p.pc !== pc) return
+      const videoLocal = telaStream?.getVideoTracks()[0] || camStream?.getVideoTracks()[0]
+      const videoRemoto = p.tela.getVideoTracks()[0] || p.cam.getVideoTracks()[0]
+      let recebido, enviado, retorno, transporte
+      st.forEach(r => {
+        if (r.type === 'transport') transporte ??= r
+        if (r.kind !== 'video') return
+        if (r.type === 'inbound-rtp' && videoRemoto && r.trackIdentifier === videoRemoto.id) recebido = r
+        if (r.type === 'outbound-rtp' && videoLocal &&
+            st.get(r.mediaSourceId)?.trackIdentifier === videoLocal.id) enviado = r
+      })
+      st.forEach(r => { if (r.type === 'remote-inbound-rtp' && r.localId === enviado?.id) retorno = r })
+
+      // Cada direção e track tem seu contador. A câmera não pode substituir a tela.
+      const taxa = (r, campo) => {
+        const antes = anteriores.get(r.id)
+        const dt = antes && (r.timestamp - antes.timestamp) / 1000
+        const delta = antes && r[campo] - antes[campo]
+        return dt > 0 && delta >= 0 ? delta / dt : undefined
+      }
+      const formato = (r, envio) => {
+        const bytes = taxa(r, envio ? 'bytesSent' : 'bytesReceived')
+        const fps = taxa(r, envio ? 'framesEncoded' : 'framesDecoded')
+        return `${r.frameWidth ?? '?'}x${r.frameHeight ?? '?'}` +
+          ` · ${fps === undefined ? '?' : fps.toFixed(1)}fps` +
+          ` · ${bytes === undefined ? '?' : Math.round(bytes * 8 / 1000)}kbps`
+      }
+
+      const cp = st.get(st.get((enviado || recebido)?.transportId ?? transporte?.id)?.selectedCandidatePairId)
+      const a = {
+        t: Date.now(),
+        envio: resumoEnvio(st, enviado, retorno, taxa),
+        recebe: resumoRecebe(st, recebido, taxa),
+        transporte: resumoTransporte(st, cp),
+        config: configEnvio(pc, videoLocal),
+      }
+      if (p.relato && a.t - p.relato.recebidoEm < 6000) a.relato = p.relato
+      a.causa = diagnosticar(a.recebe, a.relato, p.nome)
+      p.amostras.push(a)
+      if (p.amostras.length > MAX_AMOSTRAS) p.amostras.shift()
+      if (p.canal?.readyState === 'open')
+        p.canal.send(JSON.stringify({ envio: a.envio, transporte: a.transporte, config: a.config }))
+      registrarMudancas(p, a)
+
+      const env = document.querySelector(`#t-${id} .env`)
+      if (env) {
+        const motivos = { bandwidth: 'banda', cpu: 'CPU', other: 'outro' }
+        const motivo = enviado && motivos[enviado.qualityLimitationReason]
+        const banda = enviado && cp?.availableOutgoingBitrate
+        const caminho = cp && [st.get(cp.localCandidateId), st.get(cp.remoteCandidateId)]
+        const via = caminho?.every(Boolean)
+          ? ` · ${caminho.some(c => c.candidateType === 'relay') ? 'relay' : 'direto'}` : ''
+        env.textContent = enviado
+          ? `→ ${telaStream ? 'tela' : 'câmera'} ${formato(enviado, true)}` +
+            `${banda === undefined ? '' : ` · banda estimada ${Math.round(banda / 1000)}kbps`}` +
+            `${via}${motivo ? ` · limitado: ${motivo}` : ''}`
+          : ''
+        env.classList.toggle('limitado', !!motivo)
+      }
+
+      if (foco === id) {
+        const antes = recebido && anteriores.get(recebido.id)
+        const perda = antes && recebido.packetsLost - antes.packetsLost
+        $('palco-stats').textContent = recebido ? formato(recebido, false) +
+          `${perda > 0 ? ` · perdeu ${perda}` : ''}` +
+          `${recebido.freezeCount ? ` · freezes ${recebido.freezeCount}` : ''}` +
+          `${a.causa ? ` · ${a.causa}` : ''}` : ''
+      }
+      anteriores.clear()
+      for (const r of [recebido, enviado]) if (r) anteriores.set(r.id, r)
+    }
+
+    const estadoPar = ([id, p]) => ({
+      id, nome: p.nome, conexao: p.pc.connectionState, ice: p.pc.iceConnectionState,
+      negociacao: p.pc.signalingState, canal: p.canal?.readyState, estado: p.estado, amostras: p.amostras,
+    })
+
+    // Tudo o que é preciso para achar a causa sem ter estado na chamada.
+    function relatorio() {
+      return JSON.stringify({
+        gerado: new Date().toISOString(),
+        navegador: navigator.userAgent,
+        eu: { id: meuId, nome: $('nome').value, sala: $('sala-cod').value },
+        sinalizacao: ['conectando', 'aberta', 'fechando', 'fechada'][ws?.readyState] ?? 'nunca abriu',
+        qualidade, orcamentoKbps: +($('orc')?.value || 0),
+        compartilhando: !!telaStream, camera: !!camStream,
+        pares: [...pares].map(estadoPar), saidos, eventos,
+      }, null, 1)
+    }
+
+    function baixarRelatorio() {
+      const url = URL.createObjectURL(new Blob([relatorio()], { type: 'application/json' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `disgalm-diagnostico-${new Date().toISOString().replace(/[:.]/g, '-')}.json`
+      a.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    }
+
+    async function receberSinal(id, data) {
+      const p = pares.get(id)
+      if (!p) return
+      const { pc } = p
+      try {
+        if (data.estado) {
+          p.estado = data.estado
+          classificar(id)
+          classificarVideo(id)
+          return
+        }
+        if (data.description) {
+          const colisao = data.description.type === 'offer' && (p.fazendoOferta || pc.signalingState !== 'stable')
+          p.ignorandoOferta = !p.polite && colisao
+          if (p.ignorandoOferta) return log(`oferta ignorada de ${p.nome} (impolite)`)
+          await pc.setRemoteDescription(data.description)
+          if (data.description.type === 'offer') {
+            await definirLocal(pc)
+            sinalizar(id, { description: pc.localDescription })
+          }
+        } else if (data.candidate) {
+          try { await pc.addIceCandidate(data.candidate) } catch (e) { if (!p.ignorandoOferta) throw e }
+        }
+      } catch (e) { log('sinal:', e.message) }
+    }
+
+    // ---------- sinalização ----------
+
+    const sinalizar = (to, data) => ws?.readyState === 1 && ws.send(JSON.stringify({ t: 'signal', to, data }))
+
+    function atualizarSinalizacao(conectado) {
+      $('sala').classList.toggle('desconectada', !conectado)
+      $('connection-alert').hidden = conectado
+      $('connection-label').textContent = conectado ? 'Conectado à sala' : 'Sinalização desconectada'
+      $('my-status').textContent = conectado ? 'Na sala' : 'Desconectado'
+    }
+
+    function sinalizacaoFechada(ev) {
+      log(`${new Date().toISOString()} sinalização fechou: código=${ev.code}; ` +
+          `motivo=${ev.reason || '(não informado)'}; fechamento completo=${ev.wasClean}`)
+      for (const [, p] of pares)
+        log(`conexão com ${p.nome}: ${p.pc.connectionState}; ICE=${p.pc.iceConnectionState}`)
+      atualizarSinalizacao(false)
+    }
+
+    async function entrarNaSala() {
+      ice = await (await fetch('/ice')).json()
+      log('ICE:', ice.map(s => s.urls).flat().join(' '))
+      await pegarMic()
+      await listarLoopback()
+      await listarCams()
+      $('entrada').style.display = 'none'
+      $('sala').classList.add('ativa')
+      desenharTile('local')
+
+      // Sala e nome vão na URL porque o Worker precisa deles ANTES do upgrade,
+      // para escolher o Durable Object. O server.js local ignora a query e usa a
+      // mensagem 'join'; o Worker ignora o 'join'. Um cliente serve aos dois.
+      const cod = $('sala-cod').value.trim().toLowerCase()
+      const meuNome = $('nome').value.trim() || 'anon'
+      for (const id of ['room-title', 'channel-name']) $(id).textContent = cod
+      $('connection-room').textContent = cod + ' / Disgalm'
+      $('my-name').textContent = meuNome
+      $('my-avatar').textContent = inicial(meuNome)
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+      ws = new WebSocket(`${proto}://${location.host}/ws?sala=${encodeURIComponent(cod)}&nome=${encodeURIComponent(meuNome)}`)
+      ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: cod, name: meuNome }))
+      ws.onclose = sinalizacaoFechada
+      ws.onmessage = async ev => {
+        const m = JSON.parse(ev.data)
+        if (m.t === 'cheia') return alert('sala cheia (limite de 4)')
+        if (m.t === 'welcome') {
+          meuId = m.id
+          atualizarSinalizacao(true)
+          for (const par of m.peers) criarPar(par.id, par.name, true)   // quem chega é polite
+          atualizarDiag()
+        }
+        if (m.t === 'peer-join') {
+          criarPar(m.id, m.name, false)                                 // quem já estava oferta
+          anunciar(m.id)
+          redividir()
+        }
+        if (m.t === 'signal') receberSinal(m.from, m.data)
+        if (m.t === 'peer-left') {
+          const p = pares.get(m.id)
+          // Quem sai leva as amostras junto; o relatório ainda precisa delas.
+          if (p) saidos.push({ ...estadoPar([m.id, p]), saiuEm: new Date().toISOString() })
+          if (saidos.length > 8) saidos.shift()
+          p?.pc.close()
+          for (const [, a] of p?.audios || []) a.el.remove()
+          pares.delete(m.id)
+          document.getElementById('t-' + m.id)?.remove()
+          if (foco === m.id) focar(proximoComVideo())
+          redividir()
+          log('saiu:', m.id)
+        }
+      }
+    }
+
+    const atualizarDiag = () => {
+      $('diag').textContent = `${pares.size + 1}/4 na sala` + custoUpload()
+      $('people-count').textContent = `${pares.size + 1} / 4`
+      $('quality-caption').textContent = `Tela em ${qualidade.h}p · ${qualidade.fps} fps`
+      atualizarParticipantes()
+    }
+
+    // Entrou ou saiu gente: o orçamento total se redivide por um número diferente
+    // de pares. Fica fora de atualizarDiag para não recursar com aplicarQualidade.
+    const redividir = () => { atualizarDiag(); if (telaStream) aplicarQualidade() }
+
+    // ---------- controles ----------
+
+    addEventListener('unhandledrejection', e => log('ERRO não tratado:', e.reason?.message || e.reason))
+    addEventListener('error', e => log('ERRO:', e.message))
+
+    const nomeSalvo = () => {
+      try { return localStorage.getItem('disgalm.nome') || '' }
+      catch { return '' }
+    }
+    const salvarNome = nome => {
+      try { localStorage.setItem('disgalm.nome', nome) }
+      catch {}
+    }
+
+    $('entry-form').onsubmit = async ev => {
+      ev.preventDefault()
+      $('entry-error').textContent = ''
+      $('entrar').textContent = 'Conectando…'
+      $('entrar').disabled = true
+      try {
+        const nome = $('nome').value.trim()
+        if (nome) salvarNome(nome)
+        await entrarNaSala()
+      }
+      catch (e) {
+        log(`falhou ao entrar — ${e.name}: ${e.message}`)
+        $('entry-error').textContent = 'Não foi possível entrar. ' + e.message
+        $('entrada').style.display = ''
+        $('sala').classList.remove('ativa')
+      } finally { $('entrar').disabled = false; $('entrar').textContent = 'Entrar na sala →' }
+    }
+
+    $('b-tela').onclick = () => compartilhar().catch(e => log(`tela — ${e.name}: ${e.message}`))
+
+    $('b-cam').onclick = () => alternarCam().catch(e => log(`câmera — ${e.name}: ${e.message}`))
+
+    // Trocar de câmera com ela ligada: derruba e reabre no dispositivo novo.
+    $('camdev').onchange = async () => {
+      if (!camStream) return
+      pararCam()
+      await alternarCam().catch(e => log(`câmera — ${e.name}: ${e.message}`))
+    }
+
+    $('b-mic').onclick = () => {
+      const t = micStream?.getAudioTracks()[0]
+      if (!t) return
+      t.enabled = !t.enabled
+      controle('b-mic', t.enabled ? 'Silenciar microfone' : 'Ativar microfone')
+      $('b-mic').classList.toggle('on', !t.enabled)
+      desenharTile('local')
+      anunciar()
+    }
+
+    $('b-surdo').onclick = () => {
+      surdo = !surdo
+      $('b-surdo').classList.toggle('on', surdo)
+      controle('b-surdo', surdo ? 'Ativar áudio da sala' : 'Silenciar áudio da sala')
+      for (const id of pares.keys()) aplicarVolumes(id)
+      desenharTile('local')
+      anunciar()
+    }
+
+    $('palco-vol').oninput = e => {
+      const p = pares.get(foco)
+      if (!p) return
+      p.volumes.tela = +e.target.value
+      aplicarVolumes(foco)
+      desenharTile(foco)
+    }
+
+    $('b-full').onclick = () => document.fullscreenElement
+      ? document.exitFullscreen()
+      : $('palco').requestFullscreen().catch(e => log('tela cheia:', e.message))
+
+    $('b-pip').onclick = () => document.pictureInPictureElement
+      ? document.exitPictureInPicture()
+      : $('v-palco').requestPictureInPicture().catch(e => log('PiP:', e.message))
+
+    $('b-sair').onclick = () => location.reload()
+    $('b-rejoin').onclick = () => {
+      const url = new URL(location.href)
+      url.searchParams.set('sala', $('sala-cod').value.trim().toLowerCase())
+      location.assign(url.href)
+    }
+
+    function lerManual() {
+      const [w, h] = $('res').value.split('x').map(Number)
+      qualidade = { w, h, fps: +$('fps').value, kbps: +$('kbps').value,
+                    hint: +$('fps').value <= 10 ? 'detail' : 'motion' }
+    }
+
+    $('preset').onchange = () => {
+      const v = $('preset').value
+      $('manual').hidden = v !== 'manual'
+      if (v === 'manual') lerManual()
+      else {
+        qualidade = { ...PRESETS[v] }
+        $('res').value = `${qualidade.w}x${qualidade.h}`
+        $('fps').value = String(qualidade.fps)
+        $('kbps').value = String(qualidade.kbps)
+      }
+      aplicarQualidade()
+    }
+
+    $('b-recap').onclick = () => recapturar().catch(e => log(`recaptura: ${e.name}: ${e.message}`))
+    $('orc').onchange = () => aplicarQualidade()
+    $('b-relatorio').onclick = baixarRelatorio
+    for (const id of ['res', 'fps', 'kbps'])
+      $(id).onchange = () => { lerManual(); aplicarQualidade() }
+
+    $('loopdev').onchange = () => log('áudio do sistema:', $('loopdev').selectedOptions[0]?.textContent)
+
+    // Ícones e estados dos controles da chamada.
+    const UI_ICONS = {
+      mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>',
+      headphones: '<path d="M3 14v-3a9 9 0 0 1 18 0v3"/><rect x="3" y="12" width="4" height="8" rx="2"/><rect x="17" y="12" width="4" height="8" rx="2"/>',
+      camera: '<rect x="2" y="5" width="13" height="14" rx="3"/><path d="m15 9 7-4v14l-7-4"/>',
+      screen: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M12 13V7m-3 3 3-3 3 3"/>',
+      settings: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="currentColor" stroke="none"/><circle cx="16" cy="17" r="3" fill="currentColor" stroke="none"/>',
+      phone: '<path d="M3 16v-4c4-5 14-5 18 0v4l-5-1v-4M8 11v4l-5 1"/>',
+      voice: '<path d="m11 4-6 5H2v6h3l6 5V4ZM15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>',
+      invite: '<circle cx="9" cy="7" r="4"/><path d="M2 21v-2a7 7 0 0 1 14 0v2M20 8v6m-3-3h6"/>',
+      pip: '<rect x="2" y="3" width="20" height="18" rx="2"/><rect x="12" y="12" width="7" height="6" rx="1"/>',
+      grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
+      sidebar: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/>',
+      people: '<circle cx="8" cy="8" r="3"/><path d="M2 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6m1 4a5 5 0 0 1 5 5"/>',
+      maximize: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 8h18"/>',
+      full: '<path d="M3 9V3h6m6 0h6v6M3 15v6h6m6 0h6v-6"/>',
+    }
+    const svgIcon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${UI_ICONS[name]}</svg>`
+    const textoHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+    const corPessoa = nome => [...(nome || '?')].reduce((s,c) => s + c.charCodeAt(0) * 13, 0) % 360
+    function controle(id, label) {
+      const icons = {'b-mic':'mic','b-surdo':'headphones','b-cam':'camera','b-tela':'screen','b-settings':'settings','b-sair':'phone','b-pip':'pip','b-full':'full','b-maximize':'maximize'}
+      const el = $(id)
+      el.innerHTML = svgIcon(icons[id]) + `<span class="sr">${textoHtml(label)}</span>`
+      el.title = label
+      el.setAttribute('aria-label', label)
+    }
+    function atualizarParticipantes() {
+      const pessoas = [{nome: $('nome').value.trim() || 'Você', estado: {mudo: estouMudo()}, local:true}, ...[...pares.values()].map(p => ({nome:p.nome,estado:p.estado}))]
+      $('people').innerHTML = pessoas.map(p => `<div class="person"><span class="avatar-small" style="--hue:${corPessoa(p.nome)}">${textoHtml(inicial(p.nome))}</span><span class="person-name">${textoHtml(p.nome)}${p.local ? ' <span class="muted">(você)</span>' : ''}</span>${p.estado?.compartilhando ? '<span class="tag live">LIVE</span>' : ''}${p.estado?.mudo ? ICONES.mudo : ''}</div>`).join('')
+    }
+    addEventListener('DOMContentLoaded', () => {
+      document.querySelectorAll('[data-icon]').forEach(el => el.innerHTML = svgIcon(el.dataset.icon))
+      for (const id of ['b-mic','b-surdo','b-cam','b-tela','b-settings','b-sair','b-pip','b-full']) controle(id, $(id).title)
+      $('nome').value = nomeSalvo()
+      const room = new URL(location.href).searchParams.get('sala')
+      if (room) $('sala-cod').value = room
+      $('b-sidebar').onclick = () => { $('sala').classList.toggle('lateral-oculta'); atualizarLayout() }
+      $('b-participants').onclick = () => { $('sala').classList.toggle('participantes-ocultos'); atualizarLayout() }
+      $('b-maximize').onclick = () => definirMaximizada(!$('sala').classList.contains('maximizada'))
+      addEventListener('keydown', ev => { if (ev.key === 'Escape' && !document.fullscreenElement) definirMaximizada(false) })
+      atualizarLayout()
+      $('b-grid').onclick = () => focar(null)
+      $('b-settings').onclick = () => $('ajustes').showModal()
+      $('b-close-settings').onclick = () => $('ajustes').close()
+      $('b-invite').onclick = async () => {
+        const url = new URL(location.href)
+        url.search = ''
+        url.searchParams.set('sala', $('sala-cod').value.trim().toLowerCase())
+        try {
+          await navigator.clipboard.writeText(url.href)
+          $('ui-notice').textContent = 'Link da sala copiado. Envie para a galera.'
+        } catch { $('ui-notice').textContent = 'Link da sala: ' + url.href }
+      }
+    })
+  </script>
+</html>
