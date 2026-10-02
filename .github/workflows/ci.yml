@@ -88,6 +88,8 @@ jobs:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           CSC_NAME: ${{ vars.CSC_NAME }}
+          # O electron-builder pula a assinatura em PR por padrão.
+          CSC_FOR_PULL_REQUEST: 'true'
         run: |
           npm ci --no-fund --no-audit
           npx electron-builder --config electron-builder.config.cjs --mac zip --arm64 --publish never
