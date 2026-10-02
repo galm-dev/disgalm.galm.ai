@@ -469,3 +469,16 @@ test('assinatura reserva o teto do tipo e libera ao fechar e ao sair', async () 
   // As duas reservas fechadas continuam no mês: são a estimativa do SFU.
   assert.equal(Object.keys(orcamento.storage.saved.get('reservas')).length, 2)
 })
+
+test('sem medição: a sala de ensaio abre em SFU sem retrato, e a assinatura entra na conta do mês', async () => {
+  orcamento = criarOrcamento(Orcamento, { snapshot: null, semMedicao: true })
+  const s = montar()
+  const a = await s.entra({ sub: 'pessoa-a' })
+  const b = await s.entra({ sub: 'pessoa-b' })
+  assert.equal(a.ultima('welcome').modo, 'sfu')
+  await publicarMic(s, a)
+  const { corpo: { sessao } } = await s.pede(b, 'sessao')
+  assert.equal((await s.pede(b, 'assinar', { sessao, alvos: [{ dono: a.id, fonte: 'mic-1' }] })).status, 200)
+  const r = Object.values(orcamento.storage.saved.get('reservas'))
+  assert.deepEqual(r.map(x => [x.tipo, x.fim]), [['sfu', null]])
+})

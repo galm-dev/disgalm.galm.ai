@@ -194,9 +194,21 @@ Eventos: `orcamento_snapshot`, `orcamento_snapshot_vencido`,
 `sfu_uso_falhou`, e do navegador `ice_renovado`, `ice_renovacao_falhou` e
 `aviso_cota`. Nenhum leva nome, email, token, credencial nem IP.
 
-**Antes de publicar este Worker:** `CF_ACCOUNT_ID` e `CF_ANALYTICS_TOKEN`
-precisam existir (ver Operação). Sem eles não há medição, e o `/ice` deixa de
-emitir TURN da Cloudflare para todas as salas.
+**Modo sem medição** (o atual, por decisão do Marcus: sem
+`CF_ANALYTICS_TOKEN`). Sem `CF_ACCOUNT_ID` ou `CF_ANALYTICS_TOKEN`, o cron não
+faz nada e o orçamento não consulta a analytics:
+
+- o TURN da Cloudflare não é bloqueado, como antes do orçamento, mas continua
+  com a credencial de 5 min e a renovação;
+- o SFU conta só o que o gateway autorizou no mês (teto de cada assinatura ×
+  tempo aberta), guardado no storage do objeto, que zera na virada do mês
+  (UTC). Em 90% desse total, nega publicar e assinar, como no modo medido.
+  Retrato vencido não bloqueia nada;
+- `orcamento_modo` vai ao Better Stack uma vez por dia (no primeiro pedido do
+  dia) e na troca de modo, com `sfu_estimado_gb_mes` e `uso_protegido_pct`.
+
+Com os dois secrets gravados, o mesmo código volta ao modo medido do começo
+desta seção, sem mudança nem migração.
 
 ## Diagnóstico
 
@@ -241,9 +253,8 @@ npx wrangler deploy
 O Worker usa os secrets existentes de TURN (`CF_TURN_KEY_ID` e
 `CF_TURN_API_TOKEN`, com coturn opcional). O SFU de ensaio usa `SFU_APP_ID` e
 `SFU_APP_SECRET`, e a lista `SFU_SALAS` do `wrangler.toml`.
-Para o evento `turn_uso` e para o orçamento, são necessários mais dois
-secrets. Sem eles não há medição, e o orçamento nega o TURN da Cloudflare e o
-SFU.
+Para o evento `turn_uso` e para o orçamento medido, são necessários mais dois
+secrets. Sem eles o orçamento fica no modo sem medição (ver Orçamento).
 
 - `CF_ACCOUNT_ID`: o Account ID da conta onde está a chave TURN (aparece na
   página inicial da conta no painel da Cloudflare).

@@ -121,8 +121,8 @@ const visto = (quem, de, cond, ms) => ate(async () => {
 const contar = (evs, nome, filtro = () => true) => evs.filter(e => e.evento === nome && filtro(e)).length
 
 try {
-  const prep = await fetch(`${ORIGEM}/_e2e/orcamento`).then(r => r.json())
-  passo('orçamento local com retrato zerado libera', prep.ok, { uso: prep.uso_protegido_pct })
+  const prep = await fetch(`${ORIGEM}/_e2e/orcamento?ler=1`).then(r => r.json())
+  passo('orçamento local libera o SFU', prep.ok, { modo: prep.modo, uso: prep.uso_protegido_pct })
 
   // 1. 2 clientes
   const A = await aba('Ana'), B = await aba('Bia')
@@ -229,17 +229,13 @@ try {
     passo(`fim: nenhuma das ${sessoes.size} sessões tem track ativa no SFU`, ativas.length === 0, ativas)
   } else passo('fim: conferência na API (sem SFU_ENV)', null)
 
-  // 9. orçamento acima de 90%: a sala de ensaio abre na malha, com o aviso.
-  await fetch(`${ORIGEM}/_e2e/orcamento?turn_gb=900`)
-  const G = await aba('Gil'), H = await aba('Hugo')
-  r = await ate(async () => {
-    const ls = await Promise.all([G, H].map(x => x.ler()))
-    return { ok: ls.every(l => l.transporte === 'mesh' && l.pares === 1 && /SFU indisponível/.test(l.notice)), ls: ls.map(l => [l.transporte, l.pares, l.notice]) }
-  })
-  passo('orçamento em 90%: sala de ensaio abre na malha e avisa', r.ok, r.ls)
-  await fetch(`${ORIGEM}/_e2e/orcamento`)
+  // 9. orçamento: sem os secrets de analytics, o modo é sem medição e o total
+  // do SFU vem só das assinaturas autorizadas nesta rodada.
+  const orc = await fetch(`${ORIGEM}/_e2e/orcamento?ler=1`).then(r => r.json())
+  passo('orçamento em modo sem medição, com o SFU do mês contado pelas assinaturas', orc.modo === 'sem_medicao' && orc.reservas > 0,
+    { modo: orc.modo, uso_protegido_pct: orc.uso_protegido_pct, reservas: orc.reservas })
 
-  const errosPagina = [A, B, C, D, E, F, G, H].flatMap(x => x.erros.map(m => `${x.nome}: ${m}`))
+  const errosPagina = [A, B, C, D, E, F].flatMap(x => x.erros.map(m => `${x.nome}: ${m}`))
   passo('sem erro de página', errosPagina.length === 0, errosPagina.slice(0, 5))
 } catch (e) {
   passo('roteiro interrompido', false, e.stack)

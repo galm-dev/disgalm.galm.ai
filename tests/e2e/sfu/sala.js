@@ -1,8 +1,9 @@
 // Entrada local do ensaio do SFU (tests/e2e/sfu.mjs). Sala e Orcamento de
 // verdade (worker/src), o app SFU de verdade (SFU_APP_ID e SFU_APP_SECRET no
-// .dev.vars, nunca commitado) e o login trocado por um membro fixo. O
-// orçamento recebe um retrato zerado por /_e2e/orcamento, porque aqui não há
-// analytics. Nunca publicar: não tem auth.
+// .dev.vars, nunca commitado) e o login trocado por um membro fixo. Sem os
+// secrets de analytics o orçamento fica no modo sem medição; com eles,
+// /_e2e/orcamento grava um retrato (turn_gb=N simula consumo). Nunca publicar:
+// não tem auth.
 import { Sala, Orcamento } from '../../../worker/src/index.js'
 
 export { Sala, Orcamento }
@@ -35,6 +36,8 @@ export default {
     if (url.pathname === '/_e2e/orcamento') {
       const agora = Date.now(), hora = new Date(agora); hora.setUTCMinutes(0, 0, 0)
       const o = env.ORCAMENTO.get(env.ORCAMENTO.idFromName('conta'))
+      // ?ler=1 só lê; sem os secrets de analytics o retrato nem é usado.
+      if (url.searchParams.has('ler')) return Response.json(await o.estado())
       await o.gravarSnapshot({ mes: new Date(agora).toISOString().slice(0, 7), coletado_em: agora,
         medido_ate: +hora - 3600_000, completo: true, turn_bytes: Number(url.searchParams.get('turn_gb') || 0) * 1e9, turn_bytes_sfu: 0, sfu_bytes: 0, sfu_fonte: 'graphql' })
       return Response.json(await o.estado())

@@ -16,6 +16,12 @@
 //               + reservas SFU daqui para frente + margem.
 // Retrato ausente, incompleto, de outro mês ou com mais de 75 min nega tudo o
 // que é cobrado. Erro não vale como consumo zero.
+//
+// Modo sem medição (decisão do Marcus: sem CF_ACCOUNT_ID/CF_ANALYTICS_TOKEN):
+// o TURN da Cloudflare não é bloqueado, como antes do orçamento, e o SFU conta
+// só o que o gateway autorizou (teto das assinaturas × tempo), com o mesmo
+// limite de 90%. Esse total vive nas reservas do storage e zera na virada do
+// mês (UTC). Com os secrets, volta o modo medido, sem mudar código.
 import { DurableObject } from 'cloudflare:workers'
 import { enviarLogs, linhaWorker } from './logs.js'
 
@@ -42,6 +48,13 @@ export const TAG_MALHA = 'disgalm'
 const COLETA_MIN_MS = 5 * 60_000
 const COALESCER_MS = 10 * 60_000
 const HORA = 3600_000
+
+export const comMedicao = env => !!(env?.CF_ACCOUNT_ID && env?.CF_ANALYTICS_TOKEN)
+
+// Retrato que o modo sem medição usa: nada medido, válido sempre, e o mês
+// inteiro coberto só pelas reservas.
+const retratoSemMedicao = agora => ({ mes: mesDe(agora), coletado_em: agora, medido_ate: inicioDoMes(agora),
+  completo: true, turn_bytes: 0, turn_bytes_sfu: 0, sfu_bytes: null, sfu_fonte: 'estimativa' })
 
 const mesDe = t => new Date(t).toISOString().slice(0, 7)
 const inicioDoMes = t => { const d = new Date(t); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1) }
@@ -224,6 +237,8 @@ export class Orcamento extends DurableObject {
       tipo: r.tipo === 'turn' ? 'turn' : 'sfu', bps: Math.max(0, Number(r.bps) || 0), inicio: agora,
       fim: Number.isFinite(r.duracao_ms) ? agora + r.duracao_ms : null, sala: pedido.sala ?? null,
     }))
+    if (!comMedicao(this.env)) return this.#autorizarSemMedicao(pedido, novas, agora)
+    await this.#registrarModo('medido', agora)
     let est = await this.#ler()
     let r = avaliar({ ...est, reservas: Object.values(est.reservas), agora, recurso: pedido.recurso, novas })
     if (!r.ok && r.motivo !== 'limite' && await this.#coletarSobDemanda(agora, r)) {
@@ -240,6 +255,43 @@ export class Orcamento extends DurableObject {
     for (const n of novas) est.reservas[n.ref] = n
     await this.ctx.storage.put('reservas', podar(est.reservas, est.snapshot, agora))
     return { ...r, refs: novas.map(n => n.ref) }
+  }
+
+  async #autorizarSemMedicao(pedido, novas, agora) {
+    const est = await this.#ler()
+    const reservas = podar(est.reservas, null, agora)
+    const snapshot = retratoSemMedicao(agora)
+    const sfu = novas.filter(n => n.tipo === 'sfu')
+    await this.#registrarModo('sem_medicao', agora, reservas)
+    // TURN sem bloqueio e sem reserva: sem medição não há com o que comparar.
+    if (pedido.recurso === 'turn') return { ok: true, motivo: null, modo: 'sem_medicao', refs: [] }
+    const r = { ...avaliar({ snapshot, reservas: Object.values(reservas), agora, recurso: pedido.recurso, novas: sfu }),
+      cota_pct: null, medicao_idade_s: null, medicao_completa: false, modo: 'sem_medicao' }
+    if (!r.ok) {
+      await this.#bloqueio(pedido, r, agora)
+      return r
+    }
+    for (const n of sfu) reservas[n.ref] = n
+    await this.ctx.storage.put('reservas', reservas)
+    return { ...r, refs: sfu.map(n => n.ref) }
+  }
+
+  // Um evento por dia (UTC) no modo sem medição, e um na troca de modo.
+  async #registrarModo(modo, agora, reservas) {
+    const dia = new Date(agora).toISOString().slice(0, 10)
+    const anterior = await this.ctx.storage.get('modo')
+    if (anterior?.modo === modo && (modo === 'medido' || anterior.dia === dia)) return
+    await this.ctx.storage.put('modo', { modo, dia })
+    const campos = { modo, modo_anterior: anterior?.modo ?? null }
+    if (modo === 'sem_medicao') {
+      const r = avaliar({ snapshot: retratoSemMedicao(agora), reservas: Object.values(reservas ?? {}), agora, recurso: 'sfu' })
+      const inicioMes = inicioDoMes(agora)
+      const sfuMes = Object.values(reservas ?? {}).filter(x => x.tipo === 'sfu')
+        .reduce((t, x) => t + trecho(x, inicioMes, agora), 0)
+      Object.assign(campos, { mes: mesDe(agora), sfu_estimado_gb_mes: gb(sfuMes), uso_protegido_pct: r.uso_protegido_pct,
+        assinaturas_abertas: sfuMes ? Object.values(reservas).filter(x => x.tipo === 'sfu' && x.fim === null).length : 0 })
+    }
+    this.#registrar('orcamento_modo', campos)
   }
 
   // Fecha reservas abertas (assinatura encerrada): pela ref dada em autorizar,
@@ -276,9 +328,11 @@ export class Orcamento extends DurableObject {
   }
 
   async estado() {
-    const est = await this.#ler()
-    return { ...avaliar({ ...est, reservas: Object.values(est.reservas), agora: Date.now(), recurso: 'sfu' }),
-      snapshot: est.snapshot, reservas: Object.keys(est.reservas).length }
+    const est = await this.#ler(), agora = Date.now()
+    const medido = comMedicao(this.env)
+    const snapshot = medido ? est.snapshot : retratoSemMedicao(agora)
+    return { ...avaliar({ snapshot, reservas: Object.values(est.reservas), agora, recurso: 'sfu' }),
+      modo: medido ? 'medido' : 'sem_medicao', snapshot: est.snapshot, reservas: Object.keys(est.reservas).length }
   }
 
   // Coleta fora do cron: primeiro deploy, cron que falhou, virada do mês.

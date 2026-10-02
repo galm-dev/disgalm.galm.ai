@@ -86,7 +86,7 @@ test('retrato ausente, incompleto ou vencido nega TURN e SFU; erro não vale zer
 
 test('retrato vencido dispara uma coleta pontual, no máximo a cada 5 min', async () => {
   const env = { CF_ACCOUNT_ID: 'conta-1', CF_ANALYTICS_TOKEN: 'segredo-analytics' }
-  const o = criarOrcamento(Orcamento, { snapshot: retrato({ coletado_em: Date.now() - 2 * 3600_000 }), env })
+  const o = criarOrcamento(Orcamento, { snapshot: retrato({ coletado_em: Date.now() - 2 * 3600_000 }), env, coletar: true })
   let consultas = 0
   globalThis.fetch = async (url, init) => {
     consultas++
@@ -247,4 +247,83 @@ test('/ice em 98%, sem retrato ou sem orçamento: só STUN, motivo no cabeçalho
   // Sem TURN da Cloudflare configurado, nada a negar.
   const { pedir } = envIce({ turn: false })
   assert.equal((await pedir()).headers.get('x-disgalm-relay'), null)
+})
+
+// ---------- modo sem medição ----------
+
+test('sem medição: TURN nunca é negado, mesmo sem retrato, e não reserva', async () => {
+  const o = criarOrcamento(Orcamento, { snapshot: null, semMedicao: true })
+  for (let i = 0; i < 3; i++) {
+    const r = await o.objeto.autorizar({ recurso: 'turn', op: 'ice', reservas: [{ tipo: 'turn', bps: TAXA_TURN, duracao_ms: 300_000 }] })
+    assert.deepEqual([r.ok, r.modo], [true, 'sem_medicao'])
+  }
+  assert.deepEqual(reservas(o), {})
+  // Nem um retrato velho de antes, nem a falta dele, mudam isso.
+  o.storage.saved.set('snapshot', retrato({ coletado_em: Date.now() - 5 * 3600_000, turn_bytes: 999e9 }))
+  assert.equal((await o.objeto.autorizar({ recurso: 'turn' })).ok, true)
+  // E o /ice entrega a credencial de 5 min normalmente.
+  const { chamadas, pedir } = envIce({ orcamento: o })
+  const resp = await pedir()
+  assert.equal(resp.headers.get('x-disgalm-relay'), null)
+  assert.equal(resp.headers.get('x-disgalm-ice-validade'), '300')
+  assert.deepEqual(chamadas.at(-1).corpo, { ttl: 300, customIdentifier: 'disgalm' })
+})
+
+test('sem medição: o SFU conta o que autorizou e para em 90%, sem depender de retrato', async () => {
+  const o = criarOrcamento(Orcamento, { snapshot: null, semMedicao: true })
+  assert.equal((await o.objeto.autorizar({ recurso: 'sfu', op: 'chamada' })).ok, true)
+  // 880 GB autorizados e já gastos neste mês (uma assinatura longa, fechada).
+  const agora = Date.now()
+  const d = new Date(agora), inicioMes = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)
+  const bps = 880e9 / ((agora - inicioMes) / 1000)
+  o.storage.saved.set('reservas', { longa: { ref: 'longa', tipo: 'sfu', bps, inicio: inicioMes, fim: agora } })
+  const tela = { ref: 'sfu:s1:aaaa0001/tela-1/video', tipo: 'sfu', bps: TAXAS['tela-video'] }   // +16,9 GB
+  const r = await o.objeto.autorizar({ recurso: 'sfu', op: 'assinar', reservas: [tela] })
+  assert.deepEqual([r.ok, r.motivo, r.modo], [false, 'limite', 'sem_medicao'])
+  assert.ok(r.uso_protegido_pct >= 90 && r.uso_protegido_pct < 91)
+  assert.equal((await o.objeto.autorizar({ recurso: 'sfu', op: 'publicar' })).ok, true)     // 89% sem nada novo
+  // TURN continua liberado no mesmo estado.
+  assert.equal((await o.objeto.autorizar({ recurso: 'turn' })).ok, true)
+  // Total sobrevive à hibernação: objeto novo com o mesmo storage.
+  const outro = new Orcamento({ storage: o.storage, waitUntil() {} }, {})
+  assert.equal((await outro.autorizar({ recurso: 'sfu', op: 'assinar', reservas: [tela] })).ok, false)
+  const est = await outro.estado()
+  assert.equal(est.modo, 'sem_medicao')
+})
+
+test('sem medição: a virada do mês zera o total do SFU', async () => {
+  const o = criarOrcamento(Orcamento, { snapshot: null, semMedicao: true })
+  const d = new Date(), inicioMes = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1)
+  o.storage.saved.set('reservas', {
+    passado: { ref: 'passado', tipo: 'sfu', bps: 999e9 / 3600, inicio: inicioMes - 2 * 3600_000, fim: inicioMes - 3600_000 } })
+  const r = await o.objeto.autorizar({ recurso: 'sfu', op: 'assinar', reservas: [{ ref: 'x', tipo: 'sfu', bps: TAXAS.mic }] })
+  assert.equal(r.ok, true)
+  assert.ok(r.uso_protegido_pct < 1.1)
+  assert.deepEqual(Object.keys(reservas(o)).map(k => k.split('#')[0]), ['x'])
+})
+
+test('modo: evento por dia sem medição com o total do SFU, e na troca quando os secrets aparecem', async () => {
+  const o = criarOrcamento(Orcamento, { snapshot: retrato(), semMedicao: true })
+  for (let i = 0; i < 3; i++) await o.objeto.autorizar({ recurso: 'turn' })
+  await o.objeto.autorizar({ recurso: 'sfu', reservas: [{ ref: 'a', tipo: 'sfu', bps: TAXAS.mic }] })
+  await Promise.all(o.tarefas)
+  let modos = eventos('orcamento_modo')
+  assert.equal(modos.length, 1)
+  assert.deepEqual([modos[0].modo, modos[0].modo_anterior, typeof modos[0].sfu_estimado_gb_mes, typeof modos[0].uso_protegido_pct],
+    ['sem_medicao', null, 'number', 'number'])
+  // No dia seguinte, outro.
+  o.storage.saved.set('modo', { modo: 'sem_medicao', dia: '2000-01-01' })
+  await o.objeto.autorizar({ recurso: 'turn' })
+  await Promise.all(o.tarefas)
+  assert.equal(eventos('orcamento_modo').length, 2)
+  // Os secrets existem agora: mesmo código, modo medido, e o retrato volta a valer.
+  const medido = new Orcamento({ storage: o.storage, waitUntil: p => o.tarefas.push(p) },
+    { CF_ACCOUNT_ID: 'conta-teste', CF_ANALYTICS_TOKEN: 'token-teste' })
+  o.storage.saved.set('snapshot', retrato({ turn_bytes: 975e9 }))
+  const turn = await medido.autorizar({ recurso: 'turn' })
+  assert.deepEqual([turn.ok, turn.motivo], [false, 'limite'])
+  await Promise.all(o.tarefas)
+  modos = eventos('orcamento_modo')
+  assert.deepEqual(modos.at(-1), { ...modos.at(-1), modo: 'medido', modo_anterior: 'sem_medicao' })
+  assert.doesNotMatch(JSON.stringify(modos), /conta-teste|token-teste/)
 })

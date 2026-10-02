@@ -146,6 +146,16 @@ Em ambiente real, com cota de verdade:
 | O4 | Remover temporariamente `CF_ANALYTICS_TOKEN` num ambiente de teste | `/ice` com `x-disgalm-relay: negado;snapshot_*`, aviso de relay uma vez, `rota_cota_bloqueio` com `motivo` de retrato; a sala de ensaio abre na malha com o aviso do SFU |
 | O5 | Conferir no painel da Cloudflare (Realtime → uso) contra `orcamento_snapshot` | a soma TURN + SFU bate com o painel, tirando o TURN etiquetado `disgalm-sfu` |
 
+### Modo sem medição
+
+Sem `CF_ACCOUNT_ID`/`CF_ANALYTICS_TOKEN` (decisão do Marcus, 02/10/2026): o
+TURN não é bloqueado e o SFU para em 90% da própria conta de assinaturas, que
+zera no começo do mês (UTC). Testes em `tests/orcamento.test.js` (TURN liberado
+sem retrato, SFU parando em 90%, depois de recriar o objeto, virada do mês,
+evento por dia e volta ao modo medido quando os secrets aparecem) e em
+`tests/sfu-gateway.test.js`. Na prática, o TURN da Cloudflare fica sem teto
+nosso; só o consumo do SFU autorizado pelo gateway entra na conta.
+
 ## O que falta antes de liberar fora da lista de ensaio
 
 Já existe: orçamento por conta, reserva, bloqueio em 90%/98%, credencial TURN

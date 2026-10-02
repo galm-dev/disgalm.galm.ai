@@ -36,9 +36,14 @@ export const retrato = (campos = {}) => {
 
 // Binding ORCAMENTO com o objeto de verdade e storage em memória. A chamada
 // RPC vira chamada direta ao método.
-export function criarOrcamento(Orcamento, { snapshot = retrato(), env = {} } = {}) {
+// Por padrão no modo medido (com os secrets de analytics) e sem coleta pontual,
+// que sairia para a rede; semMedicao: true tira os secrets, coletar: true
+// deixa a coleta acontecer (com fetch simulado pelo teste).
+export function criarOrcamento(Orcamento, { snapshot = retrato(), env, semMedicao = false, coletar = false } = {}) {
+  env ??= semMedicao ? {} : { CF_ACCOUNT_ID: 'conta-teste', CF_ANALYTICS_TOKEN: 'token-teste' }
   const storage = criarStorage()
   if (snapshot) storage.saved.set('snapshot', structuredClone(snapshot))
+  if (!coletar) storage.saved.set('coleta_tentativa', Date.now())
   const tarefas = []
   const objeto = new Orcamento({ storage, waitUntil: p => tarefas.push(p) }, env)
   return { objeto, storage, tarefas, binding: { idFromName: n => n, get: () => objeto } }
