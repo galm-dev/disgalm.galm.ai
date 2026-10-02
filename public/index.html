@@ -5,6 +5,7 @@
     content="width=device-width, initial-scale=1"
   />
   <meta name="theme-color" content="#07080B" /><title>Disgalm · Sua sala</title>
+  <meta name="referrer" content="no-referrer" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Geist+Mono:wght@400;500&family=Geist:wght@300;400;500;600;700&display=swap" />
@@ -14,6 +15,8 @@
       <div class="wordmark">disgalm<span>.</span></div>
       <h1>A galera está aqui.</h1>
       <p>Entre na sala. Compartilhe a tela, o jogo e a conversa.</p>
+      <p id="auth-state" role="status">Verificando acesso GALM…</p>
+      <button id="auth-login" type="button" hidden>Entrar com GALM</button>
       <label for="nome">Seu nome</label
       ><input
         id="nome"
@@ -30,7 +33,7 @@
         value="galm"
         required
       />
-      <button id="entrar" type="submit">Entrar na sala →</button>
+      <button id="entrar" type="submit" disabled>Entrar na sala →</button>
       <details>
         <summary>Opções de conexão</summary>
         <label
@@ -39,7 +42,7 @@
         >
       </details>
       <div id="entry-error" role="status" class="ui-notice"></div>
-      <div class="entry-foot">Até 4 pessoas · Sem criar conta</div>
+      <div class="entry-foot">Até 4 pessoas · Acesso pela conta GALM</div>
     </form>
   </div>
   <div id="sala" class="sem-foco">
@@ -232,6 +235,7 @@
       </details>
     </div>
   </dialog>
+  <script src="/auth.js"></script>
   <script>
     const $ = id => document.getElementById(id)
     // Cada linha leva a hora: sem ela, o relatório não diz se a queda veio antes
@@ -1194,10 +1198,16 @@
     function conectar() {
       clearTimeout(religar)
       if (!sala) return
+      const token = disgalmAuth.currentToken()
+      if (!token) {
+        disgalmAuth.accessToken().then(() => { if (sala) conectar() })
+          .catch(e => { atualizarSinalizacao(false); $('ui-notice').textContent = e.message })
+        return
+      }
       const q = new URLSearchParams({ sala: sala.cod, nome: sala.nome, aba: idDaAba() })
       if (meuId) q.set('id', meuId)
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-      const s = ws = new WebSocket(`${proto}://${location.host}/ws?${q}`)
+      const s = ws = new WebSocket(`${proto}://${location.host}/ws?${q}`, ['disgalm', `auth.${token}`])
       ultimoSinal = Date.now()
       s.onopen = () => s.send(JSON.stringify({ t: 'join', room: sala.cod, name: sala.nome }))
       // Socket substituído não fala mais: só o atual reage. Se o atual foi
@@ -1335,7 +1345,10 @@
     }
 
     async function entrarNaSala() {
-      ice = await (await fetch('/ice')).json()
+      const token = await disgalmAuth.accessToken()
+      const response = await fetch('/ice', { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' })
+      if (!response.ok) throw new Error(response.status === 401 ? 'Acesso negado. Entre com GALM novamente.' : 'Não foi possível obter o relay.')
+      ice = await response.json()
       log('ICE:', ice.map(s => s.urls).flat().join(' '))
       await pegarMic()
       await listarLoopback()
@@ -1355,6 +1368,7 @@
       setInterval(bater, BATIDA_MS)
       // Voltar da rede ou do sono não precisa esperar o próximo batimento.
       addEventListener('online', () => { if (!ws || ws.readyState > 1) conectar() })
+      addEventListener('disgalm-token-refreshed', () => { if (sala) conectar() })
       document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') bater() })
     }
 

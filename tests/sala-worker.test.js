@@ -9,8 +9,11 @@ import { join } from 'node:path'
 const fonte = readFileSync(new URL('../worker/src/index.js', import.meta.url), 'utf8')
   .replace("import { DurableObject } from 'cloudflare:workers'",
            'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env } }')
-const arquivo = join(mkdtempSync(join(tmpdir(), 'disgalm-')), 'worker.mjs')
+  .replace("from './auth.js'", "from './auth.mjs'")
+const pasta = mkdtempSync(join(tmpdir(), 'disgalm-'))
+const arquivo = join(pasta, 'worker.mjs')
 writeFileSync(arquivo, fonte)
+writeFileSync(join(pasta, 'auth.mjs'), readFileSync(new URL('../worker/src/auth.js', import.meta.url)))
 
 class Socket {
   constructor() { this.msgs = []; this.att = null }
@@ -28,6 +31,7 @@ const { Sala } = await import(arquivo)
 function sala(sockets = []) {
   const ctx = {
     auto: null,
+    storage: { alarmAt: null, async setAlarm(value) { this.alarmAt = value }, async deleteAlarm() { this.alarmAt = null } },
     setWebSocketAutoResponse(par) { this.auto = par },
     acceptWebSocket(ws) { sockets.push(ws) },
     getWebSockets: () => sockets.filter(ws => !ws.fechado),
@@ -37,7 +41,8 @@ function sala(sockets = []) {
   s.sockets = sockets
   s.entra = async (params) => {
     const q = new URLSearchParams({ sala: 'galm', ...params })
-    const r = await s.fetch({ url: `https://x/ws?${q}` })
+    const r = await s.fetch({ url: `https://x/ws?${q}`,
+      headers: new Headers({ 'x-disgalm-exp': String(Math.floor(Date.now() / 1000) + 600) }) })
     return r.webSocket === undefined ? null : sockets.at(-1)
   }
   return { s, ctx }
@@ -142,4 +147,15 @@ test('fechamento 1000/1001 é saída; 1006, 4000 e erro são queda', async () =>
   const c = await s.entra({ nome: 'C', aba: 'aba-c' })
   await s.webSocketError(c)
   assert.equal(a.ultima('peer-left').volta, true)
+})
+
+test('passkey expirada fecha a sinalização e avisa a sala', async () => {
+  const { s, ctx } = sala()
+  const a = await s.entra({ nome: 'A', aba: 'aba-a' })
+  const b = await s.entra({ nome: 'B', aba: 'aba-b' })
+  assert.ok(ctx.storage.alarmAt > Date.now())
+  b.att.exp = Math.floor(Date.now() / 1000) - 1
+  await s.alarm()
+  assert.deepEqual(b.fechado, [1000, 'acesso expirado'])
+  assert.deepEqual(a.ultima('peer-left'), { t: 'peer-left', id: b.ultima('welcome').id, volta: false })
 })

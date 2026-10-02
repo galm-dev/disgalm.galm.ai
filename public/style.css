@@ -229,6 +229,18 @@ input[type="checkbox"] {
   font-size: 13.5px;
   margin: 0 0 24px;
 }
+#auth-state {
+  margin: 0 0 12px;
+}
+#auth-state.erro { color: var(--danger); }
+.entry-card #auth-login {
+  margin-top: 0;
+  background: var(--surface-2);
+  color: var(--fg);
+  border-color: var(--line-2);
+}
+.entry-card #auth-login[hidden] { display: none; }
+.entry-card #auth-login:hover:not(:disabled) { background: var(--surface-3); }
 .entry-card label {
   display: block;
   font-size: 12px;

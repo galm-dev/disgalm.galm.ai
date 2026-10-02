@@ -4,6 +4,7 @@
 // isolates independentes: os dois navegadores cairiam em instâncias diferentes
 // e o recado nunca passaria. idFromName(sala) é o que os faz cair no mesmo lugar.
 import { DurableObject } from 'cloudflare:workers'
+import { bearer, verifyAccess, websocketToken } from './auth.js'
 
 const MAX = 4  // ver a conta de banda em PLANO-POC.md
 
@@ -88,7 +89,26 @@ export class Sala extends DurableObject {
     for (const p of this.#peers(exceto)) this.#envia(p.ws, { t: 'peer-left', id, volta })
   }
 
+  async #alarme() {
+    const exp = this.#peers().map(p => p.a.exp).filter(Number.isFinite)
+    if (exp.length) await this.ctx.storage?.setAlarm(Math.min(...exp) * 1000)
+    else await this.ctx.storage?.deleteAlarm()
+  }
+
+  async alarm() {
+    const agora = Math.floor(Date.now() / 1000)
+    for (const p of this.#peers()) {
+      if (p.a.exp > agora) continue
+      this.#descarta(p, 'acesso expirado')
+      this.#avisaSaida(p.a.id, p.ws, false)
+    }
+    await this.#alarme()
+  }
+
   async fetch(req) {
+    const exp = Number(req.headers.get('x-disgalm-exp'))
+    if (!Number.isFinite(exp) || exp <= Math.floor(Date.now() / 1000))
+      return new Response('acesso expirado', { status: 401 })
     const q = new URL(req.url).searchParams
     const nome = (q.get('nome') || 'anon').slice(0, 24)
     const aba = (q.get('aba') || '').slice(0, 64)
@@ -103,6 +123,11 @@ export class Sala extends DurableObject {
     // quem pinga (bate=true); cliente antigo sem batimento não é julgado.
     const agora = Date.now()
     for (const p of this.#peers(servidor)) {
+      if (p.a.exp <= Math.floor(agora / 1000)) {
+        this.#descarta(p, 'acesso expirado')
+        this.#avisaSaida(p.a.id, servidor, false)
+        continue
+      }
       const ultimo = Math.max(p.a.desde || 0, this.ctx.getWebSocketAutoResponseTimestamp(p.ws)?.getTime() || 0)
       if (p.a.bate && agora - ultimo > FANTASMA_MS) {
         console.log(`fantasma ${p.a.nome}/${p.a.id}: sem batimento há ${Math.round((agora - ultimo) / 1000)}s`)
@@ -131,7 +156,8 @@ export class Sala extends DurableObject {
     // o id, então ele também volta.
     const retomada = !!retomar && !jaEstavam.some(p => p.a.id === retomar)
     const id = retomada ? retomar : crypto.randomUUID().slice(0, 8)
-    servidor.serializeAttachment({ id, nome, aba, desde: agora, bate: q.has('aba') })
+    servidor.serializeAttachment({ id, nome, aba, desde: agora, bate: q.has('aba'), exp })
+    await this.#alarme()
     console.log(`${retomada ? 'voltou' : 'entrou'} ${nome}/${id} (${jaEstavam.length + 1})`)
 
     this.#envia(servidor, {
@@ -141,7 +167,8 @@ export class Sala extends DurableObject {
     for (const p of jaEstavam)
       this.#envia(p.ws, { t: retomada ? 'peer-back' : 'peer-join', id, name: nome })
 
-    return new Response(null, { status: 101, webSocket: cliente })
+    return new Response(null, { status: 101, webSocket: cliente,
+      headers: { 'sec-websocket-protocol': 'disgalm' } })
   }
 
   async webSocketMessage(ws, bruto) {
@@ -150,6 +177,12 @@ export class Sala extends DurableObject {
     if (m.t !== 'signal') return          // 'join' vem do cliente compartilhado; ignorar
     const eu = ws.deserializeAttachment()
     if (!eu) return
+    if (eu.exp <= Math.floor(Date.now() / 1000)) {
+      this.#descarta({ ws, a: eu }, 'acesso expirado')
+      this.#avisaSaida(eu.id, ws, false)
+      await this.#alarme()
+      return
+    }
     for (const p of this.#peers(ws))
       if (p.a.id === m.to)
         return this.#envia(p.ws, { t: 'signal', from: eu.id, data: m.data })
@@ -157,15 +190,16 @@ export class Sala extends DurableObject {
 
   // 1000 e 1001 são saída de verdade: botão Sair, aba fechada, F5. O resto
   // (1006 de rede caída, 4000 do batimento do cliente, erro) é queda.
-  async webSocketClose(ws, code) { this.#saiu(ws, code !== 1000 && code !== 1001, code) }
-  async webSocketError(ws) { this.#saiu(ws, true, 'erro') }
+  async webSocketClose(ws, code) { await this.#saiu(ws, code !== 1000 && code !== 1001, code) }
+  async webSocketError(ws) { await this.#saiu(ws, true, 'erro') }
 
-  #saiu(ws, volta, motivo) {
+  async #saiu(ws, volta, motivo) {
     const a = ws.deserializeAttachment()
     if (!a) return
     ws.serializeAttachment(null)
     console.log(`saiu ${a.nome}/${a.id} (${motivo}${volta ? ', pode voltar' : ''})`)
     this.#avisaSaida(a.id, ws, volta)
+    await this.#alarme()
   }
 }
 
@@ -173,15 +207,32 @@ export default {
   async fetch(req, env) {
     const url = new URL(req.url)
 
-    if (url.pathname === '/ice')
+    if (url.pathname === '/ice') {
+      if (!await verifyAccess(bearer(req)))
+        return new Response('acesso negado', { status: 401, headers: { 'cache-control': 'no-store' } })
       return Response.json(await env2ice(env), { headers: { 'cache-control': 'no-store' } })
+    }
 
     if (url.pathname === '/ws') {
       if (req.headers.get('Upgrade') !== 'websocket')
         return new Response('esperava um upgrade de websocket', { status: 426 })
+      if (req.headers.get('Origin') !== url.origin)
+        return new Response('origem inválida', { status: 403 })
+      const claims = await verifyAccess(websocketToken(req))
+      if (!claims) return new Response('acesso negado', { status: 401 })
       const sala = (url.searchParams.get('sala') || '').trim().toLowerCase()
       if (!sala) return new Response('falta ?sala=', { status: 400 })
-      return env.SALA.get(env.SALA.idFromName(sala)).fetch(req)
+      const headers = new Headers(req.headers)
+      headers.set('x-disgalm-exp', String(claims.exp))
+      return env.SALA.get(env.SALA.idFromName(sala)).fetch(new Request(req, { headers }))
+    }
+
+    if (url.pathname === '/auth/callback') {
+      const response = await env.ASSETS.fetch(new Request(new URL('/', url), req))
+      const headers = new Headers(response.headers)
+      headers.set('cache-control', 'no-store')
+      headers.set('referrer-policy', 'no-referrer')
+      return new Response(response.body, { status: response.status, headers })
     }
 
     return env.ASSETS.fetch(req)
