@@ -323,10 +323,11 @@ app.whenReady().then(async () => {
   if (pipewire) pipewireOk = await pipewire.disponivel()
   servirLocal()
   tratarGetDisplayMedia()
-  // Microfone, câmera e tela: a UI pede, o app concede. Notificações e o resto
-  // seguem negados.
+  // Microfone, câmera, tela e tela cheia: a UI pede, o app concede. Sem
+  // 'fullscreen' aqui, o requestFullscreen do palco fica pendente para sempre.
+  // Notificações e o resto seguem negados.
   session.defaultSession.setPermissionRequestHandler((_wc, permissao, ok) =>
-    ok(['media', 'display-capture', 'clipboard-sanitized-write'].includes(permissao)))
+    ok(['media', 'display-capture', 'clipboard-sanitized-write', 'fullscreen'].includes(permissao)))
 
   const win = janela = new BrowserWindow({
     width: 1280,
