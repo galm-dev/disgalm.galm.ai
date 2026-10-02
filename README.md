@@ -102,6 +102,17 @@ Tudo vai ao `console.log` do Worker. Com os secrets `BETTERSTACK_TOKEN` e
 `BETTERSTACK_HOST`, também vai ao Better Stack. O plano gratuito do Workers não
 tem Logpush, então o próprio Worker faz o envio.
 
+De hora em hora (cron `10 * * * *`), o Worker consulta o consumo do TURN da
+Cloudflare e manda o evento `turn_uso`: `egress_bytes_periodo` e
+`ingress_bytes_periodo` da hora cheia anterior, `egress_bytes_mes`,
+`ingress_bytes_mes`, `egress_gb_mes` e `cota_pct` do mês corrente em UTC. Só o
+egress é cobrado, e os 1.000 GB grátis por mês são divididos com o SFU. Falha
+na consulta vira `turn_uso_falhou`. O dado vem do dataset
+`callsTurnUsageAdaptiveGroups` da [GraphQL Analytics
+API](https://developers.cloudflare.com/realtime/turn/analytics/) e soma a conta
+inteira, não só a chave TURN do Disgalm. O mês da fatura pode não coincidir com
+o mês civil em UTC.
+
 ## Operação
 
 ```sh
@@ -112,5 +123,21 @@ npx wrangler deploy
 ```
 
 O Worker usa os secrets existentes de TURN (`CF_TURN_KEY_ID` e
-`CF_TURN_API_TOKEN`, com coturn opcional). O login GALM não adiciona nenhum
+`CF_TURN_API_TOKEN`, com coturn opcional).
+Para o evento `turn_uso`, são necessários mais dois secrets. Sem eles o cron não
+faz nada.
+
+- `CF_ACCOUNT_ID`: o Account ID da conta onde está a chave TURN (aparece na
+  página inicial da conta no painel da Cloudflare).
+- `CF_ANALYTICS_TOKEN`: um token de API da conta (My Profile → API Tokens →
+  Create Token → Custom token) com a permissão **Account → Account Analytics →
+  Read**, restrito a essa conta. O `CF_TURN_API_TOKEN` não serve: é o token da
+  chave TURN e só gera credenciais.
+
+```sh
+cd worker
+./wrangler.sh secret put CF_ACCOUNT_ID
+./wrangler.sh secret put CF_ANALYTICS_TOKEN
+./wrangler.sh deploy   # publica também o cron
+``` O login GALM não adiciona nenhum
 secret no Disgalm. A configuração do client e dos grants fica no auth.

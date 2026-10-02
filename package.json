@@ -5,6 +5,7 @@
   "type": "module",
   "description": "Compartilhamento de tela e áudio entre amigos, via WebRTC. Sem dependências.",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test tests/*.test.js"
   }
 }
