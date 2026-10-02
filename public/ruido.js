@@ -4,6 +4,7 @@
 // modos entregam a track do getUserMedia direto, como antes.
 (() => {
   const CHAVE = 'disgalm.ruido'
+  const CHAVE_MIC = 'disgalm.microfone'
   const MODOS = ['rnnoise', 'deepfilter', 'navegador', 'desligado']
   const ERROS_DE_CAPTURA = ['NotAllowedError', 'NotFoundError', 'NotReadableError', 'OverconstrainedError', 'SecurityError', 'AbortError']
   const ROTULOS = { rnnoise: 'Com RNNoise', deepfilter: 'Com DeepFilterNet', navegador: 'Com o filtro do navegador', desligado: 'Sem filtro de ruído' }
@@ -14,10 +15,26 @@
   }
   const definirModo = m => { if (MODOS.includes(m)) localStorage.setItem(CHAVE, m) }
 
+  // Vazio é o padrão do sistema. O Chromium ignora deviceId ideal, então o
+  // escolhido vai como exact; se o aparelho sumiu (fone desconectado), a
+  // captura cai no padrão em vez de deixar a pessoa sem voz.
+  const microfone = () => localStorage.getItem(CHAVE_MIC) || ''
+  const definirMicrofone = id => { id ? localStorage.setItem(CHAVE_MIC, id) : localStorage.removeItem(CHAVE_MIC) }
+
   async function capturar(filtroDoNavegador) {
-    return navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: filtroDoNavegador, autoGainControl: true },
-    })
+    const audio = { echoCancellation: true, noiseSuppression: filtroDoNavegador, autoGainControl: true }
+    const id = microfone()
+    if (id) {
+      try { return await navigator.mediaDevices.getUserMedia({ audio: { ...audio, deviceId: { exact: id } } }) }
+      catch (e) { if (!['OverconstrainedError', 'NotFoundError'].includes(e.name)) throw e }
+    }
+    return navigator.mediaDevices.getUserMedia({ audio })
+  }
+
+  // Qual aparelho o navegador abriu de fato, para o seletor e o log.
+  function dispositivo(stream) {
+    const t = stream.getAudioTracks()[0]
+    return { id: t?.getSettings().deviceId || '', rotulo: t?.label || '' }
   }
 
   // Sem gesto do usuário (entrada automática depois do login) o contexto nasce
@@ -101,6 +118,7 @@
         modo: m,
         rotulo: ROTULOS[m],
         stream: destino.stream,
+        dispositivo: dispositivo(bruto),
         // A gravação usa destinos próprios: a track enviada aos pares pode estar
         // desativada pelo mudo, e a comparação precisa do mesmo trecho de fala
         // antes e depois do filtro.
@@ -136,6 +154,7 @@
       modo: m,
       rotulo: ROTULOS[m],
       stream,
+      dispositivo: dispositivo(stream),
       tapar() {
         const copia = stream.getAudioTracks()[0].clone()
         copia.enabled = true
@@ -159,5 +178,5 @@
     return direto(await capturar(m === 'navegador'), m)
   }
 
-  window.disgalmRuido = { MODOS, modo, definirModo, abrir }
+  window.disgalmRuido = { MODOS, modo, definirModo, microfone, definirMicrofone, abrir }
 })()

@@ -168,6 +168,8 @@
       <button id="b-close-settings" aria-label="Fechar ajustes">✕</button>
     </div>
     <div class="settings-body">
+      <label for="micdev">Microfone</label
+      ><select id="micdev" title="qual microfone"></select>
       <label for="camdev">Câmera</label
       ><select id="camdev" title="qual câmera" hidden></select>
       <label for="loopdev">Áudio do sistema</label
@@ -404,9 +406,20 @@
       if (loop) $('loopdev').value = loop.deviceId
     }
 
+    // Os ids "default" e "communications" do Chromium repetem um aparelho real,
+    // e o padrão do sistema já é a primeira opção.
+    async function listarMics() {
+      const devs = (await navigator.mediaDevices.enumerateDevices())
+        .filter(d => d.kind === 'audioinput' && d.deviceId && !['default', 'communications'].includes(d.deviceId))
+      $('micdev').innerHTML = '<option value="">Padrão do sistema</option>' +
+        devs.map(d => `<option value="${d.deviceId}">${d.label || 'microfone'}</option>`).join('')
+      const escolhido = disgalmRuido.microfone()
+      $('micdev').value = devs.some(d => d.deviceId === escolhido) ? escolhido : ''
+    }
+
     async function abrirMic() {
       const aberto = await disgalmRuido.abrir(undefined, e => log(`RNNoise indisponível (${e.name}: ${e.message}) — usando o filtro do navegador`))
-      log(`microfone: supressão de ruído ${aberto.modo}`)
+      log(`microfone: ${aberto.dispositivo.rotulo || 'sem nome'}, supressão de ruído ${aberto.modo}`)
       return aberto
     }
 
@@ -442,9 +455,18 @@
       }
     }
 
-    // Troca o filtro de ruído no meio da chamada sem renegociar, como recapturar.
+    // Troca o filtro ou o microfone no meio da chamada sem renegociar, como recapturar.
     async function trocarFiltroMic(modo) {
       disgalmRuido.definirModo(modo)
+      await reabrirMic()
+    }
+
+    async function trocarMicrofone(id) {
+      disgalmRuido.definirMicrofone(id)
+      await reabrirMic()
+    }
+
+    async function reabrirMic() {
       if (!micStream) return
       pararTesteMic()
       const antigo = mic
@@ -1715,6 +1737,7 @@
       if (!micStream) await pegarMic()
       if (!entrarNaSala.dispositivos) {
         entrarNaSala.dispositivos = true
+        await listarMics()
         await listarLoopback()
         await listarCams()
       }
@@ -2189,6 +2212,10 @@
       $('ruido').value = disgalmRuido.modo()
       $('ruido').onchange = () => trocarFiltroMic($('ruido').value)
         .catch(e => { log(`microfone — ${e.name}: ${e.message}`); $('ui-notice').textContent = 'Não foi possível trocar o filtro do microfone.' })
+      $('micdev').onchange = () => trocarMicrofone($('micdev').value)
+        .catch(e => { log(`microfone — ${e.name}: ${e.message}`); $('ui-notice').textContent = motivoMic(e) || 'Não foi possível trocar o microfone.' })
+      // Fone conectado ou removido no meio da chamada aparece no seletor sem recarregar.
+      navigator.mediaDevices?.addEventListener('devicechange', () => listarMics().catch(() => {}))
       $('b-gravar').onclick = () => {
         $('b-gravar').disabled = true
         ;(teste ? pararTesteMic() : iniciarTesteMic())
