@@ -1,10 +1,11 @@
-// Client público OAuth: code + PKCE. Access/refresh ficam só na memória desta
-// aba; nenhum token entra em URL de sala, localStorage ou cookie compartilhado.
+// Client público OAuth: code + PKCE. O access token fica só na memória desta
+// aba. O refresh fica num cookie HttpOnly host-only que só o Worker lê, para a
+// sessão sobreviver ao recarregar; nenhum token entra em URL de sala,
+// localStorage ou cookie compartilhado.
 (() => {
   const issuer = 'https://auth.galm.ai'
   const clientId = 'disgalm'
   const scope = 'disgalm:use'
-  const redirectUri = `${location.origin}/auth/callback`
   const pendingKey = 'disgalm.oauth'
   const encoder = new TextEncoder()
   const b64 = bytes => btoa(String.fromCharCode(...new Uint8Array(bytes)))
@@ -34,8 +35,7 @@
   }
 
   function accept(body) {
-    if (!body?.access_token || !body?.refresh_token ||
-        !String(body.scope || '').split(' ').includes(scope))
+    if (!body?.access_token || !String(body.scope || '').split(' ').includes(scope))
       throw new Error('Sua conta ainda não tem acesso ao Disgalm.')
     const renewed = !!tokens
     tokens = body
@@ -47,17 +47,24 @@
     setTimeout(() => accessToken().catch(() => {}), delay)
   }
 
-  async function postToken(fields) {
-    const response = await fetch(`${issuer}/token`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ client_id: clientId, ...fields }),
-      credentials: 'omit',
-      cache: 'no-store',
-    })
-    const body = await response.json()
-    if (!response.ok) throw new Error(body.error_description || body.error || 'Falha no login GALM.')
-    return body
+  // O auth rotaciona o refresh e derruba a família se um já trocado voltar.
+  // Abas do mesmo navegador dividem o cookie, então uma troca por vez.
+  async function postSession(path, json) {
+    const run = async () => {
+      const response = await fetch(path, {
+        method: 'POST',
+        headers: json ? { 'content-type': 'application/json' } : {},
+        body: json ? JSON.stringify(json) : undefined,
+        credentials: 'same-origin',
+        cache: 'no-store',
+      })
+      if (response.status === 204) return null
+      const body = await response.json().catch(() => ({}))
+      if (!response.ok) throw Object.assign(new Error(body.error_description || 'Falha no login GALM.'),
+        { status: response.status })
+      return body
+    }
+    return navigator.locks ? navigator.locks.request('disgalm.sessao', run) : run()
   }
 
   async function callback() {
@@ -72,8 +79,7 @@
       if (params.has('error')) throw new Error(params.get('error_description') || params.get('error'))
       if (!saved || !params.get('code') || params.get('state') !== saved.state ||
           params.get('iss') !== issuer) throw new Error('Resposta do login inválida. Tente novamente.')
-      accept(await postToken({ grant_type: 'authorization_code', code: params.get('code'),
-        redirect_uri: redirectUri, code_verifier: saved.verifier }))
+      accept(await postSession('/auth/code', { code: params.get('code'), code_verifier: saved.verifier }))
     } catch (e) {
       error = e.message
       showStatus()
@@ -111,19 +117,49 @@
     sessionStorage.setItem(pendingKey, JSON.stringify({ verifier, state, returnTo }))
     const url = new URL('/authorize', issuer)
     url.search = new URLSearchParams({ response_type: 'code', client_id: clientId,
-      redirect_uri: redirectUri, scope, state, code_challenge: challenge,
+      redirect_uri: `${location.origin}/auth/callback`, scope, state, code_challenge: challenge,
       code_challenge_method: 'S256' })
     location.assign(url.href)
   }
 
   async function accessToken() {
     if (tokens && Date.now() < expiresAt - 45_000) return tokens.access_token
-    if (!tokens?.refresh_token) throw new Error('Entre com GALM para usar o Disgalm.')
-    if (!refreshing) refreshing = postToken({ grant_type: 'refresh_token',
-      refresh_token: tokens.refresh_token }).then(accept).then(() => tokens.access_token)
-      .catch(e => { tokens = null; error = 'Sessão expirada. Entre com GALM novamente.'; showStatus(); throw e })
+    if (!tokens) throw new Error('Entre com GALM para usar o Disgalm.')
+    if (!refreshing) refreshing = postSession('/auth/refresh').then(accept).then(() => tokens.access_token)
+      .catch(e => {
+        // Falha de rede não derruba a sessão; recusa do auth sim.
+        if (e.status === 401 || e.status === 403) {
+          tokens = null
+          error = 'Sessão expirada. Entre com GALM novamente.'
+          showStatus()
+        }
+        throw e
+      })
       .finally(() => { refreshing = null })
     return refreshing
+  }
+
+  // Volta da última visita: o cookie do Worker vira um access token novo sem
+  // passar pela tela de login. Sem cookie (401) a tela aparece calada.
+  async function restore() {
+    if (tokens) return
+    try { accept(await postSession('/auth/refresh')) }
+    catch (e) {
+      if (e.status !== 401) error = e.status === 403 ? e.message :
+        'Não foi possível verificar sua sessão GALM. Tente entrar de novo.'
+    }
+  }
+
+  // Sair revoga a família no auth e apaga o cookie; as outras abas recarregam.
+  const channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('disgalm.auth') : null
+  channel?.addEventListener('message', e => { if (e.data === 'logout') location.assign('/') })
+
+  async function logout() {
+    await postSession('/auth/logout')
+    tokens = null
+    try { localStorage.removeItem('disgalm.apelido') } catch {}
+    channel?.postMessage('logout')
+    location.assign('/')
   }
 
   function currentToken() {
@@ -158,8 +194,8 @@
   const guestInvite = () => tokens ? null : guestRoom
   const account = () => profile ??= tokens ? loadProfile() : Promise.resolve(null)
 
-  const ready = callback().then(guestBootstrap)
-  window.disgalmAuth = { ready, login, accessToken, currentToken, isGuest, member, guestInvite, account }
+  const ready = callback().then(restore).then(guestBootstrap)
+  window.disgalmAuth = { ready, login, logout, accessToken, currentToken, isGuest, member, guestInvite, account }
   document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('auth-login').addEventListener('click', login)
     showStatus()

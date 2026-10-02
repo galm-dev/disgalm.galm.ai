@@ -64,3 +64,85 @@ export function websocketToken(request) {
   if (protocols[0] !== 'disgalm' || protocols.length !== 2) return null
   return /^auth\.([A-Za-z0-9._-]+)$/.exec(protocols[1])?.[1] || null
 }
+
+// Sessão persistente: o refresh token mora num cookie HttpOnly host-only deste
+// domínio e só o Worker o lê. O navegador recebe apenas o access token, que
+// continua só na memória da aba. Refresh é rotativo no auth: reapresentar um
+// já trocado derruba a família, por isso o cliente serializa as chamadas.
+const REFRESH_COOKIE = '__Host-disgalm_refresh'
+const REFRESH_SECONDS = 30 * 24 * 60 * 60
+const OPAQUE = /^[A-Za-z0-9_-]{16,512}$/
+const noStore = { 'cache-control': 'no-store' }
+
+const refreshCookie = (value, maxAge) =>
+  `${REFRESH_COOKIE}=${value}; Path=/; Max-Age=${maxAge}; HttpOnly; Secure; SameSite=Strict`
+
+function readRefresh(request) {
+  const value = (request.headers.get('cookie') || '').split(';').map(s => s.trim())
+    .find(s => s.startsWith(`${REFRESH_COOKIE}=`))?.slice(REFRESH_COOKIE.length + 1) || ''
+  return OPAQUE.test(value) ? value : null
+}
+
+const issuerPost = (path, fields) => fetch(`${ISSUER}${path}`, {
+  method: 'POST',
+  headers: { 'content-type': 'application/x-www-form-urlencoded' },
+  body: new URLSearchParams({ client_id: AUDIENCE, ...fields }),
+})
+
+function fail(status, description, clear = false) {
+  const headers = new Headers(noStore)
+  if (clear) headers.append('set-cookie', refreshCookie('', 0))
+  return Response.json({ error_description: description }, { status, headers })
+}
+
+export const sessionPaths = ['/auth/code', '/auth/refresh', '/auth/logout']
+
+export async function session(request, url) {
+  if (request.method !== 'POST') return new Response('método inválido', { status: 405 })
+  if (request.headers.get('Origin') !== url.origin) return new Response('origem inválida', { status: 403 })
+
+  if (url.pathname === '/auth/logout') {
+    const refresh = readRefresh(request)
+    if (refresh) await issuerPost('/revoke', { token: refresh }).catch(() => {})
+    const headers = new Headers(noStore)
+    headers.append('set-cookie', refreshCookie('', 0))
+    return new Response(null, { status: 204, headers })
+  }
+
+  let fields
+  if (url.pathname === '/auth/code') {
+    if (request.headers.get('content-type')?.split(';')[0] !== 'application/json')
+      return new Response('conteúdo inválido', { status: 415 })
+    const body = await request.json().catch(() => null)
+    if (typeof body?.code !== 'string' || typeof body?.code_verifier !== 'string')
+      return fail(400, 'Resposta do login inválida. Tente novamente.')
+    fields = { grant_type: 'authorization_code', code: body.code, code_verifier: body.code_verifier,
+      redirect_uri: `${url.origin}/auth/callback` }
+  } else {
+    const refresh = readRefresh(request)
+    if (!refresh) return fail(401, 'Entre com GALM para usar o Disgalm.')
+    fields = { grant_type: 'refresh_token', refresh_token: refresh }
+  }
+
+  let response, body
+  try {
+    response = await issuerPost('/token', fields)
+    body = await response.json()
+  } catch {
+    return fail(502, 'O login GALM não respondeu. Tente novamente.')
+  }
+  // Recusa do auth (code ruim, refresh vencido ou revogado): o cookie morreu.
+  if (!response.ok) return fail(response.status >= 500 ? 502 : 401,
+    body?.error_description || 'Sessão expirada. Entre com GALM novamente.', response.status < 500)
+  if (typeof body?.access_token !== 'string' || !OPAQUE.test(body?.refresh_token || ''))
+    return fail(502, 'Resposta inesperada do login GALM.')
+  if (!String(body.scope || '').split(' ').includes(SCOPE)) {
+    await issuerPost('/revoke', { token: body.refresh_token }).catch(() => {})
+    return fail(403, 'Sua conta ainda não tem acesso ao Disgalm.', true)
+  }
+
+  const headers = new Headers(noStore)
+  headers.append('set-cookie', refreshCookie(body.refresh_token, REFRESH_SECONDS))
+  return Response.json({ access_token: body.access_token, token_type: body.token_type,
+    expires_in: body.expires_in, scope: body.scope }, { headers })
+}

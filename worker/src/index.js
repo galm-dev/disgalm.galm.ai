@@ -4,7 +4,7 @@
 // isolates independentes: os dois navegadores cairiam em instâncias diferentes
 // e o recado nunca passaria. idFromName(sala) é o que os faz cair no mesmo lugar.
 import { DurableObject } from 'cloudflare:workers'
-import { bearer, verifyAccess, websocketToken } from './auth.js'
+import { bearer, session, sessionPaths, verifyAccess, websocketToken } from './auth.js'
 
 const MAX = 4  // ver a conta de banda em PLANO-POC.md
 const INVITE_SECONDS = 24 * 60 * 60
@@ -332,6 +332,8 @@ export default {
       } else headers.set('x-disgalm-guest-token', token)
       return roomObject(env, room).fetch(new Request(req, { headers }))
     }
+
+    if (sessionPaths.includes(url.pathname)) return session(req, url)
 
     if (url.pathname === '/auth/callback') {
       const response = await env.ASSETS.fetch(new Request(new URL('/', url), req))

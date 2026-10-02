@@ -8,9 +8,16 @@ WebSocket por sala. A mídia WebRTC passa entre os participantes ou pelo TURN.
 
 O navegador usa o client público `disgalm` do https://auth.galm.ai com OAuth
 authorization code + PKCE S256. O único redirect registrado é
-`https://disgalm.galm.ai/auth/callback`. Não há client secret. Access e refresh
-tokens ficam só na memória da aba; ao recarregar, a pessoa pede um novo login
-pelo auth. O auth concede `disgalm:use` a toda conta cadastrada, inclusive novos
+`https://disgalm.galm.ai/auth/callback`. Não há client secret. O access token
+fica só na memória da aba. A troca do code e os refreshes passam pelo Worker
+(`POST /auth/code`, `/auth/refresh`), que guarda o refresh rotativo no cookie
+`__Host-disgalm_refresh` (HttpOnly, Secure, SameSite=Strict, 30 dias) e nunca o
+entrega ao JavaScript. Ao recarregar, o app troca esse cookie por um access token
+novo e pula a tela de login. As abas serializam a troca com Web Locks, porque o
+auth derruba a família se um refresh já usado voltar. "Sair da conta", no perfil,
+chama `POST /auth/logout`: o Worker revoga a família no auth e apaga o cookie. A
+sessão do próprio auth.galm.ai (7 dias) continua, então entrar de novo pode não
+pedir login. O auth concede `disgalm:use` a toda conta cadastrada, inclusive novos
 cadastros.
 
 Depois do login, o app entra direto na sala pedida em `?sala=`, na última sala

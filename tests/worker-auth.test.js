@@ -110,3 +110,57 @@ test('convite fica limitado à sala, exige membro GALM para emissão e dá acess
     assert.equal((await invite({ Origin: root, cookie })).status, 401)
   } finally { globalThis.fetch = originalFetch }
 })
+
+test('sessão persistente guarda o refresh só em cookie HttpOnly e o logout revoga', async () => {
+  const originalFetch = globalThis.fetch
+  const calls = []
+  let refreshes = 0
+  globalThis.fetch = async (url, init) => {
+    const form = new URLSearchParams(init.body)
+    calls.push({ url: String(url), form })
+    if (String(url).endsWith('/revoke')) return new Response(null, { status: 200 })
+    if (form.get('grant_type') === 'refresh_token' && form.get('refresh_token') === 'gasto-gasto-gasto-1')
+      return Response.json({ error: 'invalid_grant', error_description: 'Refresh token revogado' }, { status: 400 })
+    refreshes++
+    return Response.json({ access_token: 'a.b.c', token_type: 'Bearer', expires_in: 600,
+      scope: 'disgalm:use', refresh_token: `refresh-novo-${refreshes}-xxxx` })
+  }
+  try {
+    const origin = 'https://disgalm.galm.ai'
+    const post = (path, { cookie, json, from = origin } = {}) => worker.fetch(new Request(origin + path, {
+      method: 'POST', headers: { ...(from && { Origin: from }), ...(cookie && { cookie }),
+        ...(json && { 'content-type': 'application/json' }) }, body: json && JSON.stringify(json) }), {})
+
+    assert.equal((await post('/auth/refresh', { from: 'https://evil.example',
+      cookie: '__Host-disgalm_refresh=refresh-novo-0-xxxx' })).status, 403)
+    assert.equal((await post('/auth/refresh')).status, 401)
+    assert.equal(calls.length, 0)
+
+    const code = await post('/auth/code', { json: { code: 'c0de', code_verifier: 'v'.repeat(43) } })
+    assert.equal(code.status, 200)
+    const body = await code.json()
+    assert.equal(body.access_token, 'a.b.c')
+    assert.equal(body.refresh_token, undefined)
+    const cookie = code.headers.get('set-cookie')
+    assert.match(cookie, /^__Host-disgalm_refresh=refresh-novo-1-xxxx; Path=\/; Max-Age=\d+; HttpOnly; Secure; SameSite=Strict$/)
+    assert.equal(calls[0].form.get('redirect_uri'), `${origin}/auth/callback`)
+    assert.equal(calls[0].form.get('client_id'), 'disgalm')
+
+    const refreshed = await post('/auth/refresh', { cookie: '__Host-disgalm_refresh=refresh-novo-1-xxxx' })
+    assert.equal(refreshed.status, 200)
+    assert.equal(calls[1].form.get('refresh_token'), 'refresh-novo-1-xxxx')
+    assert.match(refreshed.headers.get('set-cookie'), /refresh-novo-2-xxxx/)
+
+    const dead = await post('/auth/refresh', { cookie: '__Host-disgalm_refresh=gasto-gasto-gasto-1' })
+    assert.equal(dead.status, 401)
+    assert.match(dead.headers.get('set-cookie'), /^__Host-disgalm_refresh=; Path=\/; Max-Age=0;/)
+
+    const out = await post('/auth/logout', { cookie: '__Host-disgalm_refresh=refresh-novo-2-xxxx' })
+    assert.equal(out.status, 204)
+    assert.match(out.headers.get('set-cookie'), /Max-Age=0/)
+    assert.ok(calls.at(-1).url.endsWith('/revoke'))
+    assert.equal(calls.at(-1).form.get('token'), 'refresh-novo-2-xxxx')
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

@@ -256,6 +256,7 @@
         <label for="profile-name">Nome na sala</label
         ><input id="profile-name" type="text" maxlength="24" autocomplete="nickname" />
         <div class="profile-actions">
+          <button id="b-logout" class="perigo" type="button" hidden>Sair da conta</button>
           <button id="b-profile-reset" type="button">Usar nome da conta</button>
           <button id="b-profile-save" type="submit">Salvar</button>
         </div>
@@ -1878,10 +1879,19 @@
       $('b-profile').onclick = () => {
         $('profile-name').value = perfil.nome
         $('b-profile-reset').hidden = !disgalmAuth.member() || !perfil.conta
+        $('b-logout').hidden = !disgalmAuth.member()
         $('perfil').showModal()
       }
       $('b-close-profile').onclick = () => $('perfil').close()
       $('b-profile-reset').onclick = () => { $('profile-name').value = perfil.conta }
+      $('b-logout').onclick = () => {
+        $('b-logout').disabled = true
+        disgalmAuth.logout().catch(e => {
+          log(`logout — ${e.message}`)
+          $('b-logout').disabled = false
+          $('ui-notice').textContent = 'Não foi possível sair da conta. Tente novamente.'
+        })
+      }
       $('profile-form').onsubmit = ev => { ev.preventDefault(); salvarPerfil($('profile-name').value); $('perfil').close() }
       iniciar()
       $('b-sidebar').onclick = () => { $('sala').classList.toggle('lateral-oculta'); atualizarLayout() }
