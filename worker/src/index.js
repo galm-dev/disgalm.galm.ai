@@ -248,6 +248,7 @@ export class Sala extends DurableObject {
     for (const p of this.#peers(servidor)) {
       if (!aba || p.a.aba !== aba) continue
       this.#descarta(p, 'substituída')
+      this.#registrar('substituida', { sala: p.a.sala, id: p.a.id, retomada: p.a.id === retomar })
       if (p.a.id !== retomar) this.#avisaSaida(p.a.id, servidor, false)
     }
 

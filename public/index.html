@@ -1553,6 +1553,9 @@
     const BATIDA_MS = 20_000, SEM_RESPOSTA_MS = 45_000
     let sala = null                 // { cod, nome } enquanto está numa sala
     let ultimoSinal = 0, tentativas = 0, religar = null
+    // Para separar as causas de uma queda 1006: aba oculta com timers estrangulados
+    // (batida atrasada), rede fora, ou corte no meio com tudo em dia.
+    let abertaEm = 0, ultimaBatida = 0
     const naSala = new Set()        // quem o servidor diz estar na sala agora
 
     const nomes = new Map()         // id → nome, para recriar par sem o aviso de entrada
@@ -1578,7 +1581,10 @@
     }
 
     function sinalizacaoFechada(ev) {
-      telemetria('sinalizacao_fechou', { codigo: ev.code, motivo: ev.reason || null })
+      const agora = Date.now(), seg = t => t ? Math.round((agora - t) / 1000) : null
+      telemetria('sinalizacao_fechou', { codigo: ev.code, motivo: ev.reason || null,
+        abertaHaS: seg(abertaEm), semMensagemHaS: seg(ultimoSinal), ultimaBatidaHaS: seg(ultimaBatida),
+        visivel: globalThis.document?.visibilityState ?? null, online: globalThis.navigator?.onLine ?? null })
       log(`${new Date().toISOString()} sinalização fechou: código=${ev.code}; ` +
           `motivo=${ev.reason || '(não informado)'}; fechamento completo=${ev.wasClean}`)
       for (const [, p] of pares)
@@ -1605,7 +1611,7 @@
       const s = ws = new WebSocket(`${proto}://${location.host}/ws?${q}`,
         guest ? ['disgalm'] : ['disgalm', `auth.${token}`])
       ultimoSinal = Date.now()
-      s.onopen = () => s.send(JSON.stringify({ t: 'join', room: sala.cod, name: sala.nome }))
+      s.onopen = () => { abertaEm = Date.now(); s.send(JSON.stringify({ t: 'join', room: sala.cod, name: sala.nome })) }
       // Socket substituído não fala mais: só o atual reage. Se o atual foi
       // substituído, outra aba com o mesmo sessionStorage (aba duplicada) tomou
       // o lugar; religar faria as duas se expulsarem em ciclo.
@@ -1638,6 +1644,7 @@
         return conectar()
       }
       ws.send('{"t":"ping"}')
+      ultimaBatida = Date.now()
       limparAusentes()
     }
 
