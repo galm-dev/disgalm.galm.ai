@@ -19,6 +19,11 @@
   let guestRoom = null
   let guestPending = false
   let profile = null
+  let noNavegador = false
+  // App desktop: o login abre no navegador do sistema e volta ao app por um
+  // servidor local em 127.0.0.1. O state leva a porta; o verificador PKCE
+  // fica no app, então o code que passa pelo navegador não serve sozinho.
+  const desktopState = /^desktop\.(\d{4,5})\.[A-Za-z0-9_-]{16,}$/
 
   function showStatus() {
     const state = document.getElementById('auth-state')
@@ -26,7 +31,8 @@
     const guest = document.getElementById('guest-entry')
     if (!state || !login || !guest) return
     const authenticated = !!tokens
-    state.textContent = authenticated ? 'Conectado com GALM' : guestRoom ?
+    state.textContent = authenticated ? 'Conectado com GALM' : noNavegador ?
+      'Continue o login no navegador que abriu. Se não abriu, clique em Entrar de novo.' : guestRoom ?
       `Convite para a sala ${guestRoom} · acesso válido por 24 horas` : guestPending ?
       'Verificando convite…' : error || 'Entre com sua conta GALM ou abra um convite.'
     state.classList.toggle('erro', !!error)
@@ -71,6 +77,16 @@
     if (location.pathname !== '/auth/callback') return
     const params = new URLSearchParams(location.search)
     const saved = JSON.parse(sessionStorage.getItem(pendingKey) || 'null')
+    // No navegador do sistema, a volta de um login começado no app: sem login
+    // pendente desta aba, repassa a resposta inteira para o app.
+    const desktop = desktopState.exec(params.get('state') || '')
+    if (desktop && saved?.state !== params.get('state')) {
+      const porta = Number(desktop[1])
+      if (porta >= 1024 && porta <= 65535) {
+        location.replace(`http://127.0.0.1:${porta}/callback?${params}`)
+        return new Promise(() => {})
+      }
+    }
     sessionStorage.removeItem(pendingKey)
     const returnTo = saved?.returnTo?.startsWith('/') && !saved.returnTo.startsWith('//')
       ? saved.returnTo : '/'
@@ -111,7 +127,9 @@
 
   async function login() {
     const verifier = random(32)
-    const state = random(16)
+    const desktop = window.disgalmDesktop?.login
+    const porta = desktop ? await desktop.preparar() : null
+    const state = porta ? `desktop.${porta}.${random(16)}` : random(16)
     const challenge = b64(await crypto.subtle.digest('SHA-256', encoder.encode(verifier)))
     const returnTo = location.pathname === '/auth/callback' ? '/' : location.pathname + location.search
     sessionStorage.setItem(pendingKey, JSON.stringify({ verifier, state, returnTo }))
@@ -119,7 +137,10 @@
     url.search = new URLSearchParams({ response_type: 'code', client_id: clientId,
       redirect_uri: `${location.origin}/auth/callback`, scope, state, code_challenge: challenge,
       code_challenge_method: 'S256' })
-    location.assign(url.href)
+    if (!desktop) return location.assign(url.href)
+    await desktop.abrir(url.href, state)
+    noNavegador = true
+    showStatus()
   }
 
   async function accessToken() {
