@@ -54,6 +54,13 @@ detecta a falta quando o encoder envia menos da metade dos quadros capturados.
   `connectionState` de cada par.
 - "Baixar relatório de diagnóstico", nos ajustes, gera um JSON com eventos,
   amostras, pares atuais, pares que saíram e configuração local.
+- `relay_bytes` mede a cota do TURN. Quando o par usa a própria alocação no
+  relay, o cliente guarda os bytes do candidate-pair a cada amostra. Ele envia
+  a diferença desde o último envio quando o par sai, quando a sala é deixada e
+  quando a página fecha. O relay só do outro lado fica de fora, porque já
+  aparece no evento dele. A soma de `enviados + recebidos` no Better Stack
+  aproxima o tráfego da Cloudflare. Ficam de fora cabeçalhos, checagens de ICE
+  e até 2 s depois da última amostra.
 
 ## Verificação
 
@@ -65,7 +72,7 @@ git diff --check
 `tests/telemetria.test.js` cobre causa relatada via TURN/tcp, ordem das causas,
 fps sem banda em `maintain-resolution`, relato vencido, conteúdo enviado pelo
 canal, log só em transições, limite de 150 amostras, preferência aplicada só
-na tela e o relatório. O canal negociado foi aberto e entregou mensagem entre
+na tela, o relatório e os bytes de relay local por diferença. O canal negociado foi aberto e entregou mensagem entre
 duas conexões reais no Chrome 152.
 
 Não foi testada uma chamada completa com captura real de tela.

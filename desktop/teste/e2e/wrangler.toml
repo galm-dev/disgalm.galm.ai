@@ -1,0 +1,19 @@
+# Sala local para o teste ponta a ponta (teste/e2e/rodar.mjs). Usa a Durable
+# Object de sinalização de verdade (worker/src) e a UI de ../../../public; só o
+# login GALM é trocado por um membro fixo. Nunca publicar: não tem auth.
+name = "disgalm-e2e"
+main = "sala.js"
+compatibility_date = "2025-06-01"
+
+[assets]
+directory = "../../../public"
+binding = "ASSETS"
+run_worker_first = true
+
+[[durable_objects.bindings]]
+name = "SALA"
+class_name = "Sala"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Sala"]

@@ -1,0 +1,17 @@
+{
+  "name": "disgalm-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Casca Electron do Disgalm: áudio do sistema sem o Discord (Windows).",
+  "main": "main.js",
+  "scripts": {
+    "build:native": "cd native && node-gyp rebuild",
+    "start": "electron .",
+    "teste": "electron . --teste=teste/saida"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1",
+    "node-addon-api": "^8.0.0",
+    "node-gyp": "^11.0.0"
+  }
+}

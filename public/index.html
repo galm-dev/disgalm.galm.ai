@@ -174,6 +174,7 @@
       ><select id="camdev" title="qual câmera" hidden></select>
       <label for="loopdev">Áudio do sistema</label
       ><select id="loopdev" title="áudio do sistema (Linux)"></select>
+      <label class="check" id="semdiscord-op" hidden><input type="checkbox" id="semdiscord" checked /> Compartilhar áudio do sistema (sem o Discord)</label>
       <label for="preset">Qualidade da tela</label
       ><select id="preset" title="qualidade da sua tela">
         <option value="codigo">Código · 1080p 5fps</option>
@@ -322,7 +323,10 @@
       }).catch(() => {})
     }
     setInterval(() => enviarTelemetria(), 10_000)
-    addEventListener('pagehide', () => enviarTelemetria(true))
+    addEventListener('pagehide', () => {
+      for (const [id, p] of pares) informarRelay(id, p)
+      enviarTelemetria(true)
+    })
 
     // Presets de qualidade da própria tela. O bitrate ANDA JUNTO com resolução e
     // fps de propósito: 4K60 num teto de 2,5 Mbps fica pior que 1080p30, porque o
@@ -394,6 +398,7 @@
       }
       const alvos = para ? [para] : [...pares.keys()]
       for (const id of alvos) sinalizar(id, { estado: est })
+      avisarBandeja()
     }
 
     // ---------- mídia local ----------
@@ -618,14 +623,35 @@
       atualizarDiag()
     }
 
+    // App desktop (desktop/): o áudio do sistema pode vir do loopback nativo,
+    // que exclui o Discord. Na web disgalmDesktop não existe e nada muda.
+    const desktop = globalThis.disgalmDesktop
+    const usarSemDiscord = () => !!desktop?.audioSemDiscord?.disponivel && $('semdiscord').checked
+    async function audioSemDiscord() {
+      try {
+        return await (await import('/_desktop/audio-nativo.js')).abrirAudioSemDiscord(log)
+      } catch (e) {
+        log(`áudio sem o Discord indisponível (${e.message}) — usando o do sistema inteiro`)
+        return null
+      }
+    }
+
     async function adicionarTela() {
       const q = qualidade
       // Só pede áudio se nenhuma tela aberta já leva o do sistema.
       const comAudio = !telas.some(t => t.getAudioTracks().length)
-      const tela = await navigator.mediaDevices.getDisplayMedia({
-        video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: q.fps } },
-        audio: comAudio,
-      })
+      const nativo = comAudio && usarSemDiscord() ? await audioSemDiscord() : null
+      let tela
+      try {
+        tela = await navigator.mediaDevices.getDisplayMedia({
+          video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: q.fps } },
+          audio: comAudio && !nativo,
+        })
+      } catch (e) {
+        nativo?.stop()
+        throw e
+      }
+      if (nativo) tela.addTrack(nativo)
 
       if (comAudio && tela.getAudioTracks().length === 0) {
         const dev = $('loopdev').value
@@ -663,9 +689,11 @@
       const tela = telas[0]
       if (!tela) return
       const q = qualidade
+      // O áudio nativo não depende da captura de vídeo: fica como está.
+      const nativo = tela.getAudioTracks().some(t => t.disgalmNativo)
       const novo = await navigator.mediaDevices.getDisplayMedia({
         video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: q.fps } },
-        audio: tela.getAudioTracks().length > 0,
+        audio: tela.getAudioTracks().length > 0 && !nativo,
       })
 
       const trocar = async (antigo, novoT) => {
@@ -1389,6 +1417,34 @@
       p.causa = a.causa
     }
 
+    // Bytes que passaram pela nossa alocação no TURN, para medir a cota da
+    // Cloudflare. Os contadores do candidate-pair são acumulados, então basta o
+    // último valor de cada par de candidatos; uma reinicialização de ICE abre
+    // outro. Só conta o relay local: o relay do outro lado aparece no evento dele.
+    function registrarRelay(p, st, cp) {
+      const l = cp && st.get(cp.localCandidateId)
+      if (l?.candidateType !== 'relay') return
+      p.relay ??= new Map()
+      p.relay.set(cp.id, { enviados: cp.bytesSent ?? 0, recebidos: cp.bytesReceived ?? 0,
+        informados: p.relay.get(cp.id)?.informados ?? [0, 0],
+        protocolo: l.relayProtocol ?? l.protocol, relay: l.url ?? null })
+    }
+
+    // Manda o que passou pelo relay desde o último envio, quando o par sai e
+    // quando a página fecha. O tráfego depois da última amostra (até 2 s) fica de
+    // fora, assim como cabeçalhos e checagens de ICE, que o contador não inclui.
+    function informarRelay(id, p) {
+      let enviados = 0, recebidos = 0, ultimo
+      for (const c of p.relay?.values() ?? []) {
+        enviados += c.enviados - c.informados[0]
+        recebidos += c.recebidos - c.informados[1]
+        c.informados = [c.enviados, c.recebidos]
+        ultimo = c
+      }
+      if (!enviados && !recebidos) return
+      telemetria('relay_bytes', { par: id, enviados, recebidos, protocolo: ultimo.protocolo, relay: ultimo.relay })
+    }
+
     async function atualizarVideo(id, pc, anteriores) {
       const st = await pc.getStats()
       const p = pares.get(id)
@@ -1421,6 +1477,7 @@
       }
 
       const cp = st.get(st.get((enviado || recebido)?.transportId ?? transporte?.id)?.selectedCandidatePairId)
+      registrarRelay(p, st, cp)
       const a = {
         t: Date.now(),
         envio: resumoEnvio(st, enviado, retorno, taxa),
@@ -1676,6 +1733,7 @@
       // Quem sai leva as amostras junto; o relatório ainda precisa delas.
       saidos.push({ ...estadoPar([id, p]), saiuEm: new Date().toISOString() })
       if (saidos.length > 8) saidos.shift()
+      informarRelay(id, p)
       clearInterval(p.timer)
       p.pc.close()
       for (const [, a] of p.audios) a.el.remove()
@@ -1772,6 +1830,7 @@
       $('connection-room').textContent = cod + ' / Disgalm'
       $('b-invite').hidden = guest
       if (!guest) lembrarSala(cod)
+      avisarBandeja()
       history.replaceState(null, '', `/?sala=${encodeURIComponent(cod)}`)
       desenharTile('local')
       renderSalas()
@@ -1782,6 +1841,7 @@
     // o microfone é liberado até a próxima entrada.
     function sairDaSala() {
       if (!sala) return
+      for (const [id, p] of pares) informarRelay(id, p)
       telemetria('saiu_da_sala')
       enviarTelemetria()
       const s = ws
@@ -1804,6 +1864,7 @@
       $('sala').classList.toggle('desconectada', false)
       $('connection-label').textContent = 'Fora da sala'
       $('my-status').textContent = 'Fora da sala'
+      avisarBandeja()
       $('room-title').textContent = 'Escolha uma sala'
       $('connection-room').textContent = 'Disgalm'
       $('b-invite').hidden = true
@@ -1995,6 +2056,18 @@
     // Sem tela, o botão compartilha direto; com alguma, abre o menu para
     // adicionar outra ou escolher qual parar.
     $('b-tela').onclick = () => telas.length ? alternarMenuTelas() : novaTela()
+
+    // App desktop: a bandeja mostra se o microfone e a tela estão abertos, e o
+    // menu dela chama estes comandos (com a janela fechada, inclusive).
+    const avisarBandeja = () => desktop?.estado?.({ sala: sala?.cod || null, mic: !!sala && !estouMudo(), telas: telas.length })
+    if (desktop) globalThis.disgalmComando = async c => {
+      if (!sala) return 'fora da sala'
+      if (c === 'tela') await novaTela()
+      else if (c === 'parar') await mexerNasTelas(async () => pararTelas())
+      else if (c === 'mic') $('b-mic').click()
+      avisarBandeja()
+      return 'ok'
+    }
     $('menu-telas').onclick = ev => {
       const b = ev.target.closest?.('button')
       if (!b) return
@@ -2147,6 +2220,14 @@
       $(id).onchange = () => { lerManual(); aplicarQualidade() }
 
     $('loopdev').onchange = () => log('áudio do sistema:', $('loopdev').selectedOptions[0]?.textContent)
+    if (desktop?.audioSemDiscord?.disponivel) {
+      $('semdiscord-op').hidden = false
+      $('semdiscord').checked = lerLocal('disgalm.semdiscord') !== 'nao'
+      $('semdiscord').onchange = () => {
+        gravarLocal('disgalm.semdiscord', $('semdiscord').checked ? '' : 'nao')
+        log('áudio do sistema sem o Discord:', $('semdiscord').checked ? 'sim' : 'não')
+      }
+    }
 
     // Ícones e estados dos controles da chamada.
     const UI_ICONS = {

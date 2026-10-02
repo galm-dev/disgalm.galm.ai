@@ -310,6 +310,24 @@ input[type="checkbox"] {
   text-transform: uppercase;
   color: var(--fg-3);
 }
+/* App desktop (desktop/): a janela não tem barra de título do sistema. A
+   faixa de cima arrasta a janela; na tela de entrada, que não tem a faixa,
+   uma tira invisível da mesma altura faz o papel. No Windows e no Linux os
+   botões da janela ocupam ~140 px à direita; no Mac, os semáforos ~80 px à
+   esquerda. O texto da faixa é centralizado e não colide. */
+.desktop-app .app-top {
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.desktop-app #entrada::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  -webkit-app-region: drag;
+}
 .app-top .wordmark {
   font-size: 12px;
   color: var(--fg);
