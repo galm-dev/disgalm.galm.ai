@@ -7,6 +7,19 @@ import { DurableObject } from 'cloudflare:workers'
 import { bearer, verifyAccess, websocketToken } from './auth.js'
 
 const MAX = 4  // ver a conta de banda em PLANO-POC.md
+const INVITE_SECONDS = 24 * 60 * 60
+const GUEST_COOKIE = '__Host-disgalm_guest'
+const noStore = { 'cache-control': 'no-store' }
+const roomName = url => (url.searchParams.get('sala') || '').trim().toLowerCase()
+const validRoom = room => room.length > 0 && room.length <= 80
+const randomToken = () => Array.from(crypto.getRandomValues(new Uint8Array(32)),
+  n => n.toString(16).padStart(2, '0')).join('')
+const tokenHash = async token => Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',
+  new TextEncoder().encode(token))), n => n.toString(16).padStart(2, '0')).join('')
+const guestCookie = req => /^([0-9a-f]{64})$/.exec((req.headers.get('cookie') || '')
+  .split(';').map(s => s.trim()).find(s => s.startsWith(`${GUEST_COOKIE}=`))?.split('=')[1] || '')?.[1] || null
+const roomObject = (env, room) => env.SALA.get(env.SALA.idFromName(room))
+const internal = (url, method, headers = {}, body) => new Request(url, { method, headers, body })
 
 // O TURN da Cloudflare não tem usuário e senha fixos: credenciais são geradas
 // por API, com validade. O par (key id, api token) fica em secrets e NUNCA
@@ -105,8 +118,51 @@ export class Sala extends DurableObject {
     await this.#alarme()
   }
 
+  async #guestExpiry(token) {
+    if (!/^[0-9a-f]{64}$/.test(token || '')) return null
+    const exp = await this.ctx.storage.get(`invite:${await tokenHash(token)}`)
+    if (!Number.isFinite(exp) || exp <= Math.floor(Date.now() / 1000)) return null
+    return exp
+  }
+
+  #activeMember(p) {
+    if (p.a.role !== 'member' || p.a.exp <= Math.floor(Date.now() / 1000)) return false
+    const last = Math.max(p.a.desde || 0, this.ctx.getWebSocketAutoResponseTimestamp(p.ws)?.getTime() || 0)
+    return !p.a.bate || Date.now() - last <= FANTASMA_MS
+  }
+
+  #hasMember() {
+    return this.#peers().some(p => this.#activeMember(p))
+  }
+
+  async #invite(req) {
+    const sub = req.headers.get('x-disgalm-sub')
+    if (!sub || !this.#peers().some(p => p.a.sub === sub && this.#activeMember(p)))
+      return new Response('entre na sala para convidar', { status: 403 })
+    const token = randomToken()
+    const exp = Math.floor(Date.now() / 1000) + INVITE_SECONDS
+    await this.ctx.storage.put(`invite:${await tokenHash(token)}`, exp)
+    return Response.json({ token, expiresAt: exp }, { headers: noStore })
+  }
+
+  async #checkGuest(req) {
+    const exp = await this.#guestExpiry(req.headers.get('x-disgalm-guest-token'))
+    if (!exp || !this.#hasMember()) return new Response('convite inválido ou sala vazia', { status: 401 })
+    return Response.json({ exp }, { headers: noStore })
+  }
+
   async fetch(req) {
-    const exp = Number(req.headers.get('x-disgalm-exp'))
+    const path = new URL(req.url).pathname
+    if (path === '/invite' && req.method === 'POST') return this.#invite(req)
+    if (path === '/guest/check' && req.method === 'POST') return this.#checkGuest(req)
+    if (path !== '/ws') return new Response('não encontrado', { status: 404 })
+    const role = req.headers.get('x-disgalm-role')
+    let exp = Number(req.headers.get('x-disgalm-exp'))
+    if (role === 'guest') {
+      const guestExp = await this.#guestExpiry(req.headers.get('x-disgalm-guest-token'))
+      if (!guestExp || !this.#hasMember()) return new Response('convite inválido ou sala vazia', { status: 401 })
+      exp = guestExp
+    } else if (role !== 'member') return new Response('acesso negado', { status: 401 })
     if (!Number.isFinite(exp) || exp <= Math.floor(Date.now() / 1000))
       return new Response('acesso expirado', { status: 401 })
     const q = new URL(req.url).searchParams
@@ -156,7 +212,8 @@ export class Sala extends DurableObject {
     // o id, então ele também volta.
     const retomada = !!retomar && !jaEstavam.some(p => p.a.id === retomar)
     const id = retomada ? retomar : crypto.randomUUID().slice(0, 8)
-    servidor.serializeAttachment({ id, nome, aba, desde: agora, bate: q.has('aba'), exp })
+    servidor.serializeAttachment({ id, nome, aba, desde: agora, bate: q.has('aba'), exp,
+      role, sub: role === 'member' ? req.headers.get('x-disgalm-sub') : null })
     await this.#alarme()
     console.log(`${retomada ? 'voltou' : 'entrou'} ${nome}/${id} (${jaEstavam.length + 1})`)
 
@@ -206,25 +263,74 @@ export class Sala extends DurableObject {
 export default {
   async fetch(req, env) {
     const url = new URL(req.url)
+    const room = roomName(url)
+    const sameOrigin = req.headers.get('Origin') === url.origin
+
+    if (url.pathname === '/invite') {
+      if (req.method !== 'POST') return new Response('método inválido', { status: 405 })
+      if (!sameOrigin) return new Response('origem inválida', { status: 403 })
+      const claims = await verifyAccess(bearer(req))
+      if (!claims) return new Response('acesso negado', { status: 401 })
+      if (!validRoom(room)) return new Response('sala inválida', { status: 400 })
+      return roomObject(env, room).fetch(internal(`${url.origin}/invite`, 'POST', { 'x-disgalm-sub': claims.sub }))
+    }
+
+    if (url.pathname === '/guest/redeem' || url.pathname === '/guest/session') {
+      const redeem = url.pathname === '/guest/redeem'
+      if (req.method !== (redeem ? 'POST' : 'GET')) return new Response('método inválido', { status: 405 })
+      if (redeem && !sameOrigin) return new Response('origem inválida', { status: 403 })
+      if (!validRoom(room)) return new Response('sala inválida', { status: 400 })
+      let token = guestCookie(req)
+      if (redeem) {
+        if (req.headers.get('content-type')?.split(';')[0] !== 'application/json')
+          return new Response('conteúdo inválido', { status: 415 })
+        const body = await req.json().catch(() => null)
+        token = body?.token
+      }
+      if (!/^[0-9a-f]{64}$/.test(token || '')) return new Response('convite inválido', { status: 401, headers: noStore })
+      const check = await roomObject(env, room).fetch(internal(`${url.origin}/guest/check`, 'POST',
+        { 'x-disgalm-guest-token': token }))
+      if (!check.ok) return new Response('convite inválido ou sala vazia', { status: 401, headers: noStore })
+      const { exp } = await check.json()
+      const headers = new Headers(noStore)
+      if (redeem) headers.set('set-cookie', `${GUEST_COOKIE}=${token}; Path=/; Max-Age=${Math.max(0, exp - Math.floor(Date.now() / 1000))}; HttpOnly; Secure; SameSite=Lax`)
+      return Response.json({ room, expiresAt: exp }, { headers })
+    }
 
     if (url.pathname === '/ice') {
-      if (!await verifyAccess(bearer(req)))
-        return new Response('acesso negado', { status: 401, headers: { 'cache-control': 'no-store' } })
-      return Response.json(await env2ice(env), { headers: { 'cache-control': 'no-store' } })
+      const claims = await verifyAccess(bearer(req))
+      if (!claims) {
+        const token = guestCookie(req)
+        if (!validRoom(room) || !token) return new Response('acesso negado', { status: 401, headers: noStore })
+        const check = await roomObject(env, room).fetch(internal(`${url.origin}/guest/check`, 'POST',
+          { 'x-disgalm-guest-token': token }))
+        if (!check.ok) return new Response('acesso negado', { status: 401, headers: noStore })
+      }
+      return Response.json(await env2ice(env), { headers: noStore })
     }
 
     if (url.pathname === '/ws') {
       if (req.headers.get('Upgrade') !== 'websocket')
         return new Response('esperava um upgrade de websocket', { status: 426 })
-      if (req.headers.get('Origin') !== url.origin)
+      if (!sameOrigin)
         return new Response('origem inválida', { status: 403 })
       const claims = await verifyAccess(websocketToken(req))
-      if (!claims) return new Response('acesso negado', { status: 401 })
-      const sala = (url.searchParams.get('sala') || '').trim().toLowerCase()
-      if (!sala) return new Response('falta ?sala=', { status: 400 })
+      const token = claims ? null : guestCookie(req)
+      if (!claims && !token) return new Response('acesso negado', { status: 401 })
+      if (!claims && req.headers.get('sec-websocket-protocol')?.trim() !== 'disgalm')
+        return new Response('protocolo inválido', { status: 400 })
+      if (!validRoom(room)) return new Response('sala inválida', { status: 400 })
       const headers = new Headers(req.headers)
-      headers.set('x-disgalm-exp', String(claims.exp))
-      return env.SALA.get(env.SALA.idFromName(sala)).fetch(new Request(req, { headers }))
+      headers.delete('x-disgalm-exp')
+      headers.delete('x-disgalm-sub')
+      headers.delete('x-disgalm-role')
+      headers.delete('x-disgalm-guest-token')
+      headers.set('x-disgalm-role', claims ? 'member' : 'guest')
+      if (claims) {
+        headers.set('x-disgalm-exp', String(claims.exp))
+        headers.set('x-disgalm-sub', claims.sub)
+      } else headers.set('x-disgalm-guest-token', token)
+      return roomObject(env, room).fetch(new Request(req, { headers }))
     }
 
     if (url.pathname === '/auth/callback') {

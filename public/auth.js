@@ -15,6 +15,8 @@
   let expiresAt = 0
   let refreshing = null
   let error = ''
+  let guestRoom = null
+  let guestPending = false
 
   function showStatus() {
     const state = document.getElementById('auth-state')
@@ -22,10 +24,14 @@
     const enter = document.getElementById('entrar')
     if (!state || !login || !enter) return
     const authenticated = !!tokens
-    state.textContent = authenticated ? 'Conectado com GALM' : error || 'Entre com sua conta GALM para usar a sala.'
+    state.textContent = authenticated ? 'Conectado com GALM' : guestRoom ?
+      'Entrando como convidado · acesso válido por 24 horas' : guestPending ?
+      'Verificando convite…' : error || 'Entre com GALM ou abra um convite para entrar como convidado.'
     state.classList.toggle('erro', !!error)
-    login.hidden = authenticated
-    enter.disabled = !authenticated
+    login.hidden = authenticated || !!guestRoom || guestPending
+    enter.disabled = !authenticated && !guestRoom
+    const room = document.getElementById('sala-cod')
+    if (room && guestRoom) { room.value = guestRoom; room.readOnly = true }
   }
 
   function accept(body) {
@@ -104,8 +110,33 @@
     return tokens && Date.now() < expiresAt - 10_000 ? tokens.access_token : null
   }
 
-  const ready = callback()
-  window.disgalmAuth = { ready, login, accessToken, currentToken }
+  async function guestBootstrap() {
+    if (tokens) return
+    const room = new URL(location.href).searchParams.get('sala')
+    const fragment = new URLSearchParams(location.hash.slice(1))
+    const token = fragment.get('invite')
+    if (token) history.replaceState(null, '', location.pathname + location.search)
+    if (!room || (!token && !location.search)) return
+    guestPending = true
+    showStatus()
+    try {
+      const response = await fetch(`${token ? '/guest/redeem' : '/guest/session'}?sala=${encodeURIComponent(room)}`,
+        token ? { method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ token }), cache: 'no-store' } : { cache: 'no-store' })
+      if (!response.ok) {
+        if (token) throw new Error('Convite inválido, vencido ou sala vazia.')
+        return
+      }
+      guestRoom = (await response.json()).room
+      error = ''
+    } catch (e) { error = e.message }
+    finally { guestPending = false; showStatus() }
+  }
+
+  const isGuest = room => !!guestRoom && guestRoom === room && !tokens
+
+  const ready = callback().then(guestBootstrap)
+  window.disgalmAuth = { ready, login, accessToken, currentToken, isGuest }
   document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('auth-login').addEventListener('click', login)
     showStatus()

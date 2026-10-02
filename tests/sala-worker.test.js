@@ -25,13 +25,19 @@ class Socket {
 }
 globalThis.WebSocketPair = class { constructor() { this[0] = new Socket(); this[1] = new Socket() } }
 globalThis.WebSocketRequestResponsePair = class { constructor(req, res) { Object.assign(this, { req, res }) } }
-globalThis.Response = class { constructor(corpo, init) { Object.assign(this, init) } }
+globalThis.Response = class {
+  constructor(corpo, init) { this.body = corpo; this.status = 200; Object.assign(this, init) }
+  static json(body, init) { const response = new this(JSON.stringify(body), init); response.json = async () => body; return response }
+}
 const { Sala } = await import(arquivo)
 
 function sala(sockets = []) {
+  const saved = new Map()
   const ctx = {
     auto: null,
-    storage: { alarmAt: null, async setAlarm(value) { this.alarmAt = value }, async deleteAlarm() { this.alarmAt = null } },
+    storage: { alarmAt: null, saved, async get(key) { return saved.get(key) },
+      async put(key, value) { saved.set(key, value) },
+      async setAlarm(value) { this.alarmAt = value }, async deleteAlarm() { this.alarmAt = null } },
     setWebSocketAutoResponse(par) { this.auto = par },
     acceptWebSocket(ws) { sockets.push(ws) },
     getWebSockets: () => sockets.filter(ws => !ws.fechado),
@@ -42,7 +48,8 @@ function sala(sockets = []) {
   s.entra = async (params) => {
     const q = new URLSearchParams({ sala: 'galm', ...params })
     const r = await s.fetch({ url: `https://x/ws?${q}`,
-      headers: new Headers({ 'x-disgalm-exp': String(Math.floor(Date.now() / 1000) + 600) }) })
+      headers: new Headers({ 'x-disgalm-exp': String(Math.floor(Date.now() / 1000) + 600),
+        'x-disgalm-role': 'member', 'x-disgalm-sub': params.sub || 'person-1' }) })
     return r.webSocket === undefined ? null : sockets.at(-1)
   }
   return { s, ctx }
@@ -158,4 +165,35 @@ test('passkey expirada fecha a sinalização e avisa a sala', async () => {
   await s.alarm()
   assert.deepEqual(b.fechado, [1000, 'acesso expirado'])
   assert.deepEqual(a.ultima('peer-left'), { t: 'peer-left', id: b.ultima('welcome').id, volta: false })
+})
+
+test('membro presente gera convite de 24 horas para vários convidados; convidado não gera outro', async () => {
+  const { s } = sala()
+  const invite = sub => s.fetch({ url: 'https://x/invite', method: 'POST',
+    headers: new Headers({ 'x-disgalm-sub': sub }) })
+  assert.equal((await invite('person-1')).status, 403)
+  const member = await s.entra({ nome: 'Membro', aba: 'aba-m', sub: 'person-1' })
+  const issued = await invite('person-1')
+  const { token, expiresAt } = await issued.json()
+  assert.match(token, /^[0-9a-f]{64}$/)
+  assert.ok(expiresAt > Math.floor(Date.now() / 1000) + 86000)
+  assert.equal((await invite('other-person')).status, 403)
+  const check = value => s.fetch({ url: 'https://x/guest/check', method: 'POST',
+    headers: new Headers({ 'x-disgalm-guest-token': value }) })
+  assert.equal((await check('bad')).status, 401)
+  assert.equal((await check(token)).status, 200)
+  const guest = async aba => {
+    const response = await s.fetch({ url: `https://x/ws?nome=Convidado&aba=${aba}`, method: 'GET',
+      headers: new Headers({ 'x-disgalm-role': 'guest', 'x-disgalm-guest-token': token }) })
+    assert.equal(response.status, 101)
+    return s.sockets.at(-1)
+  }
+  const a = await guest('aba-a')
+  const b = await guest('aba-b')
+  assert.equal(a.att.role, 'guest')
+  assert.equal(b.att.role, 'guest')
+  assert.equal((await invite('')).status, 403)
+  assert.equal(member.att.role, 'member')
+  s.ctx.storage.saved.set([...s.ctx.storage.saved.keys()][0], Math.floor(Date.now() / 1000) - 1)
+  assert.equal((await check(token)).status, 401)
 })

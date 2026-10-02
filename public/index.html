@@ -42,7 +42,7 @@
         >
       </details>
       <div id="entry-error" role="status" class="ui-notice"></div>
-      <div class="entry-foot">Até 4 pessoas · Acesso pela conta GALM</div>
+      <div class="entry-foot">Até 4 pessoas · Conta GALM ou convite de 24 horas</div>
     </form>
   </div>
   <div id="sala" class="sem-foco">
@@ -1198,8 +1198,9 @@
     function conectar() {
       clearTimeout(religar)
       if (!sala) return
-      const token = disgalmAuth.currentToken()
-      if (!token) {
+      const guest = disgalmAuth.isGuest(sala.cod)
+      const token = guest ? null : disgalmAuth.currentToken()
+      if (!guest && !token) {
         disgalmAuth.accessToken().then(() => { if (sala) conectar() })
           .catch(e => { atualizarSinalizacao(false); $('ui-notice').textContent = e.message })
         return
@@ -1207,7 +1208,8 @@
       const q = new URLSearchParams({ sala: sala.cod, nome: sala.nome, aba: idDaAba() })
       if (meuId) q.set('id', meuId)
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-      const s = ws = new WebSocket(`${proto}://${location.host}/ws?${q}`, ['disgalm', `auth.${token}`])
+      const s = ws = new WebSocket(`${proto}://${location.host}/ws?${q}`,
+        guest ? ['disgalm'] : ['disgalm', `auth.${token}`])
       ultimoSinal = Date.now()
       s.onopen = () => s.send(JSON.stringify({ t: 'join', room: sala.cod, name: sala.nome }))
       // Socket substituído não fala mais: só o atual reage. Se o atual foi
@@ -1345,9 +1347,13 @@
     }
 
     async function entrarNaSala() {
-      const token = await disgalmAuth.accessToken()
-      const response = await fetch('/ice', { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' })
-      if (!response.ok) throw new Error(response.status === 401 ? 'Acesso negado. Entre com GALM novamente.' : 'Não foi possível obter o relay.')
+      const cod = $('sala-cod').value.trim().toLowerCase()
+      const guest = disgalmAuth.isGuest(cod)
+      const token = guest ? null : await disgalmAuth.accessToken()
+      const response = await fetch(`/ice?sala=${encodeURIComponent(cod)}`, {
+        headers: token ? { authorization: `Bearer ${token}` } : {}, cache: 'no-store' })
+      if (!response.ok) throw new Error(response.status === 401 ?
+        'Acesso negado. Entre com GALM ou peça um novo convite.' : 'Não foi possível obter o relay.')
       ice = await response.json()
       log('ICE:', ice.map(s => s.urls).flat().join(' '))
       await pegarMic()
@@ -1357,13 +1363,13 @@
       $('sala').classList.add('ativa')
       desenharTile('local')
 
-      const cod = $('sala-cod').value.trim().toLowerCase()
       const meuNome = $('nome').value.trim() || 'anon'
       for (const id of ['room-title', 'channel-name']) $(id).textContent = cod
       $('connection-room').textContent = cod + ' / Disgalm'
       $('my-name').textContent = meuNome
       $('my-avatar').textContent = inicial(meuNome)
       sala = { cod, nome: meuNome }
+      $('b-invite').hidden = guest
       conectar()
       setInterval(bater, BATIDA_MS)
       // Voltar da rede ou do sono não precisa esperar o próximo batimento.
@@ -1537,13 +1543,20 @@
       $('b-settings').onclick = () => $('ajustes').showModal()
       $('b-close-settings').onclick = () => $('ajustes').close()
       $('b-invite').onclick = async () => {
-        const url = new URL(location.href)
-        url.search = ''
-        url.searchParams.set('sala', $('sala-cod').value.trim().toLowerCase())
         try {
-          await navigator.clipboard.writeText(url.href)
-          $('ui-notice').textContent = 'Link da sala copiado. Envie para a galera.'
-        } catch { $('ui-notice').textContent = 'Link da sala: ' + url.href }
+          const token = await disgalmAuth.accessToken()
+          const response = await fetch(`/invite?sala=${encodeURIComponent(sala.cod)}`, {
+            method: 'POST', headers: { authorization: `Bearer ${token}` }, cache: 'no-store' })
+          if (!response.ok) throw new Error('Não foi possível gerar o convite. Reconecte à sala e tente novamente.')
+          const body = await response.json()
+          const url = new URL('/', location.origin)
+          url.searchParams.set('sala', sala.cod)
+          url.hash = new URLSearchParams({ invite: body.token }).toString()
+          try {
+            await navigator.clipboard.writeText(url.href)
+            $('ui-notice').textContent = 'Convite de 24 horas copiado. Até 4 pessoas podem estar na sala.'
+          } catch { $('ui-notice').textContent = 'Copie o convite de 24 horas: ' + url.href }
+        } catch (e) { $('ui-notice').textContent = e.message || 'Não foi possível copiar o convite.' }
       }
     })
   </script>

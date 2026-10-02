@@ -42,7 +42,7 @@ function fixture() {
     addEventListener() {}, setInterval() {}, clearInterval() {},
     setTimeout: (f, ms) => { timers.push({ f, ms }); return timers.length }, clearTimeout() {},
     WebSocket: WS, RTCPeerConnection: PC, MediaStream: class { getVideoTracks() { return [] } getTracks() { return [] } },
-    disgalmAuth: { currentToken: () => 'teste', accessToken: async () => 'teste' },
+    disgalmAuth: { currentToken: () => 'teste', accessToken: async () => 'teste', isGuest: () => false },
     location: { protocol: 'https:', host: 'disgalm.test' }, URLSearchParams, URL,
     sessionStorage: { getItem: k => sessao.get(k) ?? null, setItem: (k, v) => sessao.set(k, v) },
     crypto: { randomUUID: () => `aba-${++uuid}` }, alert() {},

@@ -60,3 +60,53 @@ test('TURN e WebSocket exigem token correto e origem da própria página', async
     assert.equal(delegated[0].headers.get('x-disgalm-exp'), String(now() + 600))
   } finally { globalThis.fetch = originalFetch }
 })
+
+test('convite fica limitado à sala, exige membro GALM para emissão e dá acesso sem login', async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => Response.json({ keys: [jwk] })
+  try {
+    const issued = 'a'.repeat(64)
+    const delegated = []
+    const env = { SALA: { idFromName: name => name, get: room => ({ fetch: request => {
+      delegated.push({ room, request })
+      if (new URL(request.url).pathname === '/invite') return Response.json({ token: issued, expiresAt: now() + 86400 })
+      if (new URL(request.url).pathname === '/guest/check')
+        return request.headers.get('x-disgalm-guest-token') === issued && room === 'galm'
+          ? Response.json({ exp: now() + 86400 }) : new Response('inválido', { status: 401 })
+      return new Response('websocket delegado')
+    } }) } }
+    const root = 'https://disgalm.galm.ai'
+    const valid = await token()
+    const invite = (headers = {}) => worker.fetch(new Request(`${root}/invite?sala=galm`,
+      { method: 'POST', headers }), env)
+    assert.equal((await invite({ Origin: root })).status, 401)
+    assert.equal((await invite({ Origin: 'https://evil.example', authorization: `Bearer ${valid}` })).status, 403)
+    assert.equal((await invite({ Origin: root, authorization: `Bearer ${valid}` })).status, 200)
+    assert.equal(delegated.at(-1).request.headers.get('x-disgalm-sub'), 'person-1')
+    const redeem = (room, tokenValue) => worker.fetch(new Request(`${root}/guest/redeem?sala=${room}`, {
+      method: 'POST', headers: { Origin: root, 'content-type': 'application/json' },
+      body: JSON.stringify({ token: tokenValue }),
+    }), env)
+    assert.equal((await redeem('other', issued)).status, 401)
+    const accepted = await redeem('galm', issued)
+    assert.equal(accepted.status, 200)
+    const cookie = accepted.headers.get('set-cookie')
+    assert.match(cookie, /HttpOnly; Secure; SameSite=Lax/)
+    assert.equal((await worker.fetch(new Request(`${root}/guest/session?sala=galm`,
+      { headers: { cookie } }), env)).status, 200)
+    assert.equal((await worker.fetch(new Request(`${root}/guest/session?sala=other`,
+      { headers: { cookie } }), env)).status, 401)
+    assert.equal((await worker.fetch(new Request(`${root}/ice?sala=galm`,
+      { headers: { cookie } }), env)).status, 200)
+    assert.equal((await worker.fetch(new Request(`${root}/ice?sala=other`,
+      { headers: { cookie } }), env)).status, 401)
+    const ws = origin => worker.fetch(new Request(`${root}/ws?sala=galm`, {
+      headers: { Upgrade: 'websocket', Origin: origin, cookie,
+        'Sec-WebSocket-Protocol': 'disgalm', 'x-disgalm-role': 'member' },
+    }), env)
+    assert.equal((await ws('https://evil.example')).status, 403)
+    assert.equal((await ws(root)).status, 200)
+    assert.equal(delegated.at(-1).request.headers.get('x-disgalm-role'), 'guest')
+    assert.equal((await invite({ Origin: root, cookie })).status, 401)
+  } finally { globalThis.fetch = originalFetch }
+})
