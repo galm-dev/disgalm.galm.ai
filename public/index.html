@@ -183,6 +183,7 @@
       </select>
       <button id="b-recap" hidden></button>
       <label class="check"><input type="checkbox" id="sorelay" /> Forçar conexão via relay (TURN) na próxima sala</label>
+      <label class="check"><input type="checkbox" id="verstats" /> Mostrar estatísticas de vídeo nos participantes</label>
       <span id="manual" hidden>
         <label for="res">Resolução</label
         ><select id="res">
@@ -1815,6 +1816,15 @@
       try { valor ? localStorage.setItem(chave, valor) : localStorage.removeItem(chave) }
       catch {}
     }
+    // Resolução, bitrate e limitação por participante são para depurar, não para
+    // quem só está na chamada: ficam escondidos até alguém ligar nos ajustes.
+    $('verstats').checked = lerLocal('disgalm.stats') === '1'
+    $('sala').classList.toggle('stats', $('verstats').checked)
+    $('verstats').onchange = () => {
+      gravarLocal('disgalm.stats', $('verstats').checked ? '1' : '')
+      $('sala').classList.toggle('stats', $('verstats').checked)
+    }
+
     const nomeSalvo = () => lerLocal('disgalm.nome')
     const salvarNome = nome => gravarLocal('disgalm.nome', nome)
 
