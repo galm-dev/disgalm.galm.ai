@@ -120,9 +120,12 @@ resposta automática.
 
 O welcome diz o modo: `modo: 'sfu'` com `sfu: { chave, versao, fontes }`, ou
 `modo: 'mesh'`. Quem abre a sala vazia decide o modo da chamada. O SFU só liga
-se a sala estiver em `SFU_SALAS`, os secrets do app existirem e o cliente
-mandar `cap=sfu1`. Cliente antigo fica na malha. Se a chamada já está em SFU,
-ele recebe `cheia` e não entra; se ele abriu a sala, a chamada inteira fica na
+se a sala estiver em `SFU_SALAS`, os secrets do app existirem, o cliente
+mandar `cap=sfu1` e o orçamento liberar. Cliente antigo fica na malha. Se a
+chamada já está em SFU, ele não entra: recebe um welcome com uma única
+"pessoa" chamada "Recarregue o Disgalm" e o fechamento com motivo
+`substituída`, que o faz parar de religar. Cliente anterior a 01/10, sem `aba`,
+recebe `cheia`. Se o cliente antigo abriu a sala, a chamada inteira fica na
 malha. O limite continua 4.
 
 Telemetria do SFU, sem nome, email, token, chave nem IP: `sfu_sessao_criada`,
@@ -152,9 +155,48 @@ fonte, envio e recebimento) do navegador.
 4. Para desligar, deixe `SFU_SALAS = ""` e publique. Todas as salas voltam à
    malha na próxima chamada. Apagar os secrets tem o mesmo efeito.
 
-Ainda não existe controle de orçamento do SFU (ver o fim de `tests/sfu.md`).
-Não ponha salas de uso diário na lista. Roteiro do ensaio real em
-`tests/sfu.md`.
+Roteiro do ensaio real em `tests/sfu.md`.
+
+## Orçamento da franquia do Realtime
+
+SFU e TURN da Cloudflare dividem 1.000 GB de saída por mês, e a Cloudflare não
+tem teto de gasto. O bloqueio é nosso, em `worker/src/orcamento.js`: um Durable
+Object `Orcamento` para a conta toda guarda o último retrato do consumo e as
+reservas do que foi autorizado e ainda não aparece na medição.
+
+- **Uso protegido** = TURN medido + reservas TURN depois da medição + SFU (o
+  maior entre o medido e o teto das assinaturas autorizadas no mês) + reservas
+  SFU até a próxima medição + 10 GB de margem.
+- **90%**: o gateway nega publicações e assinaturas novas no SFU, e uma sala de
+  ensaio que abre já vai para a malha, com o aviso "SFU indisponível: limite
+  gratuito próximo; compartilhamento continua direto".
+- **98%**: o `/ice` para de emitir TURN da Cloudflare (fica STUN e o coturn de
+  casa, se houver), com o aviso "Relay indisponível: cota gratuita reservada".
+- **Sem medição válida** (retrato ausente, incompleto, de outro mês ou com
+  mais de 75 min): nega os dois. Antes de negar, o objeto tenta uma coleta
+  pontual, no máximo a cada 5 min.
+- **Credencial TURN de 5 min**, com `customIdentifier` `disgalm` ou
+  `disgalm-sfu` (o relay até o SFU não é cobrado de novo). O cliente busca o
+  `/ice` de novo um minuto antes de vencer, troca a configuração das conexões
+  e refaz o ICE de quem está no relay. Quando a credencial vence, a Cloudflare
+  para de cobrar e derruba a alocação.
+
+A medição vem do cron horário, pelo GraphQL Analytics: o TURN do dataset
+documentado `callsTurnUsageAdaptiveGroups`
+(<https://developers.cloudflare.com/realtime/turn/analytics/>); o SFU do
+`callsUsageAdaptiveGroups`, que está no schema do GraphQL mas não na
+documentação. Por isso a parte do SFU nunca fica abaixo do teto do que o
+gateway autorizou no mês, e vale só esse teto se a consulta falhar
+(`sfu_uso_falhou`).
+
+Eventos: `orcamento_snapshot`, `orcamento_snapshot_vencido`,
+`rota_cota_bloqueio` (negações iguais em sequência viram uma linha),
+`sfu_uso_falhou`, e do navegador `ice_renovado`, `ice_renovacao_falhou` e
+`aviso_cota`. Nenhum leva nome, email, token, credencial nem IP.
+
+**Antes de publicar este Worker:** `CF_ACCOUNT_ID` e `CF_ANALYTICS_TOKEN`
+precisam existir (ver Operação). Sem eles não há medição, e o `/ice` deixa de
+emitir TURN da Cloudflare para todas as salas.
 
 ## Diagnóstico
 
@@ -199,8 +241,9 @@ npx wrangler deploy
 O Worker usa os secrets existentes de TURN (`CF_TURN_KEY_ID` e
 `CF_TURN_API_TOKEN`, com coturn opcional). O SFU de ensaio usa `SFU_APP_ID` e
 `SFU_APP_SECRET`, e a lista `SFU_SALAS` do `wrangler.toml`.
-Para o evento `turn_uso`, são necessários mais dois secrets. Sem eles o cron não
-faz nada.
+Para o evento `turn_uso` e para o orçamento, são necessários mais dois
+secrets. Sem eles não há medição, e o orçamento nega o TURN da Cloudflare e o
+SFU.
 
 - `CF_ACCOUNT_ID`: o Account ID da conta onde está a chave TURN (aparece na
   página inicial da conta no painel da Cloudflare).

@@ -79,24 +79,42 @@ comparar o mesmo roteiro com LiveKit antes de seguir (seção 6 do plano).
 - `substituir` troca a track sem avisar o catálogo: a `geracao` lá fica a da
   publicação.
 
-## Antes de liberar fora da lista de ensaio
+## Orçamento
 
-O consumo do ensaio é desprezível perto dos 1.000 GB mensais. Mesmo assim,
-nenhuma sala fora de `SFU_SALAS` pode usar o SFU antes de:
+Automático (`tests/orcamento.test.js`, mais os casos de orçamento em
+`tests/sfu-gateway.test.js`, `tests/transporte*.test.js` e
+`tests/reconexao.test.js`): limiares de 90% e 98% com a margem, reservas que
+crescem e fecham, reserva TURN podada quando a medição a cobre, retrato
+ausente, incompleto ou vencido, coleta pontual com espera de 5 min, virada do
+mês, estimativa do SFU sem o dataset, separação do TURN etiquetado
+`disgalm-sfu`, cron gravando o retrato, `/ice` negando com o motivo no
+cabeçalho, `/sfu` negando publicar e assinar sem chamar a API, renovação da
+credencial (malha refaz o ICE só no relay; SFU refaz a sessão) e avisos uma vez
+por sala.
 
-1. Um DO de orçamento por conta (`worker/src/orcamento.js`), com binding e
-   migração no `wrangler.toml`. Ele guarda snapshot mensal, reservas, limites e
-   estado de bloqueio, e o gateway consulta e reserva antes de `publicar` e
-   `assinar`.
-2. Uma coleta horária que some SFU e TURN (o `turn_uso` de `ff53e8c` mede só
-   TURN) e grave no DO de orçamento. Snapshot ausente, incompleto ou com mais de
-   75 min nega recurso faturável.
-3. Bloqueio em 90% (nega promoções e publicações SFU novas) e em 98% (`/ice`
-   para de emitir TURN da Cloudflare), com aviso legível no cliente.
-4. Credencial TURN curta: TTL de 86.400 s para cerca de 5 min. Testar o que
-   acontece com alocações já abertas quando a credencial vence.
-5. Lease e fechamento efetivo dos fluxos SFU ativos perto do limite (alarme no
-   DO, sem timer periódico), comprovados em ensaio.
+Em ambiente real, com cota de verdade:
 
-Esses itens são a seção 4 do plano (`docs/SFU-INVESTIGACAO.md`, PR #2) e vêm
-antes da fase 4.
+| # | Passo | Esperado |
+|---|---|---|
+| O1 | Primeira hora depois do deploy | `orcamento_snapshot` a cada hora, `completo: true`; `sfu_fonte: 'graphql'` se o dataset do SFU responder, senão `sfu_uso_falhou` e `estimativa` |
+| O2 | Chamada com "Forçar conexão via relay" por 15 min | `ice_renovado` a cada ~4 min com `reiniciados: 1`; a mídia não cai na troca; nenhum `turn_cloudflare_falhou` |
+| O3 | Mesma chamada sem relay forçado | `ice_renovado` com `reiniciados: 0` |
+| O4 | Remover temporariamente `CF_ANALYTICS_TOKEN` num ambiente de teste | `/ice` com `x-disgalm-relay: negado;snapshot_*`, aviso de relay uma vez, `rota_cota_bloqueio` com `motivo` de retrato; a sala de ensaio abre na malha com o aviso do SFU |
+| O5 | Conferir no painel da Cloudflare (Realtime → uso) contra `orcamento_snapshot` | a soma TURN + SFU bate com o painel, tirando o TURN etiquetado `disgalm-sfu` |
+
+## O que falta antes de liberar fora da lista de ensaio
+
+Já existe: orçamento por conta, reserva, bloqueio em 90%/98%, credencial TURN
+de 5 min com renovação. Ainda falta, antes de qualquer sala fora de
+`SFU_SALAS` usar o SFU:
+
+1. Confirmar a medição do SFU contra o painel (O5). O dataset
+   `callsUsageAdaptiveGroups` não está documentado; até lá, a parte do SFU
+   segue pelo teto das assinaturas quando ele é maior.
+2. Fechamento ativo de assinaturas perto do limite. Hoje, acima de 90%, o
+   gateway só nega o que é novo; o que já está aberto continua até alguém
+   fechar ou sair. Isso cabe na margem de 90% a 98% com quatro pessoas, mas
+   não com mais.
+3. Calibrar `TAXA_TURN` (50 Mbps por credencial) e os tetos por tipo com
+   `relay_bytes` e `sfu_bytes` de chamadas reais.
+4. Ensaiar a virada do mês (21h de Brasília no último dia) com a cota real.
