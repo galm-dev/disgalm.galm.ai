@@ -70,8 +70,9 @@ export async function abrirAudioSemDiscord(log = () => {}) {
   const tratar = ev => {
     if (id === null) return antes.push(ev)
     if (ev.id !== id) return
-    if (ev.tipo === 'alvo') log(`áudio do sistema sem ${ev.valor.nome} (PID ${ev.valor.pid}` +
-      `${ev.valor.raizes > 1 ? `, ${ev.valor.raizes} raízes; excluída a maior` : ''})`)
+    if (ev.tipo === 'alvo') log(ev.valor.incluidos !== undefined
+      ? `áudio do sistema sem ${ev.valor.nome}; entram: ${ev.valor.incluidos}`
+      : `áudio do sistema sem ${ev.valor.nome} (PID ${ev.valor.pid})`)
     else if (ev.tipo === 'inicio') log(`loopback nativo ligado (${ev.valor})`)
     else if (ev.tipo === 'erro') log(`loopback nativo: ${ev.valor}`)
   }

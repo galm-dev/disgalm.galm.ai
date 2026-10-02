@@ -161,10 +161,14 @@ para quem assiste.
 
 - **Windows 10 build 20348+** (na prática, Windows 11). Testado no 26200. Em
   build anterior, a ativação falha e o app usa o áudio do sistema inteiro.
-- **Um alvo por captura.** Não dá para excluir o Discord e o próprio Disgalm
-  ao mesmo tempo, então o áudio dos outros, tocado pelo app, vai junto. Para
-  excluir os dois, seria preciso abrir uma captura INCLUDE por processo que
-  toca (via `IAudioSessionManager2`) e mixar.
+- O WASAPI exclui só **uma** árvore por captura, e excluir só o Discord fazia
+  o som que o próprio Disgalm toca (a voz de quem assiste) voltar na tela. Por
+  isso a captura é ao contrário: uma INCLUDE por programa que tem sessão de
+  áudio na saída padrão, menos o Disgalm e o Discord (`planejarInclusoes` em
+  `alvo.js`), somadas em `captura.js`. A lista é refeita a cada segundo: um
+  programa que começa a tocar pode perder até ~1 s. Os sons do sistema (a
+  sessão sem PID) ficam de fora. No teste com o app tocando 700 Hz nas
+  caixas, a captura ficou em −85 dBFS de 700 Hz contra −12,3 de 1000 Hz.
 - Discord, PTB e Canary (`Discord.exe`, `DiscordPTB.exe`,
   `DiscordCanary.exe`) são procurados juntos, mas abertos ao mesmo tempo só o
   de árvore maior sai (`DISGALM_EXCLUIR` troca a lista).

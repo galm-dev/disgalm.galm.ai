@@ -42,3 +42,27 @@ test('ciclo de ppid por PID reusado não trava a contagem', () => {
 test('sem Discord, lista vazia', () => {
   assert.deepEqual(raizesDe([p(1, 0, 'explorer.exe')], NOMES, semData), [])
 })
+
+const { planejarInclusoes } = createRequire(import.meta.url)('../desktop/alvo.js')
+const sessao = pid => ({ pid, ativa: true })
+const arvore = [
+  p(1, 0, 'System'), p(100, 1, 'explorer.exe'),
+  p(200, 100, 'Disgalm.exe'), p(201, 200, 'Disgalm.exe'),        // o app e o serviço de áudio dele
+  ...discord,                                                     // Discord 5016 e filhos
+  p(300, 100, 'chrome.exe'), p(301, 300, 'chrome.exe'),           // navegador e o processo de áudio
+  p(400, 100, 'spotify.exe'),
+]
+
+test('inclui quem toca, menos as árvores do Disgalm e do Discord', () => {
+  const sessoes = [sessao(201), sessao(1452), sessao(301), sessao(400), sessao(0)]
+  assert.deepEqual(planejarInclusoes(arvore, sessoes, { pidApp: 200, nomes: NOMES }), [301, 400])
+})
+
+test('com pai e filho tocando, a captura do pai basta', () => {
+  const sessoes = [sessao(300), sessao(301)]
+  assert.deepEqual(planejarInclusoes(arvore, sessoes, { pidApp: 200, nomes: NOMES }), [300])
+})
+
+test('PID de sessão que já morreu fica de fora', () => {
+  assert.deepEqual(planejarInclusoes(arvore, [sessao(999)], { pidApp: 200, nomes: NOMES }), [])
+})

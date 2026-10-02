@@ -31,4 +31,28 @@ function raizesDe(procs, nomes, criadoEm) {
     .sort((a, b) => b.descendentes - a.descendentes)
 }
 
-module.exports = { raizesDe }
+// Windows só exclui UMA árvore por captura. Para deixar de fora o Disgalm e o
+// Discord juntos, inverte: uma captura INCLUDE por programa que tem sessão de
+// áudio, menos os excluídos. Devolve os PIDs a incluir, sem repetir árvore:
+// se um processo incluído é ancestral de outro, a captura do ancestral já
+// pega o descendente.
+function planejarInclusoes(procs, sessoes, { pidApp, nomes }) {
+  const porPid = new Map(procs.map(p => [p.pid, p]))
+  const nomesMin = new Set(nomes.map(n => n.toLowerCase()))
+  const ancestrais = pid => {
+    const cadeia = []
+    for (let atual = pid, passos = 0; atual && passos < 64; passos++) {
+      cadeia.push(atual)
+      const p = porPid.get(atual)
+      if (!p || p.ppid === atual) break
+      atual = p.ppid
+    }
+    return cadeia
+  }
+  const excluido = pid => ancestrais(pid).some(a => a === pidApp || nomesMin.has(porPid.get(a)?.nome.toLowerCase()))
+  const candidatos = [...new Set(sessoes.map(s => s.pid))].filter(pid => pid > 4 && porPid.has(pid) && !excluido(pid))
+  const conjunto = new Set(candidatos)
+  return candidatos.filter(pid => !ancestrais(pid).slice(1).some(a => conjunto.has(a))).sort((a, b) => a - b)
+}
+
+module.exports = { raizesDe, planejarInclusoes }

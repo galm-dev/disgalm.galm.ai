@@ -11,6 +11,7 @@
 #include <windows.h>
 #include <audioclient.h>
 #include <audioclientactivationparams.h>
+#include <audiopolicy.h>
 #include <avrt.h>
 #include <mmdeviceapi.h>
 #include <tlhelp32.h>
@@ -292,10 +293,51 @@ Napi::Value CriadoEm(const Napi::CallbackInfo& info) {
   return Napi::Number::New(env, static_cast<double>(u.QuadPart / 10000));
 }
 
+// Sessões de áudio da saída padrão: [{ pid, ativa, sistema }]. Com elas o JS
+// sabe quem toca som e abre uma captura INCLUDE por árvore, para excluir mais
+// de um processo (o Disgalm e o Discord) ao mesmo tempo.
+Napi::Value SessoesDeAudio(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  auto lista = Napi::Array::New(env);
+  HRESULT co = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+  {
+    ComPtr<IMMDeviceEnumerator> dispositivos;
+    ComPtr<IMMDevice> saida;
+    ComPtr<IAudioSessionManager2> gerente;
+    ComPtr<IAudioSessionEnumerator> sessoes;
+    if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&dispositivos))) &&
+        SUCCEEDED(dispositivos->GetDefaultAudioEndpoint(eRender, eConsole, &saida)) &&
+        SUCCEEDED(saida->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr,
+                                  reinterpret_cast<void**>(gerente.GetAddressOf()))) &&
+        SUCCEEDED(gerente->GetSessionEnumerator(&sessoes))) {
+      int n = 0;
+      sessoes->GetCount(&n);
+      uint32_t k = 0;
+      for (int i = 0; i < n; i++) {
+        ComPtr<IAudioSessionControl> controle;
+        ComPtr<IAudioSessionControl2> controle2;
+        if (FAILED(sessoes->GetSession(i, &controle)) || FAILED(controle.As(&controle2))) continue;
+        DWORD pid = 0;
+        controle2->GetProcessId(&pid);
+        AudioSessionState estado = AudioSessionStateInactive;
+        controle->GetState(&estado);
+        auto o = Napi::Object::New(env);
+        o.Set("pid", pid);
+        o.Set("ativa", estado == AudioSessionStateActive);
+        o.Set("sistema", controle2->IsSystemSoundsSession() == S_OK);
+        lista.Set(k++, o);
+      }
+    }
+  }
+  if (SUCCEEDED(co)) CoUninitialize();
+  return lista;
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("Captura", Captura::Classe(env));
   exports.Set("listarProcessos", Napi::Function::New(env, ListarProcessos));
   exports.Set("criadoEm", Napi::Function::New(env, CriadoEm));
+  exports.Set("sessoesDeAudio", Napi::Function::New(env, SessoesDeAudio));
   return exports;
 }
 

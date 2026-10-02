@@ -38,6 +38,15 @@ async function gravar(ctx, track, segundos) {
 }
 
 async function principal() {
+  // ?proprio=1: o próprio app toca 700 Hz nas caixas, como o Disgalm tocando a
+  // voz de quem assiste. Esse som não pode entrar na captura.
+  if (q.get('proprio')) {
+    const ctx = new AudioContext()
+    const o = ctx.createOscillator(), g = ctx.createGain()
+    o.frequency.value = 700; g.gain.value = 0.25
+    o.connect(g).connect(ctx.destination); o.start()
+    log('o próprio app tocando 700 Hz')
+  }
   const tela = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 15 }, audio: false })
   log('tela:', tela.getVideoTracks()[0].label)
   const audio = await abrirAudioSemDiscord(log)
