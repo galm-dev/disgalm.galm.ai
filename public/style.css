@@ -1178,10 +1178,25 @@ button.channel:hover:not(:disabled) {
   background: linear-gradient(135deg, var(--accent), #8b5cff);
 }
 .profile-preview small {
+  flex: 1;
+  min-width: 0;
   color: var(--fg-3);
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#b-logout {
+  flex: none;
+  padding: 5px 9px;
+  background: none;
+  border-color: transparent;
+  color: var(--fg-3);
+  font-size: 12px;
+}
+#b-logout:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 #profile-name {
   width: 100%;
@@ -1192,7 +1207,6 @@ button.channel:hover:not(:disabled) {
   gap: 8px;
   margin-top: 20px;
 }
-#b-logout { margin-right: auto; }
 #b-profile-save {
   background: var(--btn);
   border-color: transparent;
