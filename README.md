@@ -54,18 +54,21 @@ não o publique na rede.
 
 ## Microfone
 
-Em **Ajustes**, a supressão de ruído do microfone tem três modos: RNNoise, que
-é o padrão, filtro do navegador ou desligada. A escolha fica salva no navegador
-e vale na hora, inclusive no meio da chamada, porque a track enviada é trocada
-sem renegociar. No modo RNNoise, o navegador cuida só do eco e do ganho, e a voz
-passa pelo `public/rnnoise-worklet.js` num AudioWorklet antes de ir aos pares.
-Isso acrescenta 10 ms de atraso. O binário está em `public/vendor/rnnoise/`,
-com a origem e as licenças. Se o RNNoise não carregar, a chamada usa o filtro do
-navegador e registra o motivo no diagnóstico.
+Em **Ajustes**, a supressão de ruído do microfone tem quatro modos: RNNoise,
+que é o padrão, DeepFilterNet, filtro do navegador ou desligada. A escolha
+fica salva no navegador e vale na hora, inclusive no meio da chamada, porque a
+track enviada é trocada sem renegociar. Nos dois modos neurais, o navegador
+cuida só do eco e do ganho, e a voz passa por um AudioWorklet antes de ir aos
+pares. O RNNoise (`public/rnnoise-worklet.js`) é leve e acrescenta 10 ms. O
+DeepFilterNet3 (`public/deepfilter-worklet.js`) tira bem mais ruído, inclusive
+teclado e cliques, mas acrescenta 40 ms e baixa um WASM de 12 MB na primeira
+vez. Os binários estão em `public/vendor/`, com a origem e as licenças. Se o
+filtro escolhido não carregar, a chamada usa o filtro do navegador e registra o
+motivo no diagnóstico.
 
 **Testar microfone** grava sem limite de tempo e só toca depois que a pessoa
-para de falar. Com RNNoise, grava duas faixas do mesmo trecho, antes e depois
-do filtro. As gravações ficam só na memória da aba e são descartadas na
+para de falar. Com um filtro neural, grava duas faixas do mesmo trecho, antes e
+depois do filtro. As gravações ficam só na memória da aba e são descartadas na
 próxima gravação. Fora de uma sala, o teste abre o microfone só durante a
 gravação.
 

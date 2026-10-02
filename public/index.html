@@ -224,7 +224,8 @@
       </select>
       <label for="ruido">Supressão de ruído do microfone</label
       ><select id="ruido">
-        <option value="rnnoise">RNNoise (rede neural no navegador)</option>
+        <option value="rnnoise">RNNoise (rede neural leve)</option>
+        <option value="deepfilter">DeepFilterNet (mais forte, baixa 12 MB uma vez)</option>
         <option value="navegador">Filtro do navegador</option>
         <option value="desligado">Desligada</option>
       </select>
@@ -233,7 +234,7 @@
           <button id="b-gravar" type="button">Testar microfone</button>
           <span id="mic-test-tempo" role="status"></span>
         </div>
-        <p>Fale o quanto quiser e pare para ouvir a gravação. Com RNNoise, as duas faixas são o mesmo trecho antes e depois do filtro.</p>
+        <p>Fale o quanto quiser e pare para ouvir a gravação. Com RNNoise ou DeepFilterNet, as duas faixas são o mesmo trecho antes e depois do filtro.</p>
         <div id="mic-test-result"></div>
       </div>
       <div id="diag"></div>
@@ -422,7 +423,7 @@
 
     // ---------- teste de microfone ----------
     // Grava sem limite e só toca depois: ouvindo em tempo real a própria voz
-    // cobre o ruído, e de volta, parado, ele fica evidente. Com RNNoise grava
+    // cobre o ruído, e de volta, parado, ele fica evidente. Com filtro neural grava
     // o mesmo trecho antes e depois do filtro. Fica só na memória da aba.
     let teste = null
     const urlsTeste = []
@@ -448,7 +449,7 @@
       }
       const faixas = []
       if (tap.bruto) faixas.push(gravar(tap.bruto, 'Sem filtro de ruído'))
-      faixas.push(gravar(tap.filtrado, fonte.modo === 'rnnoise' ? 'Com RNNoise' : fonte.modo === 'navegador' ? 'Com o filtro do navegador' : 'Sem filtro de ruído'))
+      faixas.push(gravar(tap.filtrado, fonte.rotulo))
       const inicio = Date.now()
       const relogio = setInterval(() => {
         const s = Math.floor((Date.now() - inicio) / 1000)
