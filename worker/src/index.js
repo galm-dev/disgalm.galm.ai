@@ -252,11 +252,18 @@ export class Sala extends DurableObject {
       if (p.a.id !== retomar) this.#avisaSaida(p.a.id, servidor, false)
     }
 
+    // Todo cliente pede o subprotocolo 'disgalm'. Sem ele na resposta, o
+    // navegador recusa o upgrade, inclusive o de sala cheia: o 'cheia' nunca
+    // chega e o cliente religa para sempre, vendo só um 1006.
+    const aceitar = () => new Response(null, { status: 101, webSocket: cliente,
+      headers: { 'sec-websocket-protocol': 'disgalm' } })
+
     const jaEstavam = this.#peers(servidor)
     if (jaEstavam.length >= MAX) {
+      this.#registrar('cheia', { sala, papel: role, naSala: jaEstavam.length })
       this.#envia(servidor, { t: 'cheia' })
       servidor.close(1013, 'sala cheia')
-      return new Response(null, { status: 101, webSocket: cliente })
+      return aceitar()
     }
 
     // Retomar o id mantém as RTCPeerConnection dos outros: a mídia nunca
@@ -280,8 +287,7 @@ export class Sala extends DurableObject {
     for (const p of jaEstavam)
       this.#envia(p.ws, { t: retomada ? 'peer-back' : 'peer-join', id, name: nome })
 
-    return new Response(null, { status: 101, webSocket: cliente,
-      headers: { 'sec-websocket-protocol': 'disgalm' } })
+    return aceitar()
   }
 
   async webSocketMessage(ws, bruto) {

@@ -132,6 +132,20 @@ test('fantasma sem batimento sai com volta=true; cliente antigo sem aba não é 
   assert.deepEqual(novo.ultima('welcome').peers.map(p => p.name), ['Antigo', 'Vivo'])
 })
 
+test('sala cheia aceita o subprotocolo, avisa e fecha com 1013', async () => {
+  const { s } = sala()
+  for (const n of ['A', 'B', 'C', 'D']) await s.entra({ nome: n, aba: `aba-${n}` })
+  const r = await s.fetch({ url: 'https://x/ws?sala=galm&nome=E&aba=aba-e',
+    headers: new Headers({ 'x-disgalm-exp': String(Math.floor(Date.now() / 1000) + 600),
+      'x-disgalm-role': 'member', 'x-disgalm-sub': 'person-1' }) })
+  // Sem o subprotocolo de volta, o navegador recusa o upgrade e o 'cheia' se perde.
+  assert.equal(r.status, 101)
+  assert.equal(r.headers['sec-websocket-protocol'], 'disgalm')
+  const e = s.sockets.at(-1)
+  assert.deepEqual(e.ultima('cheia'), { t: 'cheia' })
+  assert.deepEqual(e.fechado, [1013, 'sala cheia'])
+})
+
 test('fantasma não ocupa vaga de sala cheia', async () => {
   const { s } = sala()
   const quatro = []
