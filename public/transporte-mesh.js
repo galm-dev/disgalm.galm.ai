@@ -294,6 +294,9 @@
 
       receberSinal,
 
+      // Na malha cada par manda o que tem; não há catálogo da sala.
+      atualizarCatalogo() {},
+
       // Malha: cada conexão leva sua cópia de cada fonte.
       publicar(fonte) {
         for (const [, p] of pares) p.pc.addTrack(fonte.track, fonte.stream)

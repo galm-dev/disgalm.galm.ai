@@ -307,3 +307,38 @@ test('polite sem oferta nenhuma oferece quando o prazo vence', async () => {
   await new Promise(r => setTimeout(r, 0))
   assert.equal(f.sinais('bbbb0002').filter(d => d.description?.type === 'offer').length, 1)
 })
+
+test('welcome escolhe o transporte: SFU só quando o servidor manda, e cliente anuncia que sabe', async () => {
+  const f = fixture()
+  const pedidos = []
+  f.state.fetch = async (url, init) => {
+    pedidos.push({ url, headers: init.headers, corpo: JSON.parse(init.body) })
+    const op = JSON.parse(init.body).op
+    return { ok: true, json: async () => op === 'sessao' ? { sessao: 'sessao-de-teste' } : { alvos: [], renegociar: false } }
+  }
+  f.run('conectar()')
+  assert.equal(f.ws().url.searchParams.get('cap'), 'sfu1')
+  f.abrir()
+  const chave = 'c'.repeat(64)
+  f.chega({ t: 'welcome', id: 'aaaa0001', protocolo: 1, modo: 'sfu', peers: [{ id: 'bbbb0002', name: 'B' }],
+    sfu: { chave, versao: 2, fontes: [{ dono: 'bbbb0002', fonte: 'mic-1', tipo: 'mic', stream: 'voz-b', geracao: 1 }] } })
+  assert.equal(f.run('transporte.nome'), 'sfu')
+  assert.equal(f.run('pares.size'), 0)
+  await f.run('transporte.ocioso()')
+  // O cliente só pede ao gateway da própria sala, com a chave do welcome e o próprio id.
+  assert.deepEqual(pedidos.map(p => p.corpo.op), ['sessao', 'assinar'])
+  for (const p of pedidos) {
+    assert.equal(p.url, '/sfu?sala=galm')
+    assert.equal(p.headers['x-disgalm-sfu'], chave)
+    assert.equal(p.headers.authorization, 'Bearer teste')
+    assert.equal(p.corpo.id, 'aaaa0001')
+  }
+  assert.deepEqual(JSON.parse(JSON.stringify(pedidos[1].corpo.alvos)), [{ dono: 'bbbb0002', fonte: 'mic-1' }])
+
+  // Sala fora do ensaio, ou servidor antigo sem o campo: malha.
+  f.chega({ t: 'welcome', id: 'aaaa0009', peers: [{ id: 'bbbb0002', name: 'B' }] })
+  assert.equal(f.run('transporte.nome'), 'mesh')
+  assert.equal(f.run("pares.has('bbbb0002')"), true)
+  f.chega({ t: 'cheia', motivo: 'versao' })
+  assert.match(f.$('ui-notice').textContent, /versão nova/)
+})

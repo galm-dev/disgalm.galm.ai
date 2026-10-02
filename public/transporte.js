@@ -1,8 +1,8 @@
 // Contrato entre a sala e o transporte de mídia. A sala (index.html) cuida das
 // pessoas, da captura e do controle pelo WebSocket; o transporte só leva as
-// fontes (fontes.js) de um lado ao outro. Hoje existe a malha
-// (transporte-mesh.js), com uma RTCPeerConnection por pessoa. Um SFU vai
-// implementar os mesmos métodos com uma conexão só, sem a sala mudar.
+// fontes (fontes.js) de um lado ao outro. A malha (transporte-mesh.js) tem uma
+// RTCPeerConnection por pessoa; o SFU (transporte-cloudflare.js) tem uma
+// conexão só, com o Cloudflare Realtime SFU. O welcome diz qual vale na sala.
 //
 // Métodos do transporte:
 //   entrar(presentes, { retomada })   welcome do servidor; presentes = [{ id, nome }].
@@ -13,6 +13,7 @@
 //   limparAusentes(presentes)         descarta mídia morta de quem o servidor não lista.
 //   sair()                            encerra tudo.
 //   receberSinal(de, data)            mensagem do transporte que veio pelo controle da sala.
+//   atualizarCatalogo({ versao, fontes })  catálogo de fontes da sala (só SFU; a malha ignora).
 //   publicar(fonte)                   passa a enviar a fonte a todos.
 //   substituir(fonte, track)          troca a track sem renegociar; a sala atualiza o registro depois.
 //   parar(fonte)                      deixa de enviar.
@@ -36,7 +37,7 @@
 //   relayUsado(id, conexao)          a conexão vai sair ou a página fechar: hora de relatar o relay.
 (() => {
   const METODOS = [
-    'entrar', 'pessoaEntrou', 'pessoaVoltou', 'pessoaSaiu', 'limparAusentes', 'sair', 'receberSinal',
+    'entrar', 'pessoaEntrou', 'pessoaVoltou', 'pessoaSaiu', 'limparAusentes', 'sair', 'receberSinal', 'atualizarCatalogo',
     'publicar', 'substituir', 'parar', 'assinar', 'planejarEnvio', 'aplicarEnvio', 'stats', 'relatarUso',
   ]
   const GANCHOS = [

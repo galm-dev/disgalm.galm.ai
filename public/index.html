@@ -276,6 +276,7 @@
   <script src="/transporte.js"></script>
   <script src="/fontes.js"></script>
   <script src="/transporte-mesh.js"></script>
+  <script src="/transporte-cloudflare.js"></script>
   <script>
     const $ = id => document.getElementById(id)
     // Cada linha leva a hora: sem ela, o relatório não diz se a queda veio antes
@@ -378,7 +379,9 @@
     const pessoas = new Map()
     const nomeDe = id => pessoas.get(id)?.nome ?? nomes.get(id)
 
-    const transporte = criarTransporteMesh({
+    // Ganchos da sala, os mesmos para a malha e para o SFU. O welcome diz qual
+    // transporte vale na sala; fora das salas de ensaio do SFU, sempre a malha.
+    const ganchos = {
       meuId: () => meuId,
       nome: nomeDe,
       ice: () => ice,
@@ -401,9 +404,11 @@
       conexaoMudou: () => limparAusentes(),
       amostrar: (id, pc, anteriores) => atualizarVideo(id, pc, anteriores),
       relayUsado: (id, p) => informarRelay(id, p),
-    })
-    // Mapa id → conexão da malha, para o diagnóstico e o relatório.
-    const pares = transporte.pares
+    }
+    let transporte = criarTransporteMesh(ganchos)
+    // Mapa id → conexão da malha, para o diagnóstico e o relatório. Vazio no
+    // SFU, que não tem conexão por pessoa; acompanha a troca de transporte.
+    let pares = transporte.pares
 
     // ---------- estado anunciado ----------
     // O receptor não tem como saber, olhando a track, se um áudio é voz ou tela.
@@ -1425,7 +1430,7 @@
         naSala: [...naSala], tentativasDeReconexao: tentativas,
         qualidade, orcamentoKbps: +($('orc')?.value || 0),
         compartilhando: telas.length > 0, camera: !!camStream,
-        pares: [...pares].map(estadoPar), saidos, eventos,
+        transporte: transporte.nome, pares: [...pares].map(estadoPar), saidos, eventos,
       }, null, 1)
     }
 
@@ -1476,6 +1481,38 @@
     const sinalizar = (to, data) => ws?.readyState === 1 &&
       ws.send(JSON.stringify({ t: 'signal', to, data }))
 
+    // ---------- SFU (ensaio) ----------
+    // O Worker só liga o SFU em salas da lista de ensaio. A chave vem no
+    // welcome e liga cada pedido a esta conexão; muda a cada welcome.
+    const SFU = typeof globalThis.criarTransporteCloudflare === 'function'
+    let chaveSfu = null
+    async function apiSfu(op, corpo) {
+      if (!sala || !chaveSfu || !meuId) throw new Error('fora da sala')
+      const cod = sala.cod
+      const token = disgalmAuth.isGuest(cod) ? null : await disgalmAuth.accessToken()
+      const r = await fetch(`/sfu?sala=${encodeURIComponent(cod)}`, {
+        method: 'POST', cache: 'no-store', body: JSON.stringify({ ...corpo, op, id: meuId }),
+        headers: { 'content-type': 'application/json', 'x-disgalm-sfu': chaveSfu,
+          ...(token && { authorization: `Bearer ${token}` }) },
+      })
+      const j = await r.json().catch(() => ({}))
+      if (!r.ok) throw Object.assign(new Error(j.erro || `HTTP ${r.status}`), { status: r.status })
+      return j
+    }
+
+    // Troca de transporte só acontece no welcome, antes de qualquer conexão.
+    function escolherTransporte(m) {
+      const modo = SFU && m.modo === 'sfu' && m.sfu ? 'sfu' : 'mesh'
+      chaveSfu = m.sfu?.chave ?? null
+      if (modo === transporte.nome) return false
+      transporte.sair()
+      transporte = modo === 'sfu' ? criarTransporteCloudflare(ganchos, { api: apiSfu }) : criarTransporteMesh(ganchos)
+      pares = transporte.pares
+      log(`transporte: ${modo}`)
+      telemetria('transporte', { modo })
+      return true
+    }
+
     // Identifica a aba, não a carga da página: sobrevive ao F5. É assim que o
     // servidor reconhece o id antigo desta aba como fantasma e avisa a saída.
     function idDaAba() {
@@ -1520,6 +1557,7 @@
       }
       const q = new URLSearchParams({ sala: sala.cod, nome: sala.nome, aba: idDaAba() })
       if (meuId) q.set('id', meuId)
+      if (SFU) q.set('cap', 'sfu1')
       const proto = location.protocol === 'https:' ? 'wss' : 'ws'
       const s = ws = new WebSocket(`${proto}://${location.host}/ws?${q}`,
         guest ? ['disgalm'] : ['disgalm', `auth.${token}`])
@@ -1575,7 +1613,9 @@
       naSala.clear()
       for (const par of m.peers) naSala.add(par.id)
       atualizarSinalizacao(true)
-      transporte.entrar(m.peers.map(par => ({ id: par.id, nome: par.name })), { retomada })
+      const trocou = escolherTransporte(m)
+      transporte.entrar(m.peers.map(par => ({ id: par.id, nome: par.name })), { retomada: retomada && !trocou })
+      if (m.sfu) transporte.atualizarCatalogo(m.sfu)
       if (retomada) anunciar()
       atualizarDiag()
     }
@@ -1590,7 +1630,13 @@
     function tratarMensagem(m) {
       ultimoSinal = Date.now()
       if (m.t === 'pong') return
-      if (m.t === 'cheia') { sairDaSala(); $('ui-notice').textContent = 'Sala cheia (limite de 4).'; return }
+      if (m.t === 'cheia') {
+        sairDaSala()
+        $('ui-notice').textContent = m.motivo === 'versao' ? 'Esta sala está num ensaio que exige a versão nova do app.'
+          : 'Sala cheia (limite de 4).'
+        return
+      }
+      if (m.t === 'sfu') return transporte.atualizarCatalogo(m)
       if (m.t === 'welcome') return bemVindo(m)
       if (m.t === 'peer-back') return voltou(m)
       if (m.t === 'peer-join') {
