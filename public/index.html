@@ -220,6 +220,20 @@
         <option value="40000">total 40 Mbps</option>
         <option value="80000">total 80 Mbps</option>
       </select>
+      <label for="ruido">Supressão de ruído do microfone</label
+      ><select id="ruido">
+        <option value="rnnoise">RNNoise (rede neural no navegador)</option>
+        <option value="navegador">Filtro do navegador</option>
+        <option value="desligado">Desligada</option>
+      </select>
+      <div class="mic-test">
+        <div class="mic-test-head">
+          <button id="b-gravar" type="button">Testar microfone</button>
+          <span id="mic-test-tempo" role="status"></span>
+        </div>
+        <p>Fale o quanto quiser e pare para ouvir a gravação. Com RNNoise, as duas faixas são o mesmo trecho antes e depois do filtro.</p>
+        <div id="mic-test-result"></div>
+      </div>
       <div id="diag"></div>
       <details id="logbox">
         <summary>Diagnóstico da conexão</summary>
@@ -249,6 +263,7 @@
     </form>
   </dialog>
   <script src="/auth.js"></script>
+  <script src="/ruido.js"></script>
   <script>
     const $ = id => document.getElementById(id)
     // Cada linha leva a hora: sem ela, o relatório não diz se a queda veio antes
@@ -291,6 +306,8 @@
     }
 
     let ws, meuId, ice, micStream, telaStream, camStream
+    // mic = captura com o filtro de ruído (ruido.js); micStream é o que vai aos pares.
+    let mic = null
     let foco = null, surdo = false
     // conta = nome vindo do GALM; nome = o que aparece na sala (apelido ou conta).
     const perfil = { nome: '', foto: null, conta: '', email: '' }
@@ -333,20 +350,131 @@
       if (loop) $('loopdev').value = loop.deviceId
     }
 
+    async function abrirMic() {
+      const aberto = await disgalmRuido.abrir(undefined, e => log(`RNNoise indisponível (${e.name}: ${e.message}) — usando o filtro do navegador`))
+      log(`microfone: supressão de ruído ${aberto.modo}`)
+      return aberto
+    }
+
+    function pararMic() {
+      mic?.parar()
+      mic = null
+      micStream = null
+    }
+
     async function pegarMic() {
       try {
-        micStream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        })
+        mic = await abrirMic()
+        micStream = mic.stream
         micStream.getAudioTracks()[0].enabled = !$('b-mic').classList.contains('cortado')
         $('b-mic').disabled = false
         medirFala('local', micStream)
       } catch (e) {
+        mic = null
         micStream = null
         log(`microfone indisponível (${e.name}) — entrando sem voz`)
         $('b-mic').disabled = true
         controle('b-mic', 'Microfone indisponível')
       }
+    }
+
+    // Troca o filtro de ruído no meio da chamada sem renegociar, como recapturar.
+    async function trocarFiltroMic(modo) {
+      disgalmRuido.definirModo(modo)
+      if (!micStream) return
+      pararTesteMic()
+      const antigo = mic
+      const novo = await abrirMic()
+      const tAntiga = micStream.getAudioTracks()[0]
+      const tNova = novo.stream.getAudioTracks()[0]
+      tNova.enabled = tAntiga.enabled
+      for (const [, p] of pares)
+        for (const sd of p.pc.getSenders())
+          if (sd.track === tAntiga) await sd.replaceTrack(tNova)
+      mic = novo
+      micStream = novo.stream
+      antigo.parar()
+      medirFala('local', micStream)
+      $('ruido').value = novo.modo
+    }
+
+    // ---------- teste de microfone ----------
+    // Grava sem limite e só toca depois: ouvindo em tempo real a própria voz
+    // cobre o ruído, e de volta, parado, ele fica evidente. Com RNNoise grava
+    // o mesmo trecho antes e depois do filtro. Fica só na memória da aba.
+    let teste = null
+    const urlsTeste = []
+
+    function formatoGravacao() {
+      return ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4']
+        .find(t => MediaRecorder.isTypeSupported(t)) || ''
+    }
+
+    async function iniciarTesteMic() {
+      // Fora da sala não há microfone aberto; abre um só para o teste.
+      const proprio = mic ? null : await abrirMic()
+      const fonte = mic || proprio
+      const tap = fonte.tapar()
+      const mimeType = formatoGravacao()
+      const gravar = (stream, nome) => {
+        const pedacos = []
+        const rec = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 128000 })
+        rec.ondataavailable = ev => { if (ev.data.size) pedacos.push(ev.data) }
+        const pronto = new Promise(ok => { rec.onstop = () => ok({ nome, blob: new Blob(pedacos, { type: rec.mimeType }) }) })
+        rec.start(1000)
+        return { rec, pronto }
+      }
+      const faixas = []
+      if (tap.bruto) faixas.push(gravar(tap.bruto, 'Sem filtro de ruído'))
+      faixas.push(gravar(tap.filtrado, fonte.modo === 'rnnoise' ? 'Com RNNoise' : fonte.modo === 'navegador' ? 'Com o filtro do navegador' : 'Sem filtro de ruído'))
+      const inicio = Date.now()
+      const relogio = setInterval(() => {
+        const s = Math.floor((Date.now() - inicio) / 1000)
+        $('mic-test-tempo').textContent = `Gravando ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+      }, 250)
+      teste = { faixas, tap, proprio, relogio }
+      $('b-gravar').textContent = 'Parar e ouvir'
+      $('b-gravar').classList.add('perigo')
+      $('mic-test-tempo').textContent = 'Gravando 0:00'
+      $('ruido').disabled = true
+    }
+
+    async function pararTesteMic() {
+      if (!teste) return
+      const { faixas, tap, proprio, relogio } = teste
+      teste = null
+      clearInterval(relogio)
+      for (const f of faixas) if (f.rec.state !== 'inactive') f.rec.stop()
+      const gravadas = await Promise.all(faixas.map(f => f.pronto))
+      tap.soltar()
+      proprio?.parar()
+      for (const u of urlsTeste.splice(0)) URL.revokeObjectURL(u)
+      $('mic-test-result').replaceChildren(...gravadas.map(({ nome, blob }) => {
+        const url = URL.createObjectURL(blob)
+        urlsTeste.push(url)
+        const linha = document.createElement('div')
+        linha.className = 'mic-test-faixa'
+        const rotulo = document.createElement('span')
+        rotulo.textContent = nome
+        const audio = document.createElement('audio')
+        audio.controls = true
+        audio.src = url
+        // WebM do MediaRecorder sai sem duração no cabeçalho, e o player fica
+        // em 0:00 sem barra. Pular para o fim força o navegador a medir.
+        audio.onloadedmetadata = () => {
+          if (audio.duration !== Infinity) return
+          audio.currentTime = 1e101
+          audio.ondurationchange = () => { audio.ondurationchange = null; audio.currentTime = 0 }
+        }
+        // Tocar uma faixa pausa a outra: comparar exige ouvir uma de cada vez.
+        audio.onplay = () => { for (const a of $('mic-test-result').querySelectorAll('audio')) if (a !== audio) a.pause() }
+        linha.append(rotulo, audio)
+        return linha
+      }))
+      $('b-gravar').textContent = 'Gravar de novo'
+      $('b-gravar').classList.remove('perigo')
+      $('mic-test-tempo').textContent = ''
+      $('ruido').disabled = false
     }
 
     async function listarCams() {
@@ -1436,8 +1564,8 @@
       nomes.clear()
       pararTela()
       pararCam()
-      for (const t of micStream?.getTracks() || []) t.stop()
-      micStream = null
+      pararTesteMic()
+      pararMic()
       document.getElementById('t-local')?.remove()
       focar(null)
       $('connection-alert').hidden = true
@@ -1764,6 +1892,15 @@
       $('b-grid').onclick = () => focar(null)
       $('b-settings').onclick = () => $('ajustes').showModal()
       $('b-close-settings').onclick = () => $('ajustes').close()
+      $('ruido').value = disgalmRuido.modo()
+      $('ruido').onchange = () => trocarFiltroMic($('ruido').value)
+        .catch(e => { log(`microfone — ${e.name}: ${e.message}`); $('ui-notice').textContent = 'Não foi possível trocar o filtro do microfone.' })
+      $('b-gravar').onclick = () => {
+        $('b-gravar').disabled = true
+        ;(teste ? pararTesteMic() : iniciarTesteMic())
+          .catch(e => { log(`teste de microfone — ${e.name}: ${e.message}`); $('mic-test-tempo').textContent = 'Não foi possível gravar.' })
+          .finally(() => { $('b-gravar').disabled = false })
+      }
       $('b-invite').onclick = async () => {
         try {
           const token = await disgalmAuth.accessToken()
