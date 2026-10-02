@@ -666,6 +666,24 @@ input[type="checkbox"] {
   inset: 0;
   object-fit: contain;
 }
+#palco #v-palco-mini {
+  inset: 14px 14px auto auto;
+  z-index: 2;
+  width: 22%;
+  min-width: 120px;
+  max-width: 280px;
+  height: auto;
+  aspect-ratio: 16/9;
+  object-fit: cover;
+  background: #000;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  cursor: pointer;
+}
+#palco #v-palco-mini:hover {
+  border-color: var(--accent);
+}
 #vazio {
   margin: auto;
   text-align: center;

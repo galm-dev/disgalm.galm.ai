@@ -109,6 +109,8 @@
       <div class="room-content">
         <div id="palco">
           <video id="v-palco" autoplay playsinline muted></video>
+          <video id="v-palco-mini" autoplay playsinline muted hidden
+            title="Trocar câmera e tela"></video>
           <div id="vazio">
             <span class="empty-icon" data-icon="screen"></span
             ><strong>Sua próxima tela começa aqui.</strong>
@@ -615,11 +617,21 @@
       }
     }
 
+    // Com tela e câmera, uma ocupa o palco e a outra fica em miniatura no canto.
+    // Clicar na miniatura troca as duas; mudar de pessoa volta a tela para o centro.
+    let camNoCentro = false
+
     function focar(id) {
+      if (id !== foco) camNoCentro = false
       foco = id
       const d = id && dadosTile(id)
-      const fonte = d?.tela?.getVideoTracks().length ? d.tela
-                  : d?.cam?.getVideoTracks().length ? d.cam : null
+      const tela = d?.tela?.getVideoTracks().length ? d.tela : null
+      const cam = d?.cam?.getVideoTracks().length ? d.cam : null
+      const ambos = !!(tela && cam)
+      const fonte = ambos && camNoCentro ? cam : tela || cam
+      const mini = ambos ? (camNoCentro ? tela : cam) : null
+      $('v-palco-mini').srcObject = mini
+      $('v-palco-mini').hidden = !mini
       const temVideo = !!fonte
       $('sala').classList.toggle('sem-foco', !temVideo)
       if (!temVideo) definirMaximizada(false)
@@ -1470,6 +1482,7 @@
       ? document.exitFullscreen()
       : $('palco').requestFullscreen().catch(e => log('tela cheia:', e.message))
 
+    $('v-palco-mini').onclick = () => { camNoCentro = !camNoCentro; focar(foco) }
     $('b-pip').onclick = () => document.pictureInPictureElement
       ? document.exitPictureInPicture()
       : $('v-palco').requestPictureInPicture().catch(e => log('PiP:', e.message))
