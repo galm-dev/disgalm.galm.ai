@@ -171,6 +171,7 @@
       ><select id="camdev" title="qual câmera" hidden></select>
       <label for="loopdev">Áudio do sistema</label
       ><select id="loopdev" title="áudio do sistema (Linux)"></select>
+      <label class="check" id="semdiscord-op" hidden><input type="checkbox" id="semdiscord" checked /> Compartilhar áudio do sistema (sem o Discord)</label>
       <label for="preset">Qualidade da tela</label
       ><select id="preset" title="qualidade da sua tela">
         <option value="codigo">Código · 1080p 5fps</option>
@@ -542,14 +543,35 @@
       atualizarDiag()
     }
 
+    // App desktop (desktop/): o áudio do sistema pode vir do loopback nativo,
+    // que exclui o Discord. Na web disgalmDesktop não existe e nada muda.
+    const desktop = globalThis.disgalmDesktop
+    const usarSemDiscord = () => !!desktop?.audioSemDiscord?.disponivel && $('semdiscord').checked
+    async function audioSemDiscord() {
+      try {
+        return await (await import('/_desktop/audio-nativo.js')).abrirAudioSemDiscord(log)
+      } catch (e) {
+        log(`áudio sem o Discord indisponível (${e.message}) — usando o do sistema inteiro`)
+        return null
+      }
+    }
+
     async function adicionarTela() {
       const q = qualidade
       // Só pede áudio se nenhuma tela aberta já leva o do sistema.
       const comAudio = !telas.some(t => t.getAudioTracks().length)
-      const tela = await navigator.mediaDevices.getDisplayMedia({
-        video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: q.fps } },
-        audio: comAudio,
-      })
+      const nativo = comAudio && usarSemDiscord() ? await audioSemDiscord() : null
+      let tela
+      try {
+        tela = await navigator.mediaDevices.getDisplayMedia({
+          video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: q.fps } },
+          audio: comAudio && !nativo,
+        })
+      } catch (e) {
+        nativo?.stop()
+        throw e
+      }
+      if (nativo) tela.addTrack(nativo)
 
       if (comAudio && tela.getAudioTracks().length === 0) {
         const dev = $('loopdev').value
@@ -587,9 +609,11 @@
       const tela = telas[0]
       if (!tela) return
       const q = qualidade
+      // O áudio nativo não depende da captura de vídeo: fica como está.
+      const nativo = tela.getAudioTracks().some(t => t.disgalmNativo)
       const novo = await navigator.mediaDevices.getDisplayMedia({
         video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: q.fps } },
-        audio: tela.getAudioTracks().length > 0,
+        audio: tela.getAudioTracks().length > 0 && !nativo,
       })
 
       const trocar = async (antigo, novoT) => {
@@ -1982,6 +2006,10 @@
       $(id).onchange = () => { lerManual(); aplicarQualidade() }
 
     $('loopdev').onchange = () => log('áudio do sistema:', $('loopdev').selectedOptions[0]?.textContent)
+    if (desktop?.audioSemDiscord?.disponivel) {
+      $('semdiscord-op').hidden = false
+      $('semdiscord').onchange = () => log('áudio do sistema sem o Discord:', $('semdiscord').checked ? 'sim' : 'não')
+    }
 
     // Ícones e estados dos controles da chamada.
     const UI_ICONS = {
