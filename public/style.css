@@ -845,6 +845,7 @@ button.channel:hover:not(:disabled) {
   pointer-events: none;
 }
 #palco:hover #capa,
+#palco.mostrar-capa #capa,
 #capa:focus-within {
   opacity: 1;
 }
@@ -1605,4 +1606,50 @@ button.channel:hover:not(:disabled) {
 #menu-telas .menu-acao .icon {
   width: 16px;
   height: 16px;
+}
+
+/* Tela cheia da sala: o palco ocupa tudo; a barra da chamada flutua embaixo e
+   aparece com o mouse (.mostrar-controles, posta pelo index.html). */
+.room-main:fullscreen {
+  position: relative;
+  background: #000;
+}
+.room-main:fullscreen > .room-head,
+.room-main:fullscreen > #connection-alert,
+.room-main:fullscreen #tira,
+.room-main:fullscreen .toolbar-caption,
+.room-main:fullscreen .room-hint {
+  display: none;
+}
+.room-main:fullscreen .room-content {
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+.room-main:fullscreen #palco {
+  border: 0;
+  border-radius: 0;
+  background: #000;
+}
+.room-main:fullscreen .toolbar-wrap {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 10;
+  padding: 40px 24px 26px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, 0.7));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+.room-main:fullscreen.mostrar-controles .toolbar-wrap {
+  opacity: 1;
+  pointer-events: auto;
+}
+.room-main:fullscreen.mostrar-controles {
+  cursor: default;
+}
+.room-main:fullscreen:not(.mostrar-controles) {
+  cursor: none;
 }

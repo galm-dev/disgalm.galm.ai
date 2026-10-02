@@ -16,6 +16,11 @@ const { criarBandeja, lerUltima, gravarUltima, acharUltima } = require('./bandej
 const { criarSaude } = require('./saude.js')
 const { criarAtualizacao } = require('./atualizacao.js')
 
+// Uma instância só: abrir de novo (atalho, o app reaberto por um update) traz
+// a janela existente para a frente, em vez de entrar na sala duas vezes. Sai
+// antes de contar a abertura na saúde da versão.
+if (!process.argv.some(a => a.startsWith('--teste=')) && !app.requestSingleInstanceLock()) process.exit(0)
+
 // Conta esta abertura antes de tudo: é o que detecta crash loop (saude.js).
 const saude = process.argv.some(a => a.startsWith('--teste=')) ? null : criarSaude(app)
 
@@ -122,6 +127,7 @@ async function fontesComMiniatura(wc) {
 let pedidoDaBandeja = false
 let bandeja = null
 let saindo = false
+let atualizacaoAtual = null
 
 // Um pedido de getDisplayMedia por vez espera a escolha no seletor.
 const escolhas = new Map()
@@ -369,6 +375,15 @@ app.whenReady().then(async () => {
     e.preventDefault()
     win.hide()
   })
+  // Esc também sai da tela cheia da janela (o botão verde no Mac). A do palco
+  // (HTML) é tratada no preload.
+  win.webContents.on('before-input-event', (e, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape' && win.isFullScreen()) {
+      e.preventDefault()
+      win.setFullScreen(false)
+    }
+  })
+
   // Saúde da versão: conta só depois da janela carregada; renderer que cai é
   // recarregado até 3 vezes por minuto (como no t3code) e invalida a contagem.
   const quedas = []
@@ -384,9 +399,17 @@ app.whenReady().then(async () => {
 
   const atualizacao = TESTE ? null : criarAtualizacao({
     saude,
-    aoMudar: () => bandeja?.redesenhar(),
+    // Bandeja e o badge no topo da janela (renderer/atualizacao-ui.js).
+    aoMudar: estado => {
+      bandeja?.redesenhar()
+      if (!win.isDestroyed()) win.webContents.send('atualizacao', estado)
+    },
     antesDeInstalar: () => { saindo = true },
   })
+  atualizacaoAtual = atualizacao
+  // Reaberto pelo instalador depois de um update: traz a janela para a frente
+  // (no Windows ela voltava atrás das outras, e parecia que nada tinha acontecido).
+  if (atualizacao?.estado.recemAtualizado) win.once('ready-to-show', () => { win.show(); win.focus() })
   // Versão nova que não abre direito: volta para a última saudável e bloqueia
   // esta. O app segue aberto enquanto baixa; instala assim que terminar.
   if (saude?.crashLoop && atualizacao) {
@@ -423,3 +446,11 @@ app.on('window-all-closed', () => app.quit())
 // Mac: clicar no ícone do Dock traz a janela escondida de volta.
 app.on('activate', () => bandeja?.mostrar())
 ipcMain.on('estado', (_e, novo) => bandeja?.estado(novo))
+app.on('second-instance', () => {
+  if (!janela || janela.isDestroyed()) return
+  if (janela.isMinimized()) janela.restore()
+  janela.show()
+  janela.focus()
+})
+ipcMain.handle('atualizacao-estado', () => atualizacaoAtual?.estado ?? null)
+ipcMain.on('atualizacao-instalar', () => atualizacaoAtual?.instalar())

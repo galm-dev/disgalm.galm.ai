@@ -14,7 +14,21 @@ window.addEventListener('DOMContentLoaded', () => {
   s.type = 'module'
   s.src = '/_desktop/seletor.js'
   document.head.append(s)
+  // Badge de atualização no topo da janela.
+  const u = document.createElement('script')
+  u.type = 'module'
+  u.src = '/_desktop/atualizacao-ui.js'
+  document.head.append(u)
 })
+
+const mudancas = new Set()
+ipcRenderer.on('atualizacao', (_e, a) => { for (const f of mudancas) f(a) })
+
+// Esc sai da tela cheia do palco: no Chrome quem faz isso é a interface do
+// navegador, que o app não tem.
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.fullscreenElement) document.exitFullscreen().catch(() => {})
+}, true)
 
 const escolher = new Set()
 const atualizar = new Set()
@@ -45,6 +59,11 @@ contextBridge.exposeInMainWorld('disgalmDesktop', {
   // A página avisa sala, microfone e telas; a bandeja mostra.
   estado: e => ipcRenderer.send('estado', { sala: e.sala ?? null, mic: !!e.mic, telas: Number(e.telas) || 0 }),
   // Seletor de tela do app: o principal manda as fontes e espera a escolha.
+  atualizacao: {
+    aoMudar: f => { mudancas.add(f) },
+    estado: () => ipcRenderer.invoke('atualizacao-estado'),
+    instalar: () => ipcRenderer.send('atualizacao-instalar'),
+  },
   tela: {
     aoEscolher: f => { escolher.add(f) },
     aoAtualizar: f => { atualizar.add(f) },
