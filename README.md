@@ -247,11 +247,11 @@ o mês civil em UTC.
   `.worktrees/`), junte no `master` e publique do `master`. Nada vai ao ar a
   partir de outra branch.
 - `npm test` roda todos os testes (web, Worker e desktop).
-- `npm run deploy` publica o Worker e a UI. Ele recusa se você não está no
-  `master` em dia com o `origin/master`, se `public/` ou `worker/` têm
-  alteração não commitada, ou se a produção serve algo que não está no
-  histórico do `master`. Depois de publicar, confere que a produção serve o
-  `index.html` do commit.
+- **Push no `master` publica.** O job `deploy` do CI roda `scripts/deploy.sh`
+  depois dos testes: publica o Worker e a UI e confere que a produção serve o
+  `index.html` do commit. Ele recusa se a produção serve algo que não está no
+  histórico do `master`, e pula se outro push já passou na frente. Não há
+  deploy da máquina de ninguém; `npm run deploy` só lembra disso.
 - **App desktop:** `cd desktop && npm ci && npm start` roda com a UI local de
   `public/`. As releases saem do CI (`desktop/README.md`): o nightly sai
   sozinho com commit novo no `master`, e a stable é manual.
@@ -261,7 +261,7 @@ o mês civil em UTC.
 ```sh
 npm test
 (cd worker && npm run check)   # dry-run do Wrangler
-npm run deploy
+git push origin master         # o CI publica
 ```
 
 O Worker usa os secrets existentes de TURN (`CF_TURN_KEY_ID` e
@@ -281,7 +281,7 @@ secrets. Sem eles o orçamento fica no modo sem medição (ver Orçamento).
 cd worker
 ./wrangler.sh secret put CF_ACCOUNT_ID
 ./wrangler.sh secret put CF_ANALYTICS_TOKEN
-npm run deploy         # publica também o cron
+# o próximo push no master publica também o cron
 ```
 
 O login GALM não adiciona nenhum

@@ -21,6 +21,29 @@ jobs:
           node-version: 22
       - run: node --test tests/*.test.js
 
+  # Push no master é publicação: Worker e UI vão ao ar pelo scripts/deploy.sh.
+  # O token é um API token da conta Galm com o modelo "Edit Cloudflare Workers".
+  deploy:
+    needs: testes
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - name: Publica
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          [ -n "$CLOUDFLARE_API_TOKEN" ] || { echo "::error::falta o secret CLOUDFLARE_API_TOKEN do repositório"; exit 1; }
+          bash scripts/deploy.sh
+
   nativo-windows:
     runs-on: windows-2022
     steps:
