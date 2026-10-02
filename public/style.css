@@ -441,6 +441,34 @@ button.channel:hover:not(:disabled) {
   border-color: transparent;
   color: var(--fg);
 }
+.channel-item {
+  position: relative;
+}
+.channel-item button.channel { padding-right: 34px; }
+.channel-remove {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  justify-content: center;
+  background: transparent;
+  border-color: transparent;
+  color: var(--fg-3);
+  opacity: 0;
+}
+.channel-remove .icon { width: 14px; height: 14px; }
+.channel-item:hover .channel-remove,
+.channel-remove:focus-visible { opacity: 1; }
+.channel-remove:active:not(:disabled) { transform: translateY(calc(-50% + 1px)); }
+.channel-remove:hover:not(:disabled) {
+  background: var(--surface-3);
+  border-color: transparent;
+  color: var(--fg);
+}
+@media (hover: none) { .channel-remove { opacity: 1; } }
 .channel strong {
   text-align: left;
   overflow: hidden;
