@@ -42,6 +42,27 @@ npm start                                # ou: npx electron . "<link de convite>
 Na primeira vez, o Firewall do Windows pergunta sobre o Electron. Permitir
 libera conexões WebRTC de entrada; sem isso, ainda funciona por saída e TURN.
 
+## Pacote para testar (Windows, Mac, Linux)
+
+Sem ferramenta de distribuição: `node empacotar.mjs`, rodado em cada
+sistema depois do `npm install`, copia o Electron pronto, põe o app em
+`resources/app` e a UI em `resources/public`. O resultado sai em
+`dist/Disgalm-<sistema>-<arch>` (pasta e `.zip`/`.tar.gz`). Não há instalador
+nem assinatura; no Mac o bundle é reassinado ad hoc.
+
+- **Windows:** rode antes `npm run build:native`. Abra com `Disgalm.exe`. É o
+  único com áudio do sistema sem o Discord.
+- **Mac:** `Disgalm.app`. O Electron não tem áudio do sistema no Mac, então a
+  tela vai sem som. O macOS pede a permissão de Gravação de Tela no primeiro
+  compartilhamento. Se o zip vier baixado, rode
+  `xattr -dr com.apple.quarantine Disgalm.app`.
+- **Linux:** `./disgalm`. O áudio do sistema vem do monitor do PipeWire,
+  como na web (`loopback.sh` e escolha em Ajustes).
+- Para abrir um convite ou uma sala, passe o link como argumento:
+  `Disgalm.exe "<link>"`, `open -a Disgalm.app --args "<link>"` ou
+  `./disgalm "<link>"`.
+- A UI vai congelada no pacote (é a do branch no momento do empacotamento).
+
 ## Prova
 
 `teste\cenario.ps1` toca dois tons ao mesmo tempo: 440 Hz num **filho** de um
