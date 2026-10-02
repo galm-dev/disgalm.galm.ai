@@ -811,8 +811,30 @@ input[type="checkbox"] {
   object-fit: cover;
   display: block;
 }
-.tile.eu video {
+.tile .midia {
+  position: relative;
+}
+.tile .v-tela {
+  object-fit: contain;
+  background: #000;
+}
+.tile.eu .v-cam {
   transform: scaleX(-1);
+}
+/* Câmera de quem também compartilha tela: miniatura sobre a tela. */
+.tile video.mini {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 28%;
+  min-width: 56px;
+  max-width: 200px;
+  height: auto;
+  aspect-ratio: 16/9;
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-1);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
 }
 .tile .semvideo {
   width: 100%;
@@ -956,6 +978,11 @@ input[type="checkbox"] {
 #barra button.on {
   background: var(--accent-soft);
   color: var(--accent-text);
+}
+#barra button.cortado,
+#barra button.cortado:hover:not(:disabled) {
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 #barra #b-sair {
   width: 58px;
@@ -1198,7 +1225,12 @@ input[type="checkbox"] {
   min-height: 0;
   aspect-ratio: auto;
 }
-#sala.sem-foco .tile video {
+#sala.sem-foco .tile .midia {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+#sala.sem-foco .tile video:not(.mini) {
   flex: 1;
   min-height: 0;
   height: 0;

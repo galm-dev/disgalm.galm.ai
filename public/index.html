@@ -575,12 +575,18 @@
         $('tira').append(el)
       }
 
-      // O tile é a PESSOA (câmera ou inicial); a tela compartilhada vai no palco.
-      const temVideo = d.cam?.getVideoTracks().length
+      // Como no Discord: a tela ocupa o tile e a câmera vira miniatura no canto.
+      // Sem tela, a câmera ocupa o tile; sem nenhuma das duas, a inicial.
+      const temTela = !!d.tela?.getVideoTracks().length
+      const temCam = !!d.cam?.getVideoTracks().length
+      const temVideo = temTela || temCam
       el.style.setProperty('--hue', corPessoa(d.nome))
       el.innerHTML =
-        (temVideo ? '<video autoplay playsinline muted></video>' : `<div class="semvideo"><span class="avatar">${textoHtml(inicial(d.nome))}</span></div>`) +
-        (d.tela?.getVideoTracks().length || temVideo ? `<button class="tile-maximize" title="Maximizar vídeo" aria-label="Maximizar vídeo">${svgIcon('maximize')}</button>` : '') +
+        (temTela ? '<div class="midia"><video class="v-tela" autoplay playsinline muted></video>' +
+            (temCam ? '<video class="v-cam mini" autoplay playsinline muted></video>' : '') + '</div>'
+          : temCam ? '<div class="midia"><video class="v-cam" autoplay playsinline muted></video></div>'
+          : `<div class="semvideo"><span class="avatar">${textoHtml(inicial(d.nome))}</span></div>`) +
+        (temVideo ? `<button class="tile-maximize" title="Maximizar vídeo" aria-label="Maximizar vídeo">${svgIcon('maximize')}</button>` : '') +
         `<div class="env"></div><div class="nome"><span>${textoHtml(d.nome)}${d.local ? ' <span class="muted">(você)</span>' : ''}</span><span class="badges">
            ${d.estado?.mudo ? ICONES.mudo : ''}
            ${d.estado?.surdo ? ICONES.surdo : ''}
@@ -593,7 +599,8 @@
          </div>`)
 
       atualizarParticipantes()
-      if (temVideo) el.querySelector('video').srcObject = d.cam
+      if (temTela) el.querySelector('.v-tela').srcObject = d.tela
+      if (temCam) el.querySelector('.v-cam').srcObject = d.cam
       el.classList.toggle('focado', foco === id)
       el.classList.toggle('eu', !!d.local)
 
@@ -1436,15 +1443,15 @@
       const t = micStream?.getAudioTracks()[0]
       if (!t) return
       t.enabled = !t.enabled
+      $('b-mic').classList.toggle('cortado', !t.enabled)
       controle('b-mic', t.enabled ? 'Silenciar microfone' : 'Ativar microfone')
-      $('b-mic').classList.toggle('on', !t.enabled)
       desenharTile('local')
       anunciar()
     }
 
     $('b-surdo').onclick = () => {
       surdo = !surdo
-      $('b-surdo').classList.toggle('on', surdo)
+      $('b-surdo').classList.toggle('cortado', surdo)
       controle('b-surdo', surdo ? 'Ativar áudio da sala' : 'Silenciar áudio da sala')
       for (const id of pares.keys()) aplicarVolumes(id)
       desenharTile('local')
@@ -1501,6 +1508,9 @@
     const UI_ICONS = {
       mic: '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/>',
       headphones: '<path d="M3 14v-3a9 9 0 0 1 18 0v3"/><rect x="3" y="12" width="4" height="8" rx="2"/><rect x="17" y="12" width="4" height="8" rx="2"/>',
+      // Versões riscadas, como no Discord: o traço diz "desligado" sem depender da cor.
+      'mic-off': '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/><path d="M3 3l18 18" stroke-width="2.4"/>',
+      'headphones-off': '<path d="M3 14v-3a9 9 0 0 1 18 0v3"/><rect x="3" y="12" width="4" height="8" rx="2"/><rect x="17" y="12" width="4" height="8" rx="2"/><path d="M3 3l18 18" stroke-width="2.4"/>',
       camera: '<rect x="2" y="5" width="13" height="14" rx="3"/><path d="m15 9 7-4v14l-7-4"/>',
       screen: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M12 13V7m-3 3 3-3 3 3"/>',
       settings: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="currentColor" stroke="none"/><circle cx="16" cy="17" r="3" fill="currentColor" stroke="none"/>',
@@ -1520,7 +1530,8 @@
     function controle(id, label) {
       const icons = {'b-mic':'mic','b-surdo':'headphones','b-cam':'camera','b-tela':'screen','b-settings':'settings','b-sair':'phone','b-pip':'pip','b-full':'full','b-maximize':'maximize'}
       const el = $(id)
-      el.innerHTML = svgIcon(icons[id]) + `<span class="sr">${textoHtml(label)}</span>`
+      const icone = el.classList.contains('cortado') ? `${icons[id]}-off` : icons[id]
+      el.innerHTML = svgIcon(icone) + `<span class="sr">${textoHtml(label)}</span>`
       el.title = label
       el.setAttribute('aria-label', label)
     }
