@@ -249,7 +249,6 @@
     </form>
   </dialog>
   <script src="/auth.js"></script>
-  <script src="/ruido.js"></script>
   <script>
     const $ = id => document.getElementById(id)
     // Cada linha leva a hora: sem ela, o relatório não diz se a queda veio antes
@@ -292,8 +291,6 @@
     }
 
     let ws, meuId, ice, micStream, telaStream, camStream
-    // mic = captura com o filtro de ruído (ruido.js); micStream é o que vai aos pares.
-    let mic = null
     let foco = null, surdo = false
     // conta = nome vindo do GALM; nome = o que aparece na sala (apelido ou conta).
     const perfil = { nome: '', foto: null, conta: '', email: '' }
@@ -336,27 +333,15 @@
       if (loop) $('loopdev').value = loop.deviceId
     }
 
-    async function abrirMic() {
-      const aberto = await disgalmRuido.abrir(undefined, e => log(`RNNoise indisponível (${e.name}: ${e.message}) — usando o filtro do navegador`))
-      log(`microfone: supressão de ruído ${aberto.modo}`)
-      return aberto
-    }
-
-    function pararMic() {
-      mic?.parar()
-      mic = null
-      micStream = null
-    }
-
     async function pegarMic() {
       try {
-        mic = await abrirMic()
-        micStream = mic.stream
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        })
         micStream.getAudioTracks()[0].enabled = !$('b-mic').classList.contains('cortado')
         $('b-mic').disabled = false
         medirFala('local', micStream)
       } catch (e) {
-        mic = null
         micStream = null
         log(`microfone indisponível (${e.name}) — entrando sem voz`)
         $('b-mic').disabled = true
@@ -1451,8 +1436,8 @@
       nomes.clear()
       pararTela()
       pararCam()
-      pararTesteMic()
-      pararMic()
+      for (const t of micStream?.getTracks() || []) t.stop()
+      micStream = null
       document.getElementById('t-local')?.remove()
       focar(null)
       $('connection-alert').hidden = true
