@@ -23,6 +23,8 @@
 //   aplicarEnvio(limites) → Promise   limites(fonte) → { maxBitrate, maxFramerate, degradacao } ou null.
 //   stats() → Promise<[{ pessoa, relatorio }]>   um RTCStatsReport por conexão.
 //   relatarUso()                      manda à telemetria o tráfego por relay desde o último relato.
+//   atualizarIce(servidores) → Promise<n>  credencial TURN nova (a anterior vence em minutos):
+//                                     troca a configuração e refaz o ICE de quem está no relay.
 //
 // Ganchos que a sala passa ao criar o transporte:
 //   meuId(), nome(id), ice(), soRelay(), sinalizar(para, data), sinalizacaoAberta(),
@@ -39,6 +41,7 @@
   const METODOS = [
     'entrar', 'pessoaEntrou', 'pessoaVoltou', 'pessoaSaiu', 'limparAusentes', 'sair', 'receberSinal', 'atualizarCatalogo',
     'publicar', 'substituir', 'parar', 'assinar', 'planejarEnvio', 'aplicarEnvio', 'stats', 'relatarUso',
+    'atualizarIce',
   ]
   const GANCHOS = [
     'meuId', 'nome', 'ice', 'soRelay', 'sinalizar', 'sinalizacaoAberta', 'log', 'telemetria',
@@ -62,5 +65,23 @@
     return app
   }
 
-  globalThis.disgalmTransporte = { METODOS, GANCHOS, validar, conferirGanchos }
+  // A credencial TURN vale poucos minutos. Quando ela vence, a Cloudflare para
+  // de cobrar e derruba a alocação logo depois; setConfiguration só vale para
+  // a próxima coleta de candidatos, então quem está no relay precisa refazer o
+  // ICE com a credencial nova antes disso.
+  // https://developers.cloudflare.com/realtime/turn/faq/
+  const temTurn = servidores => (servidores || []).some(s => [s.urls].flat().some(u => /^turns?:/.test(u)))
+  async function usaRelay(pc) {
+    let st
+    try { st = await pc.getStats() } catch { return false }
+    let par
+    st.forEach(r => { if (r.type === 'transport' && r.selectedCandidatePairId) par = st.get(r.selectedCandidatePairId) })
+    if (!par) st.forEach(r => { if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.nominated) par = r })
+    return st.get(par?.localCandidateId)?.candidateType === 'relay'
+  }
+  function trocarIce(pc, servidores) {
+    pc.setConfiguration({ ...pc.getConfiguration(), iceServers: servidores })
+  }
+
+  globalThis.disgalmTransporte = { METODOS, GANCHOS, validar, conferirGanchos, temTurn, usaRelay, trocarIce }
 })()

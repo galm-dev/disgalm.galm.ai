@@ -404,6 +404,7 @@
       conexaoMudou: () => limparAusentes(),
       amostrar: (id, pc, anteriores) => atualizarVideo(id, pc, anteriores),
       relayUsado: (id, p) => informarRelay(id, p),
+      aviso: codigo => avisar(codigo),
     }
     let transporte = criarTransporteMesh(ganchos)
     // Mapa id → conexão da malha, para o diagnóstico e o relatório. Vazio no
@@ -1614,6 +1615,7 @@
       for (const par of m.peers) naSala.add(par.id)
       atualizarSinalizacao(true)
       const trocou = escolherTransporte(m)
+      if (m.aviso) avisar(m.aviso)
       transporte.entrar(m.peers.map(par => ({ id: par.id, nome: par.name })), { retomada: retomada && !trocou })
       if (m.sfu) transporte.atualizarCatalogo(m.sfu)
       if (retomada) anunciar()
@@ -1656,16 +1658,70 @@
       }
     }
 
-    async function entrarNaSala(cod) {
+    // ---------- credencial TURN ----------
+    // A credencial TURN da Cloudflare vale 5 min (orçamento: bloqueio que vale
+    // em minutos). Um minuto antes de vencer, busca outra e o transporte troca
+    // a configuração; quem está no relay refaz o ICE. O Worker diz a validade e,
+    // se negou o relay, o motivo, em cabeçalhos: o corpo é a lista de sempre.
+    let renovacaoIce = null, falhasIce = 0
+    async function buscarIce(cod) {
       const guest = disgalmAuth.isGuest(cod)
       const token = guest ? null : await disgalmAuth.accessToken()
       const response = await fetch(`/ice?sala=${encodeURIComponent(cod)}`, {
         headers: token ? { authorization: `Bearer ${token}` } : {}, cache: 'no-store' })
       if (!response.ok) throw new Error(response.status === 401 ?
         'Acesso negado. Entre com GALM ou peça um novo convite.' : 'Não foi possível obter o relay.')
-      ice = await response.json()
+      const relay = response.headers?.get?.('x-disgalm-relay') || ''
+      return { lista: await response.json(), validade: Number(response.headers?.get?.('x-disgalm-ice-validade')) || 0,
+        negado: relay.startsWith('negado') ? relay.split(';')[1] || 'negado' : null }
+    }
+    function agendarIce(validadeS) {
+      clearTimeout(renovacaoIce)
+      if (sala && validadeS) renovacaoIce = setTimeout(renovarIce, Math.max(30, validadeS - 60) * 1000)
+    }
+    async function renovarIce() {
+      if (!sala) return
+      const cod = sala.cod
+      try {
+        const r = await buscarIce(cod)
+        if (sala?.cod !== cod) return
+        falhasIce = 0
+        ice = r.lista
+        const reiniciados = await transporte.atualizarIce(ice)
+        telemetria('ice_renovado', { validadeS: r.validade, comTurn: disgalmTransporte.temTurn(ice), reiniciados, negado: r.negado })
+        if (r.negado) avisar(r.negado === 'limite' ? 'relay_cota' : 'relay_medicao')
+        agendarIce(r.validade)
+      } catch (e) {
+        // Rede fora por um instante: tenta de novo algumas vezes, sem aviso.
+        telemetria('ice_renovacao_falhou', { erro: String(e.message).slice(0, 200), tentativa: ++falhasIce })
+        if (sala?.cod === cod && falhasIce < 10) renovacaoIce = setTimeout(renovarIce, 20_000)
+      }
+    }
+
+    // Avisos do orçamento: uma vez por sala, sem religar nada.
+    const AVISOS = {
+      sfu_cota: 'SFU indisponível: limite gratuito próximo; compartilhamento continua direto.',
+      sfu_cota_fonte: 'SFU indisponível: limite gratuito próximo; esta fonte não foi enviada.',
+      relay_cota: 'Relay indisponível: cota gratuita reservada; conexão direta será tentada.',
+      relay_medicao: 'Relay indisponível: medição da cota gratuita fora do ar; conexão direta será tentada.',
+    }
+    const avisosDaSala = new Set()
+    function avisar(codigo) {
+      if (!AVISOS[codigo] || avisosDaSala.has(codigo)) return
+      avisosDaSala.add(codigo)
+      $('ui-notice').textContent = AVISOS[codigo]
+      log(AVISOS[codigo])
+      telemetria('aviso_cota', { codigo })
+    }
+
+    async function entrarNaSala(cod) {
+      const guest = disgalmAuth.isGuest(cod)
+      const r = await buscarIce(cod)
+      ice = r.lista
       log('ICE:', ice.map(s => s.urls).flat().join(' '))
-      telemetria('ice_servidores', { urls: ice.map(s => s.urls).flat().join(' ') })
+      telemetria('ice_servidores', { urls: ice.map(s => s.urls).flat().join(' '), validadeS: r.validade, negado: r.negado })
+      avisosDaSala.clear()
+      if (r.negado) avisar(r.negado === 'limite' ? 'relay_cota' : 'relay_medicao')
       if (!micStream) await pegarMic()
       if (!entrarNaSala.dispositivos) {
         entrarNaSala.dispositivos = true
@@ -1677,6 +1733,7 @@
       $('sala').classList.add('ativa')
 
       sala = { cod, nome: perfil.nome || 'anon' }
+      agendarIce(r.validade)
       $('room-title').textContent = cod
       $('connection-room').textContent = cod + ' / Disgalm'
       $('b-invite').hidden = guest
@@ -1699,6 +1756,8 @@
       sala = null
       ws = null
       clearTimeout(religar)
+      clearTimeout(renovacaoIce)
+      falhasIce = 0
       try { s?.close(1000, 'saiu') } catch {}
       transporte.sair()
       meuId = null

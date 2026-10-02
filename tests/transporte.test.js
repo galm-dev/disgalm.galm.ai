@@ -185,3 +185,26 @@ test('oferta de instância nova do outro lado recria a conexão e avisa a sala',
   assert.ok(f.chamadas.some(c => c[0] === 'reconectada' && c[1] === 'bbbb0002'))
   assert.equal(f.sinais.at(-1).data.description.type, 'answer')
 })
+
+test('credencial TURN renovada: troca a configuração em todas, refaz o ICE só de quem está no relay', async () => {
+  const f = fixture()
+  f.t.entrar([{ id: 'bbbb0002', nome: 'B' }, { id: 'cccc0003', nome: 'C' }])
+  const [relay, direto] = PC.criadas
+  for (const [pc, tipo] of [[relay, 'relay'], [direto, 'srflx']]) {
+    pc.reinicios = 0
+    pc.restartIce = () => pc.reinicios++
+    pc.getConfiguration = () => ({ ...pc.cfg })
+    pc.setConfiguration = c => { pc.cfg = c }
+    pc.getStats = async () => new Map([
+      ['t', { id: 't', type: 'transport', selectedCandidatePairId: 'p' }],
+      ['p', { id: 'p', type: 'candidate-pair', localCandidateId: 'l' }],
+      ['l', { id: 'l', type: 'local-candidate', candidateType: tipo }]])
+  }
+  const novo = [{ urls: ['turn:turn.cloudflare.com:3478?transport=udp'], username: 'u2', credential: 'c2' }]
+  assert.equal(await f.t.atualizarIce(novo), 1)
+  for (const pc of [relay, direto]) assert.equal(pc.cfg.iceServers[0].username, 'u2')
+  assert.deepEqual([relay.reinicios, direto.reinicios], [1, 0])
+  // Orçamento negou o relay: troca a lista, mas refazer o ICE não acharia relay.
+  assert.equal(await f.t.atualizarIce([{ urls: 'stun:stun.cloudflare.com:3478' }]), 0)
+  assert.equal(relay.reinicios, 1)
+})

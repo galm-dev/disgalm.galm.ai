@@ -342,3 +342,64 @@ test('welcome escolhe o transporte: SFU só quando o servidor manda, e cliente a
   f.chega({ t: 'cheia', motivo: 'versao' })
   assert.match(f.$('ui-notice').textContent, /versão nova/)
 })
+
+test('credencial TURN renova um minuto antes de vencer; relay negado avisa uma vez e não insiste', async () => {
+  const f = fixture()
+  f.entrar('aaaa0001', [{ id: 'bbbb0002', name: 'B' }])
+  const respostas = [], pedidos = []
+  f.state.fetch = async (url, init) => {
+    pedidos.push({ url, auth: init.headers.authorization })
+    const r = respostas.shift()
+    if (r instanceof Error) throw r
+    return { ok: true, json: async () => r.lista, headers: { get: n => r.cabecalhos[n] ?? null } }
+  }
+  const atualizadas = []
+  f.run('transporte').atualizarIce = async lista => { atualizadas.push(lista); return 1 }
+  const turn = [{ urls: ['turn:turn.cloudflare.com:3478?transport=udp'], username: 'u', credential: 'c' }]
+  const ultimoTimer = () => f.timers.at(-1)
+
+  f.run('agendarIce(300)')
+  assert.equal(ultimoTimer().ms, 240_000)
+  respostas.push({ lista: turn, cabecalhos: { 'x-disgalm-ice-validade': '300' } })
+  await ultimoTimer().f()
+  assert.deepEqual(pedidos.at(-1), { url: '/ice?sala=galm', auth: 'Bearer teste' })
+  assert.equal(f.run('ice'), turn)
+  assert.deepEqual(atualizadas, [turn])
+  assert.equal(ultimoTimer().ms, 240_000)
+
+  // Rede fora: tenta de novo em 20 s, sem aviso.
+  respostas.push(new Error('offline'))
+  await ultimoTimer().f()
+  assert.equal(ultimoTimer().ms, 20_000)
+  assert.equal(f.$('ui-notice').textContent, '')
+
+  // Orçamento negou: STUN só, aviso uma vez, próxima consulta em 9 min.
+  const stun = [{ urls: 'stun:stun.cloudflare.com:3478' }]
+  for (let i = 0; i < 2; i++) {
+    respostas.push({ lista: stun, cabecalhos: { 'x-disgalm-ice-validade': '600', 'x-disgalm-relay': 'negado;limite' } })
+    await ultimoTimer().f()
+    assert.equal(ultimoTimer().ms, 540_000)
+  }
+  assert.match(f.$('ui-notice').textContent, /^Relay indisponível: cota gratuita reservada/)
+  const fila = JSON.parse(f.run('JSON.stringify(filaTelemetria)'))
+  assert.equal(fila.filter(e => e.evento === 'aviso_cota').length, 1)
+  assert.deepEqual(fila.filter(e => e.evento === 'ice_renovado').map(e => [e.comTurn, e.negado]),
+    [[true, null], [false, 'limite'], [false, 'limite']])
+  assert.ok(fila.some(e => e.evento === 'ice_renovacao_falhou'))
+  assert.doesNotMatch(JSON.stringify(fila), /"u"|credential|"c"/)
+
+  // Saiu da sala: renovação pendente não roda.
+  f.run('sala = null')
+  const antes = pedidos.length
+  await ultimoTimer().f()
+  assert.equal(pedidos.length, antes)
+})
+
+test('welcome com aviso de cota mostra o recado do SFU', () => {
+  const f = fixture()
+  f.run('conectar()')
+  f.abrir()
+  f.chega({ t: 'welcome', id: 'aaaa0001', peers: [], protocolo: 1, modo: 'mesh', aviso: 'sfu_cota' })
+  assert.equal(f.run('transporte.nome'), 'mesh')
+  assert.equal(f.$('ui-notice').textContent, 'SFU indisponível: limite gratuito próximo; compartilhamento continua direto.')
+})

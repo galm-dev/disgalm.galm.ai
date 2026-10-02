@@ -352,6 +352,22 @@
       stats: () => Promise.all([...pares].map(async ([id, p]) => ({ pessoa: id, relatorio: await p.pc.getStats() }))),
 
       relatarUso() { for (const [id, p] of pares) app.relayUsado(id, p) },
+
+      // Sem TURN na lista nova (orçamento negou), refazer o ICE não acha relay:
+      // a conexão segue até a alocação cair, e a falha cuida do resto.
+      async atualizarIce(servidores) {
+        const comTurn = disgalmTransporte.temTurn(servidores)
+        let reiniciados = 0
+        for (const [id, p] of pares) {
+          try { disgalmTransporte.trocarIce(p.pc, servidores) } catch (e) { log(`setConfiguration: ${e.message}`); continue }
+          if (comTurn && !morto(p.pc) && await disgalmTransporte.usaRelay(p.pc)) {
+            log(`credencial TURN renovada: refazendo o ICE com ${app.nome(id)}`)
+            p.pc.restartIce()
+            reiniciados++
+          }
+        }
+        return reiniciados
+      },
     }
     return disgalmTransporte.validar(transporte)
   }

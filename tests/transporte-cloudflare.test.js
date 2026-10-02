@@ -401,3 +401,29 @@ test('sair fecha a conexão e avisa a saída de cada pessoa', async () => {
   assert.deepEqual(b.saidas.map(s => s[0]), ['aaaa0001'])
   assert.deepEqual(estado(b), { sessao: null, versao: 0, publicadas: [], assinadas: [] })
 })
+
+test('credencial TURN renovada: só quem chega ao SFU pelo relay refaz a sessão', async () => {
+  const sala = criarSala()
+  const a = cliente(sala, 'aaaa0001', { relay: true }), b = cliente(sala, 'bbbb0002')
+  a.mic(); a.entrar(); b.entrar()
+  await sala.ocioso()
+  for (const [c, tipo] of [[a, 'relay'], [b, 'host']]) {
+    const pc = c.pc()
+    pc.getConfiguration = () => ({ ...pc.cfg })
+    pc.setConfiguration = cfg => { pc.cfg = cfg }
+    pc.getStats = async () => new Map([['p', { type: 'candidate-pair', state: 'succeeded', nominated: true, localCandidateId: 'l' }],
+      ['l', { type: 'local-candidate', candidateType: tipo }]])
+  }
+  const novo = [{ urls: ['turns:turn.cloudflare.com:443?transport=tcp'], username: 'u2', credential: 'c2' }]
+  const sessaoA = estado(a).sessao
+  assert.equal(await b.t.atualizarIce(novo), 0)
+  assert.equal(b.pc().cfg.iceServers[0].username, 'u2')
+  assert.equal(await a.t.atualizarIce(novo), 1)
+  await sala.ocioso()
+  // Sessão nova, a velha encerrada, a fonte publicada de novo, e B continua recebendo.
+  assert.equal(a.pcs.length, 2)
+  assert.notEqual(estado(a).sessao, sessaoA)
+  assert.ok(a.pedidos.some(p => p.op === 'encerrar' && p.sessao === sessaoA))
+  assert.deepEqual(estado(a).publicadas, ['mic-1'])
+  assert.deepEqual(estado(b).assinadas.map(s => s.fonte), ['mic-1'])
+})

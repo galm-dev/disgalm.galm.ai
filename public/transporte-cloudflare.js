@@ -49,6 +49,8 @@
     function enfileirar(nome, fn) {
       const minha = tentativa
       fila = fila.then(() => minha === tentativa ? fn() : undefined).catch(e => {
+        // Orçamento negou: a sala avisa uma vez; a fonte fica sem ir.
+        if (e.status === 503) app.aviso?.('sfu_cota_fonte')
         log(`sfu ${nome}: ${e.message}`)
         telemetria('sfu_erro', { op: nome, erro: String(e.message).slice(0, 200), status: e.status ?? null })
       })
@@ -398,6 +400,16 @@
       stats: async () => pc ? [{ pessoa: 'sfu', relatorio: await pc.getStats() }] : [],
 
       relatarUso() { for (const mid of bytes.keys()) relatar(mid) },
+
+      // A API do SFU não documenta ICE restart. Quem chega ao SFU pelo relay
+      // refaz a sessão com a credencial nova; quem vai direto só troca a lista.
+      async atualizarIce(servidores) {
+        if (!pc) return 0
+        try { disgalmTransporte.trocarIce(pc, servidores) } catch (e) { log(`setConfiguration: ${e.message}`); return 0 }
+        if (!disgalmTransporte.temTurn(servidores) || !await disgalmTransporte.usaRelay(pc)) return 0
+        reconstruir('credencial')
+        return 1
+      },
 
       // Para os testes e o diagnóstico: o que está publicado e assinado.
       estado: () => ({ sessao, versao, publicadas: [...pubs.keys()],
