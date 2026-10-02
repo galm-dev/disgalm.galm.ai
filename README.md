@@ -82,6 +82,20 @@ Quem assiste escolhe no palco qual tela ver, por pessoa. Todas as telas vão a
 todos os pares e dividem o teto de bitrate da tela. Recapturar refaz só a
 primeira. Um cliente de versão anterior vê só a primeira ou as duas primeiras.
 
+## Captura, pessoas e transporte
+
+O cliente continua sem bundler: o `index.html` carrega scripts clássicos, na
+ordem. `public/fontes.js` guarda o que a aba publica como fontes lógicas (`mic`,
+`camera`, `tela-video`, `tela-audio`), com id, dono e geração. Vídeo e áudio
+da mesma tela levam o mesmo id de tela, e recapturar sobe a geração sem mudar o
+id. `public/transporte.js` descreve o contrato do transporte, e
+`public/transporte-mesh.js` o implementa com uma `RTCPeerConnection` por
+pessoa: criação, negociação perfeita, Opus estéreo, canal `telemetria` e
+remoção. O `index.html` fica com a captura, a sinalização, as pessoas (o mapa
+`pessoas`, separado do mapa de conexões `pares`) e o diagnóstico. O anúncio de
+estado leva o catálogo de fontes em `fontes`; clientes anteriores ignoram o
+campo. Roteiro de regressão em `tests/transporte.md`.
+
 ## Diagnóstico
 
 As estatísticas de vídeo por participante (resolução, bitrate, limitação) só
