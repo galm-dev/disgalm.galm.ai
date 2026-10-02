@@ -283,6 +283,45 @@
       $('log').scrollTop = 1e9
     }
 
+    // ---------- telemetria remota ----------
+    // O log acima só existe na aba de quem está com o problema. Estes eventos vão
+    // ao Worker (/telemetria), que repassa ao Better Stack. Sem nome, email, IP,
+    // SDP nem credencial: pares aparecem pelo id de conexão da sala.
+    const NAVEGADOR = (() => {
+      const nav = globalThis.navigator, ua = nav?.userAgent || ''
+      const nome = nav?.brave ? 'Brave' : /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera'
+        : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'outro'
+      const versao = ua.match(/(?:Firefox|Chrome|Version)\/(\d+)/)?.[1] ?? '?'
+      const so = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows'
+        : /Mac OS/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'outro'
+      return `${nome} ${versao} ${so}`
+    })()
+    const filaTelemetria = []
+    function telemetria(evento, campos = {}) {
+      const rede = globalThis.navigator?.connection
+      filaTelemetria.push({ dt: new Date().toISOString(), evento, eu: meuId ?? null, nav: NAVEGADOR,
+        rede: rede?.type ?? rede?.effectiveType ?? null, ...campos })
+      if (filaTelemetria.length > 300) filaTelemetria.splice(0, filaTelemetria.length - 300)
+      if (filaTelemetria.length >= 50) enviarTelemetria()
+    }
+    // saindo: a página está fechando e não dá tempo de renovar o token.
+    async function enviarTelemetria(saindo) {
+      if (!filaTelemetria.length || !sala || typeof fetch !== 'function') return
+      const cod = sala.cod
+      const lote = filaTelemetria.splice(0, 100)
+      let token = null
+      try {
+        if (!disgalmAuth.isGuest(cod))
+          token = saindo ? disgalmAuth.currentToken() : await disgalmAuth.accessToken()
+      } catch {}
+      fetch(`/telemetria?sala=${encodeURIComponent(cod)}`, {
+        method: 'POST', keepalive: true, body: JSON.stringify({ eventos: lote }),
+        headers: { 'content-type': 'application/json', ...(token && { authorization: `Bearer ${token}` }) },
+      }).catch(() => {})
+    }
+    setInterval(() => enviarTelemetria(), 10_000)
+    addEventListener('pagehide', () => enviarTelemetria(true))
+
     // Presets de qualidade da própria tela. O bitrate ANDA JUNTO com resolução e
     // fps de propósito: 4K60 num teto de 2,5 Mbps fica pior que 1080p30, porque o
     // encoder gasta os bits espalhando-os por 4x mais pixels e 2x mais quadros.
@@ -533,6 +572,7 @@
       if (cfg.deviceId) $('camdev').value = cfg.deviceId
       ladoCam = cfg.facingMode || ladoCam
       $('b-virar').hidden = !cfg.facingMode || $('camdev').options.length < 2
+      telemetria('camera', { ligada: true, lado: cfg.facingMode ?? null, res: `${cfg.width}x${cfg.height}`, pares: pares.size })
       desenharTile('local')
       anunciar()
       aplicarQualidade()
@@ -546,6 +586,7 @@
           if (sd.track && ts.includes(sd.track)) p.pc.removeTrack(sd)
       for (const t of ts) t.stop()
       camStream = null
+      telemetria('camera', { ligada: false })
       $('b-cam').classList.replace('on', 'cortado')
       controle('b-cam', 'Ligar câmera')
       $('b-virar').hidden = true
@@ -968,6 +1009,11 @@
         if (s.getVideoTracks().length) telasNovas.set(sid, s)
       }
       p.telas = telasNovas
+      // Só mudanças: o que chegou (streamIds) contra o que o par anunciou.
+      const resumo = { par: id, anunciou: sabemos, camAnunciada: !!e.idCam, telasAnunciadas: ids.length,
+        videosRecebidos: p.videos.size, cam: cam.length > 0, telas: telasNovas.size }
+      const chave = JSON.stringify(resumo)
+      if (chave !== p.resumoVideo) { p.resumoVideo = chave; telemetria('video_classificado', resumo) }
       desenharTile(id)
       if (foco === id) focar(id)
     }
@@ -989,7 +1035,7 @@
       const el = document.createElement('audio')
       el.autoplay = true
       el.srcObject = new MediaStream([track])   // uma track por elemento: ver PLANO-POC.md
-      el.play?.().catch(e => log(`autoplay bloqueado (${e.name}) — clique na página`))
+      el.play?.().catch(e => { log(`autoplay bloqueado (${e.name}) — clique na página`); telemetria('autoplay_bloqueado', { par: id }) })
       p.audios.set(streamId, { el, tipo: 'voz', track })
       track.addEventListener('ended', () => { el.remove(); p.audios.delete(streamId); })
       classificar(id)
@@ -1065,6 +1111,8 @@
                   audios: new Map(), volumes: { voz: 1, tela: 1 }, estado: {},
                   amostras: [], relato: null }
       pares.set(id, p)
+      telemetria('par_criado', { par: id, polite, soRelay: $('sorelay').checked,
+        enviaCam: !!camStream, enviaTelas: telas.length, enviaMic: !!micStream })
       desenharTile(id)
 
       // Quem recebe a imagem ruim não sabe por que o emissor degradou; quem envia
@@ -1084,6 +1132,8 @@
       pc.ontrack = e => {
         const sid = e.streams[0]?.id || 'sem-stream'
         log(`track ${e.track.kind} de ${nome}`)
+        telemetria('track', { par: id, tipo: e.track.kind, temStream: !!e.streams[0],
+          eCam: sid === p.estado?.idCam, mudo: e.track.muted })
         if (e.track.kind === 'audio') return receberAudio(id, e.track, sid)
 
         p.videos.set(sid, e.track)
@@ -1094,17 +1144,24 @@
 
       const tipos = new Set()
       pc.onicecandidate = e => {
-        if (!e.candidate) return log(`candidatos de ${nome}: ${[...tipos].join(', ') || 'NENHUM'}`)
+        if (!e.candidate) {
+          telemetria('candidatos_locais', { par: id, tipos: [...tipos].join(',') || 'nenhum' })
+          return log(`candidatos de ${nome}: ${[...tipos].join(', ') || 'NENHUM'}`)
+        }
         if (!tipos.has(e.candidate.type)) {
           tipos.add(e.candidate.type)
           log(`candidato ${e.candidate.type}/${e.candidate.protocol} para ${nome}`)
         }
         sinalizar(id, { candidate: e.candidate })
       }
-      pc.onicecandidateerror = e => log(`ICE erro ${e.errorCode} em ${e.url} — ${e.errorText}`)
+      pc.onicecandidateerror = e => {
+        log(`ICE erro ${e.errorCode} em ${e.url} — ${e.errorText}`)
+        telemetria('ice_erro', { par: id, codigo: e.errorCode, url: e.url, texto: e.errorText })
+      }
 
       pc.oniceconnectionstatechange = () => {
         log(`${nome}: ${pc.iceConnectionState}`)
+        telemetria('ice', { par: id, estado: pc.iceConnectionState })
         if (pc.iceConnectionState === 'connected') { tipoDeCaminho(id, pc); acompanharVideo(id, pc) }
         if (pc.iceConnectionState === 'failed') {
           porQueFalhou(id, pc)
@@ -1114,6 +1171,7 @@
       }
       pc.onconnectionstatechange = () => {
         log(`${nome}: conexão ${pc.connectionState}`)
+        telemetria('conexao', { par: id, estado: pc.connectionState })
         if (pares.get(id)?.pc === pc) limparAusentes()
       }
 
@@ -1122,7 +1180,7 @@
           p.fazendoOferta = true
           await definirLocal(pc)
           sinalizar(id, { description: pc.localDescription })
-        } catch (e) { log('negotiationneeded:', e.message) }
+        } catch (e) { log('negotiationneeded:', e.message); telemetria('negociacao_erro', { par: id, erro: e.message }) }
         finally { p.fazendoOferta = false }
       }
       return p
@@ -1139,6 +1197,8 @@
       // endereço do candidato relay é o do servidor que alocou.
       const quem = l?.candidateType === 'relay' ? ` via ${l.address}` : ''
       log(`caminho com ${pares.get(id)?.nome}: ${via}${quem} — ${l?.candidateType}/${r?.candidateType}`)
+      telemetria('caminho', { par: id, local: l?.candidateType, protocolo: l?.relayProtocol ?? l?.protocol,
+        remoto: r?.candidateType, relay: l?.candidateType === 'relay' ? l.url ?? null : null })
     }
 
     async function porQueFalhou(id, pc) {
@@ -1151,6 +1211,9 @@
         const l = cand.get(r.localCandidateId), rm = cand.get(r.remoteCandidateId)
         linhas.push(`  ${l?.candidateType}/${l?.protocol} → ${rm?.candidateType}: ${r.state}`)
       })
+      const remotos = new Set([...cand.values()].filter(c => c.type === 'remote-candidate').map(c => c.candidateType))
+      telemetria('ice_falhou', { par: id, pares: linhas.map(l => l.trim()).slice(0, 30),
+        candidatosRemotos: [...remotos].join(',') || 'nenhum' })
       log(`por que falhou com ${pares.get(id)?.nome}:\n${linhas.join('\n') || '  nenhum par formado'}`)
     }
 
@@ -1270,7 +1333,7 @@
     }
 
     // Só transições entram no log; o resto fica nas amostras.
-    function registrarMudancas(p, a) {
+    function registrarMudancas(id, p, a) {
       const caminho = a.transporte?.caminho
       if (caminho && caminho !== p.caminho) log(`caminho com ${p.nome}: ${caminho}`)
       p.caminho = caminho ?? p.caminho
@@ -1280,6 +1343,11 @@
             `${a.envio.res} ${a.envio.fps ?? '?'}fps, estimativa ${a.transporte?.bweKbps ?? '?'}kbps`)
       p.limite = limite ?? p.limite
       if (a.causa && a.causa !== p.causa) log(`vídeo de ${p.nome}: ${a.causa}`)
+      const resumo = JSON.stringify([a.envio?.limite, a.envio?.res, a.recebe?.res, !!a.recebe, !!a.envio, caminho])
+      if (resumo !== p.resumoEnvio) {
+        p.resumoEnvio = resumo
+        telemetria('video', { par: id, envio: a.envio, recebe: a.recebe, transporte: a.transporte, config: a.config })
+      }
       p.causa = a.causa
     }
 
@@ -1328,7 +1396,7 @@
       if (p.amostras.length > MAX_AMOSTRAS) p.amostras.shift()
       if (p.canal?.readyState === 'open')
         p.canal.send(JSON.stringify({ envio: a.envio, transporte: a.transporte, config: a.config }))
-      registrarMudancas(p, a)
+      registrarMudancas(id, p, a)
 
       const env = document.querySelector(`#t-${id} .env`)
       if (env) {
@@ -1406,6 +1474,7 @@
       // queda, ou achou a nossa morta). A nossa não tem mais par; recria e aceita.
       if (data.de && data.description?.type === 'offer' && (!p || (p.remota && p.remota !== data.de))) {
         log(`${nomes.get(id) ?? id} recriou a conexão — recriando a nossa`)
+        telemetria('par_recriado', { par: id })
         removerPar(id)
         p = criarPar(id, nomes.get(id) ?? '?')
         anunciar(id)
@@ -1421,7 +1490,10 @@
         if (data.description) {
           const colisao = data.description.type === 'offer' && (p.fazendoOferta || pc.signalingState !== 'stable')
           p.ignorandoOferta = !p.polite && colisao
-          if (p.ignorandoOferta) return log(`oferta ignorada de ${p.nome} (impolite)`)
+          if (p.ignorandoOferta) {
+            telemetria('oferta_ignorada', { par: id })
+            return log(`oferta ignorada de ${p.nome} (impolite)`)
+          }
           await pc.setRemoteDescription(data.description)
           if (data.description.type === 'offer') {
             await definirLocal(pc)
@@ -1430,7 +1502,7 @@
         } else if (data.candidate) {
           try { await pc.addIceCandidate(data.candidate) } catch (e) { if (!p.ignorandoOferta) throw e }
         }
-      } catch (e) { log('sinal:', e.message) }
+      } catch (e) { log('sinal:', e.message); telemetria('sinal_erro', { par: id, erro: e.message }) }
     }
 
     // ---------- sinalização ----------
@@ -1468,6 +1540,7 @@
     }
 
     function sinalizacaoFechada(ev) {
+      telemetria('sinalizacao_fechou', { codigo: ev.code, motivo: ev.reason || null })
       log(`${new Date().toISOString()} sinalização fechou: código=${ev.code}; ` +
           `motivo=${ev.reason || '(não informado)'}; fechamento completo=${ev.wasClean}`)
       for (const [, p] of pares)
@@ -1638,6 +1711,7 @@
         'Acesso negado. Entre com GALM ou peça um novo convite.' : 'Não foi possível obter o relay.')
       ice = await response.json()
       log('ICE:', ice.map(s => s.urls).flat().join(' '))
+      telemetria('ice_servidores', { urls: ice.map(s => s.urls).flat().join(' ') })
       if (!micStream) await pegarMic()
       if (!entrarNaSala.dispositivos) {
         entrarNaSala.dispositivos = true
@@ -1662,6 +1736,8 @@
     // o microfone é liberado até a próxima entrada.
     function sairDaSala() {
       if (!sala) return
+      telemetria('saiu_da_sala')
+      enviarTelemetria()
       const s = ws
       sala = null
       ws = null
@@ -1805,8 +1881,11 @@
 
     // ---------- controles ----------
 
-    addEventListener('unhandledrejection', e => log('ERRO não tratado:', e.reason?.message || e.reason))
-    addEventListener('error', e => log('ERRO:', e.message))
+    addEventListener('unhandledrejection', e => {
+      log('ERRO não tratado:', e.reason?.message || e.reason)
+      telemetria('erro', { erro: String(e.reason?.message || e.reason) })
+    })
+    addEventListener('error', e => { log('ERRO:', e.message); telemetria('erro', { erro: e.message }) })
 
     const lerLocal = chave => {
       try { return localStorage.getItem(chave) || '' }
@@ -1880,12 +1959,12 @@
       if (!camStream) return
       const lado = ladoCam === 'environment' ? 'user' : 'environment'
       pararCam()
-      await alternarCam(lado).catch(e => log(`câmera — ${e.name}: ${e.message}`))
+      await alternarCam(lado).catch(e => { log(`câmera — ${e.name}: ${e.message}`); telemetria('camera_erro', { erro: e.name }) })
     }
 
     $('b-cam').onclick = async () => {
       const ligada = !!camStream
-      await alternarCam().catch(e => log(`câmera — ${e.name}: ${e.message}`))
+      await alternarCam().catch(e => { log(`câmera — ${e.name}: ${e.message}`); telemetria('camera_erro', { erro: e.name }) })
       if (!!camStream !== ligada) bip(camStream ? SONS.camLigada : SONS.camDesligada, 'triangle')
     }
 
@@ -1893,7 +1972,7 @@
     $('camdev').onchange = async () => {
       if (!camStream) return
       pararCam()
-      await alternarCam().catch(e => log(`câmera — ${e.name}: ${e.message}`))
+      await alternarCam().catch(e => { log(`câmera — ${e.name}: ${e.message}`); telemetria('camera_erro', { erro: e.name }) })
     }
 
     // Barulhinhos de mute/surdo sintetizados na hora: dois tons curtos, descendo

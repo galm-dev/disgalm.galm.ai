@@ -164,3 +164,46 @@ test('sessão persistente guarda o refresh só em cookie HttpOnly e o logout rev
     globalThis.fetch = originalFetch
   }
 })
+
+test('telemetria exige membro e origem, limpa o lote e repassa ao Better Stack com a sala e o sub', async () => {
+  const originalFetch = globalThis.fetch
+  const enviados = [], pendentes = []
+  globalThis.fetch = async (url, init) => {
+    if (String(url).startsWith('https://logs.example')) { enviados.push({ url: String(url), init }); return new Response(null, { status: 202 }) }
+    return Response.json({ keys: [jwk] })
+  }
+  const originalLog = console.log
+  console.log = () => {}
+  try {
+    const env = { BETTERSTACK_TOKEN: 'segredo', BETTERSTACK_HOST: 'logs.example',
+      SALA: { idFromName: name => name, get: () => ({ fetch: () => new Response('não', { status: 401 }) }) } }
+    const ctx = { waitUntil: p => pendentes.push(p) }
+    const valid = await token()
+    const root = 'https://disgalm.galm.ai'
+    const post = (corpo, { origin = root, auth = valid, sala = 'galm' } = {}) =>
+      worker.fetch(new Request(`${root}/telemetria?sala=${sala}`, { method: 'POST',
+        headers: { Origin: origin, 'content-type': 'application/json', ...(auth && { authorization: `Bearer ${auth}` }) },
+        body: typeof corpo === 'string' ? corpo : JSON.stringify(corpo) }), env, ctx)
+    const lote = { eventos: [{ evento: 'ice', par: 'bbbb0002', estado: 'failed', sala: 'outra', sub: 'falso',
+      detalhe: { a: 1 } }, { sem: 'evento' }] }
+    assert.equal((await post(lote, { origin: 'https://evil.example' })).status, 403)
+    assert.equal((await post(lote, { auth: null })).status, 401)
+    assert.equal((await post('não é json')).status, 400)
+    assert.equal((await post({ eventos: [] }, { sala: '' })).status, 400)
+    assert.equal((await post('x'.repeat(70 * 1024))).status, 413)
+    assert.equal((await post(lote)).status, 204)
+    await Promise.all(pendentes)
+    assert.equal(enviados.length, 1)
+    assert.equal(enviados[0].url, 'https://logs.example')
+    assert.equal(enviados[0].init.headers.authorization, 'Bearer segredo')
+    const [linha, ...resto] = JSON.parse(enviados[0].init.body)
+    assert.equal(resto.length, 0)
+    assert.equal(linha.evento, 'ice')
+    assert.equal(linha.message, 'ice')
+    assert.equal(linha.origem, 'navegador')
+    assert.equal(linha.sala, 'galm')
+    assert.equal(linha.sub, 'person-1')
+    assert.equal(linha.papel, 'member')
+    assert.equal(linha.detalhe, '{"a":1}')
+  } finally { globalThis.fetch = originalFetch; console.log = originalLog }
+})

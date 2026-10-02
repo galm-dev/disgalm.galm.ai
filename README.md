@@ -82,6 +82,26 @@ Quem assiste escolhe no palco qual tela ver, por pessoa. Todas as telas vão a
 todos os pares e dividem o teto de bitrate da tela. Recapturar refaz só a
 primeira. Um cliente de versão anterior vê só a primeira ou as duas primeiras.
 
+## Diagnóstico
+
+As estatísticas de vídeo por participante (resolução, bitrate, limitação) só
+aparecem com **Ajustes → Mostrar estatísticas de vídeo nos participantes**.
+
+Cada navegador manda eventos das próprias conexões a `POST /telemetria`, a cada
+10 s e ao sair: servidores ICE, tipos de candidato, estados de ICE e conexão,
+caminho escolhido, pares de candidatos na falha, tracks recebidas e sua
+classificação, transições de qualidade, erros de câmera e de negociação. O
+Worker exige membro GALM ou convidado da sala e a origem própria. Ele limita o
+lote a 100 eventos e 64 KiB e acrescenta sala, papel e `sub`. Os logs do Worker
+(TURN da Cloudflare e entrada e saída na sala) seguem o mesmo caminho. Na
+entrada, cada par existente leva `mesmoIpPublico`: o Durable Object compara
+hashes com sal do `CF-Connecting-IP` e nunca loga o IP. Os eventos não levam
+nome, email, IP, SDP nem credencial; os pares aparecem pelo id de conexão.
+
+Tudo vai ao `console.log` do Worker. Com os secrets `BETTERSTACK_TOKEN` e
+`BETTERSTACK_HOST`, também vai ao Better Stack. O plano gratuito do Workers não
+tem Logpush, então o próprio Worker faz o envio.
+
 ## Operação
 
 ```sh

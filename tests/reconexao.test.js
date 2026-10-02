@@ -261,3 +261,16 @@ test('sair da sala fecha a sinalização como saída de verdade, sem religar', (
   assert.equal(f.timers.length, n)
   assert.equal(f.$('connection-alert').hidden, true)
 })
+
+test('telemetria identifica pares pelo id, nunca pelo nome', () => {
+  const f = fixture()
+  f.run("perfil.nome = 'Fulana'")
+  f.entrar('aaaa0001', [{ id: 'bbbb0002', name: 'Beltrana' }])
+  f.chega({ t: 'peer-join', id: 'cccc0003', name: 'Ciclana' })
+  const eventos = JSON.parse(f.run('JSON.stringify(filaTelemetria)'))
+  const criados = eventos.filter(e => e.evento === 'par_criado').map(e => e.par)
+  assert.deepEqual(criados, ['bbbb0002', 'cccc0003'])
+  assert.equal(eventos.at(-1).eu, 'aaaa0001')
+  const texto = JSON.stringify(eventos)
+  for (const nome of ['Fulana', 'Beltrana', 'Ciclana']) assert.ok(!texto.includes(nome), nome)
+})

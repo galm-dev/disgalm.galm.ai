@@ -18,7 +18,7 @@ function fixture(storage = new Map()) {
     getItem(key) { return storage.get(key) ?? null },
     setItem(key, value) { storage.set(key, String(value)) },
   }
-  const state = { document: {getElementById:get}, addEventListener() {}, localStorage, URL }
+  const state = { document: {getElementById:get}, addEventListener() {}, setInterval() {}, localStorage, URL }
   runInNewContext(script, state)
   return { get, state, execute: code => runInNewContext(code, state) }
 }
