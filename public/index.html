@@ -1197,7 +1197,23 @@
         if (pares.get(id)?.pc === pc) limparAusentes()
       }
 
+      // A primeira oferta é sempre do impolite. Se as duas pontas oferecem juntas
+      // e a polite tem mais mídia (câmera ligada, a outra não), o Chromium falha
+      // ao responder depois do rollback ("Failed to start SCTP transport") e a
+      // conexão nunca sai de 'new'. Era o caso de dois celulares. O evento volta
+      // a disparar quando a resposta deixa a conexão estável. Se a polite recriou
+      // a conexão sozinha (retomada com a antiga morta), ninguém mais oferece:
+      // depois de 3 s sem oferta, ela oferece como antes.
       pc.onnegotiationneeded = async () => {
+        if (polite && !pc.remoteDescription) {
+          if (!p.esperandoOferta) p.esperandoOferta = setTimeout(() => {
+            if (pares.get(id) === p && !pc.remoteDescription && pc.signalingState === 'stable') negociar()
+          }, 3000)
+          return
+        }
+        return negociar()
+      }
+      const negociar = async () => {
         try {
           p.fazendoOferta = true
           await definirLocal(pc)

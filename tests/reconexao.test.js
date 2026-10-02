@@ -16,7 +16,7 @@ class PC {
   getSenders() { return [] }
   close() { this.connectionState = 'closed' }
   restartIce() { this.reinicios++ }
-  async setRemoteDescription(d) { this.remotas.push(d); this.signalingState = d.type === 'offer' ? 'have-remote-offer' : 'stable' }
+  async setRemoteDescription(d) { this.remotas.push(d); this.remoteDescription = d; this.signalingState = d.type === 'offer' ? 'have-remote-offer' : 'stable' }
   async createOffer() { return { type: 'offer', sdp: '' } }
   async createAnswer() { return { type: 'answer', sdp: '' } }
   async setLocalDescription(d) { this.localDescription = d; this.signalingState = d.type === 'offer' ? 'have-local-offer' : 'stable' }
@@ -67,6 +67,8 @@ test('reconexão pede o mesmo id e a mesma aba; retomada mantém a conexão e re
   const primeira = f.ws()
   assert.equal(primeira.url.searchParams.get('aba'), 'aba-1')
   assert.equal(primeira.url.searchParams.has('id'), false)
+  // Renegociação: a primeira troca já aconteceu, então a polite também oferece.
+  f.run("pares.get('bbbb0002').pc.remoteDescription = { type: 'answer' }")
   await f.run("pares.get('bbbb0002').pc.onnegotiationneeded()")
   const par = f.run("pares.get('bbbb0002')")
   assert.equal(par.pc.signalingState, 'have-local-offer')
@@ -139,6 +141,8 @@ test('quem volta com o mesmo id recebe a oferta pendente de novo', async () => {
   const f = fixture()
   f.entrar('aaaa0001')
   f.chega({ t: 'peer-join', id: 'bbbb0002', name: 'B' })
+  // Renegociação: a primeira troca já aconteceu, então a polite também oferece.
+  f.run("pares.get('bbbb0002').pc.remoteDescription = { type: 'answer' }")
   await f.run("pares.get('bbbb0002').pc.onnegotiationneeded()")
   const antes = f.sinais('bbbb0002').filter(d => d.description).length
   f.chega({ t: 'peer-back', id: 'bbbb0002', name: 'B' })
@@ -273,4 +277,35 @@ test('telemetria identifica pares pelo id, nunca pelo nome', () => {
   assert.equal(eventos.at(-1).eu, 'aaaa0001')
   const texto = JSON.stringify(eventos)
   for (const nome of ['Fulana', 'Beltrana', 'Ciclana']) assert.ok(!texto.includes(nome), nome)
+})
+
+test('primeira oferta é do impolite; a polite espera e só oferece sozinha depois de 3 s', async () => {
+  const f = fixture()
+  f.entrar('aaaa0001', [{ id: 'bbbb0002', name: 'B' }, { id: '00000003', name: 'C' }])
+  const n = f.timers.length
+  await f.run("pares.get('bbbb0002').pc.onnegotiationneeded()")      // polite com B
+  await f.run("pares.get('bbbb0002').pc.onnegotiationneeded()")
+  assert.equal(f.sinais('bbbb0002').filter(d => d.description).length, 0)
+  const espera = f.timers.slice(n).filter(t => t.ms === 3000)
+  assert.equal(espera.length, 1)
+  await f.run("pares.get('00000003').pc.onnegotiationneeded()")      // impolite com C
+  assert.equal(f.sinais('00000003').filter(d => d.description?.type === 'offer').length, 1)
+
+  // A oferta de B chega antes do prazo: responde, e o prazo não oferece de novo.
+  f.chega({ t: 'signal', from: 'bbbb0002', data: { description: { type: 'offer', sdp: '' } } })
+  await new Promise(r => setTimeout(r, 0))
+  espera[0].f()
+  await new Promise(r => setTimeout(r, 0))
+  const enviadas = f.sinais('bbbb0002').filter(d => d.description).map(d => d.description.type)
+  assert.deepEqual([...enviadas], ['answer'])
+})
+
+test('polite sem oferta nenhuma oferece quando o prazo vence', async () => {
+  const f = fixture()
+  f.entrar('aaaa0001', [{ id: 'bbbb0002', name: 'B' }])
+  const n = f.timers.length
+  await f.run("pares.get('bbbb0002').pc.onnegotiationneeded()")
+  f.timers.slice(n).find(t => t.ms === 3000).f()
+  await new Promise(r => setTimeout(r, 0))
+  assert.equal(f.sinais('bbbb0002').filter(d => d.description?.type === 'offer').length, 1)
 })
