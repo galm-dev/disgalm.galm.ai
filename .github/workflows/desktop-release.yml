@@ -1,0 +1,180 @@
+# Release do app desktop: nightly automático e stable manual, no modelo do
+# t3code (desktop/docs/estudo-t3code-distribuicao.md). Decide o que publicar
+# (.github/scripts/desktop-preparar.mjs), roda os testes, empacota nos três
+# SOs com electron-builder e publica uma release no GitHub com os feeds do
+# electron-updater (latest*.yml para stable, nightly*.yml para nightly).
+#
+# Mac: assinatura obrigatória com o certificado próprio do Disgalm (secrets
+# CSC_LINK, CSC_KEY_PASSWORD; variável CSC_NAME), senão a permissão de Gravação
+# de Tela e o update do Squirrel.Mac quebram entre versões.
+# Windows: sem assinatura por enquanto (AZURE_* entram quando houver conta).
+name: Desktop release
+
+on:
+  schedule:
+    # De hora em hora; o preparar só publica com commit novo e 6 h desde o último.
+    - cron: '23 * * * *'
+  workflow_dispatch:
+    inputs:
+      canal:
+        description: Canal
+        type: choice
+        options: [nightly, stable]
+        default: nightly
+  push:
+    tags: ['v*.*.*', '!v*-nightly.*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-release-${{ github.event_name == 'push' && 'stable' || inputs.canal || 'nightly' }}
+  cancel-in-progress: false
+
+jobs:
+  preparar:
+    runs-on: ubuntu-latest
+    outputs:
+      publicar: ${{ steps.p.outputs.publicar }}
+      canal: ${{ steps.p.outputs.canal }}
+      versao: ${{ steps.p.outputs.versao }}
+      sha: ${{ steps.p.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: p
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CANAL: ${{ inputs.canal }}
+        run: node .github/scripts/desktop-preparar.mjs
+
+  testes:
+    needs: preparar
+    if: needs.preparar.outputs.publicar == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preparar.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test tests/*.test.js
+
+  empacotar:
+    needs: [preparar, testes]
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: macos-14
+            alvo: --mac
+          # 2022: o VS 2026 do windows-latest ainda confunde o node-gyp.
+          - os: windows-2022
+            alvo: --win
+          # 22.04: glibc mais velha, o AppImage roda em mais distros.
+          - os: ubuntu-22.04
+            alvo: --linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preparar.outputs.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Windows'
+        with:
+          python-version: '3.12'
+      - name: Dependências e versão
+        working-directory: desktop
+        shell: bash
+        run: |
+          npm ci --no-fund --no-audit
+          npm version "${{ needs.preparar.outputs.versao }}" --no-git-tag-version --allow-same-version
+      - name: Módulo nativo (Windows)
+        if: runner.os == 'Windows'
+        working-directory: desktop
+        run: |
+          npm run build:native
+          node -e "const n = require('./native/build/Release/loopback.node'); if (typeof n.sessoesDeAudio !== 'function') throw new Error('exports')"
+      - name: Assinatura do Mac é obrigatória
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+        run: |
+          if [ -z "$CSC_LINK" ]; then
+            echo "::error::Sem CSC_LINK/CSC_KEY_PASSWORD: o app do Mac não pode sair sem assinatura estável."
+            exit 1
+          fi
+      - name: Confia no certificado de assinatura (Mac)
+        if: runner.os == 'macOS'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: .github/scripts/mac-confiar-certificado.sh
+      - name: Empacota
+        working-directory: desktop
+        shell: bash
+        env:
+          DISGALM_CANAL: ${{ needs.preparar.outputs.canal }}
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.CSC_KEY_PASSWORD || '' }}
+          CSC_NAME: ${{ runner.os == 'macOS' && vars.CSC_NAME || '' }}
+          CSC_IDENTITY_AUTO_DISCOVERY: ${{ runner.os == 'macOS' && 'true' || 'false' }}
+        run: npx electron-builder --config electron-builder.config.cjs ${{ matrix.alvo }} --publish never
+      - name: Confere a assinatura do Mac
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          for app in desktop/dist/mac*/Disgalm.app; do
+            codesign --verify --deep --strict "$app"
+            codesign -d -r- "$app" 2>&1 | grep designated
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ runner.os }}
+          if-no-files-found: error
+          retention-days: 3
+          path: |
+            desktop/dist/*.dmg
+            desktop/dist/*.zip
+            desktop/dist/*.exe
+            desktop/dist/*.AppImage
+            desktop/dist/*.blockmap
+            desktop/dist/latest*.yml
+            desktop/dist/nightly*.yml
+
+  publicar:
+    needs: [preparar, empacotar]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Release no GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSAO: ${{ needs.preparar.outputs.versao }}
+          CANAL: ${{ needs.preparar.outputs.canal }}
+          SHA: ${{ needs.preparar.outputs.sha }}
+        run: |
+          ls -la assets
+          cd assets && sha256sum * > SHA256SUMS && cd ..
+          if [ "$CANAL" = nightly ]; then
+            gh release create "v$VERSAO" assets/* -R "$GITHUB_REPOSITORY" --target "$SHA" \
+              --title "Disgalm $VERSAO" --prerelease --latest=false \
+              --notes "Nightly do commit ${SHA:0:12}. Para receber estas versões, escolha o canal Nightly no menu da bandeja."
+          else
+            gh release create "v$VERSAO" assets/* -R "$GITHUB_REPOSITORY" --target "$SHA" \
+              --title "Disgalm $VERSAO" --latest --generate-notes
+          fi

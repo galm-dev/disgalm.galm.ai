@@ -13,12 +13,19 @@ const { pathToFileURL } = require('node:url')
 const { raizesDe } = require('./alvo.js')
 const { criarRetorno, urlDeLoginValida } = require('./login.js')
 const { criarBandeja, lerUltima, gravarUltima, acharUltima } = require('./bandeja.js')
+const { criarSaude } = require('./saude.js')
+const { criarAtualizacao } = require('./atualizacao.js')
+
+// Conta esta abertura antes de tudo: é o que detecta crash loop (saude.js).
+const saude = process.argv.some(a => a.startsWith('--teste=')) ? null : criarSaude(app)
 
 const ORIGEM = new URL(process.env.DISGALM_URL || 'https://disgalm.galm.ai').origin
 // Argumento livre na linha de comando: uma URL do Disgalm (link de convite,
 // sala) para abrir direto.
 const urlInicial = process.argv.slice(1).find(a => a.startsWith(ORIGEM)) || ORIGEM + '/'
-const UI_LOCAL = process.env.DISGALM_UI_LOCAL !== '0'
+// Instalado, o app carrega a UI publicada (igual à web); em desenvolvimento,
+// a de ../public deste checkout. DISGALM_UI_LOCAL=1/0 força.
+const UI_LOCAL = process.env.DISGALM_UI_LOCAL ? process.env.DISGALM_UI_LOCAL !== '0' : !app.isPackaged
 const PUBLIC = path.join(__dirname, '..', 'public')
 const RENDERER = path.join(__dirname, 'renderer')
 // Modo de teste: abre a página de gravação em vez da sala e sai ao terminar.
@@ -362,10 +369,36 @@ app.whenReady().then(async () => {
     e.preventDefault()
     win.hide()
   })
+  // Saúde da versão: conta só depois da janela carregada; renderer que cai é
+  // recarregado até 3 vezes por minuto (como no t3code) e invalida a contagem.
+  const quedas = []
+  win.webContents.on('did-finish-load', () => saude?.janelaCarregada())
+  win.webContents.on('render-process-gone', (_e, d) => {
+    if (d.reason === 'clean-exit') return
+    saude?.rendererCaiu()
+    const agora = Date.now()
+    quedas.push(agora)
+    while (quedas.length && agora - quedas[0] > 60_000) quedas.shift()
+    if (quedas.length <= 3) setTimeout(() => !win.isDestroyed() && win.reload(), 500)
+  })
+
+  const atualizacao = TESTE ? null : criarAtualizacao({
+    saude,
+    aoMudar: () => bandeja?.redesenhar(),
+    antesDeInstalar: () => { saindo = true },
+  })
+  // Versão nova que não abre direito: volta para a última saudável e bloqueia
+  // esta. O app segue aberto enquanto baixa; instala assim que terminar.
+  if (saude?.crashLoop && atualizacao) {
+    saude.bloquear(app.getVersion())
+    atualizacao.voltarPara(saude.estado.ultimaSaudavel)
+  }
+
   if (!TESTE) {
     bandeja = await criarBandeja({
       janela: () => (win.isDestroyed() ? null : win),
-      sair: () => { saindo = true; app.quit() },
+      sair: () => { saude?.saidaLimpa(); saindo = true; app.quit() },
+      atualizacao,
       comando: c => {
         if (c === 'tela') pedidoDaBandeja = true
         // userGesture: o getDisplayMedia exige um gesto do usuário, e o clique
@@ -381,7 +414,11 @@ app.whenReady().then(async () => {
   win.loadURL(TESTE ? `${ORIGEM}/_desktop/teste.html?${process.env.DISGALM_TESTE_QUERY || ''}` : urlInicial)
 })
 
-app.on('before-quit', () => { saindo = true })
+app.on('before-quit', () => {
+  // Sair pelo menu (ou pelo ⌘Q) antes de a versão ficar saudável não é falha.
+  if (!saindo) saude?.saidaLimpa()
+  saindo = true
+})
 app.on('window-all-closed', () => app.quit())
 // Mac: clicar no ícone do Dock traz a janela escondida de volta.
 app.on('activate', () => bandeja?.mostrar())

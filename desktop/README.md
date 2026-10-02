@@ -53,6 +53,41 @@ em `ultima-tela.json`, na pasta de dados do app. Telas são achadas pelo id,
 janelas pelo título. Se ela não existir mais, o seletor abre. No Linux com
 Wayland quem escolhe é o portal do KDE, então o menu abre o seletor dele.
 
+## Releases e atualização automática
+
+O CI (`.github/workflows/desktop-release.yml`) empacota com electron-builder
+(`electron-builder.config.cjs`) e publica releases em
+[galm-dev/disgalm.galm.ai](https://github.com/galm-dev/disgalm.galm.ai/releases).
+O modelo é o do t3code (`docs/estudo-t3code-distribuicao.md`).
+
+| Canal | Quando sai | Versão | Feed |
+|---|---|---|---|
+| Nightly | Agenda de hora em hora, mas só com commit novo no `master` e 6 h desde o último. Também sai por dispatch manual. | `0.5.0-nightly.AAAAMMDD.N` (prerelease) | `nightly*.yml` |
+| Stable | Dispatch manual com `canal=stable`, que reconstrói o commit do último nightly, ou tag `v<versão>` empurrada | `0.5.0` | `latest*.yml` |
+
+- **Para lançar uma stable:** suba `version` em `desktop/package.json`, espere um
+  nightly com esse código e rode o workflow com `canal=stable`.
+- **Pacotes:** Mac em DMG e ZIP (arm64 e x64; o ZIP é o que atualiza),
+  Windows em NSIS x64 e Linux em AppImage x64, mais o `SHA256SUMS`.
+- **Assinatura:** no Mac é obrigatória (secrets `CSC_LINK` em base64 do `.p12` e
+  `CSC_KEY_PASSWORD`). Sem ela o job falha: a permissão de Gravação de Tela e o
+  update do Squirrel.Mac dependem da mesma assinatura entre versões. O Windows
+  ainda sai sem assinatura, e o SmartScreen avisa.
+- **Atualização** (`atualizacao.js`, electron-updater): procura 15 s depois de
+  abrir e a cada 30 min, baixa em segundo plano e instala ao sair, ou na hora
+  por "Reiniciar e atualizar" na bandeja. Nunca reinicia sozinho no meio da
+  chamada. O canal (Stable ou Nightly) é escolhido na bandeja e vem por padrão
+  da versão instalada. Na troca de canal, só a primeira checagem pode descer de
+  versão. No Linux, só o AppImage se atualiza.
+- **Rollback em crash loop** (`saude.js`): uma versão é saudável depois de
+  60 s com a janela carregada e sem queda do renderer. Uma versão nova que
+  abre mais de 3 vezes sem ficar saudável faz o app baixar e instalar a última
+  versão saudável, a partir da release dela, e fica bloqueada para o update.
+  Sair pelo menu antes dos 60 s não conta como falha. Não cobre crash do
+  próprio Electron antes de o `main.js` rodar.
+- **Interface:** instalado, o app carrega a UI publicada em disgalm.galm.ai;
+  só em desenvolvimento usa `../public`. `DISGALM_UI_LOCAL=1` ou `0` força.
+
 ## Pacote para testar (Windows, Mac, Linux)
 
 Sem ferramenta de distribuição: `node empacotar.mjs`, rodado em cada

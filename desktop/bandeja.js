@@ -65,7 +65,7 @@ function acharUltima(fontes, ultima) {
     (ultima.tipo === 'janela' ? fontes.find(f => f.tipo === 'janela' && f.nome === ultima.nome) : null)
 }
 
-async function criarBandeja({ janela, comando, sair }) {
+async function criarBandeja({ janela, comando, sair, atualizacao }) {
   const icones = await desenharIcones()
   const tray = new Tray(icones['00'])
   let estado = { sala: null, mic: false, telas: 0 }
@@ -86,6 +86,7 @@ async function criarBandeja({ janela, comando, sair }) {
     tray.setToolTip(partes.join(' · '))
     const naSala = !!estado.sala
     tray.setContextMenu(Menu.buildFromTemplate([
+      ...itensDeAtualizacao(),
       { label: estado.sala ? `Na sala ${estado.sala}` : 'Fora da sala', enabled: false },
       { type: 'separator' },
       { label: rotuloUltima(), enabled: naSala, click: () => comando('tela') },
@@ -95,6 +96,30 @@ async function criarBandeja({ janela, comando, sair }) {
       { label: 'Abrir Disgalm', click: () => mostrar() },
       { label: 'Sair', click: () => sair() },
     ]))
+  }
+
+  // Versão, canal e update. Sem suporte (dev, Linux fora do AppImage), só a versão.
+  function itensDeAtualizacao() {
+    const a = atualizacao?.estado
+    const versao = { label: `Disgalm ${app.getVersion()}`, enabled: false }
+    if (!a?.suportado) return [versao, { type: 'separator' }]
+    const itens = [versao]
+    if (a.situacao === 'pronta') {
+      const emChamada = estado.sala && (estado.mic || estado.telas)
+      itens.push({ label: `Reiniciar e atualizar para ${a.nova}${emChamada ? ' (sai da chamada)' : ''}`,
+        click: () => atualizacao.instalar() })
+    } else if (a.situacao === 'baixando') itens.push({ label: `Baixando ${a.nova}… ${a.progresso}%`, enabled: false })
+    itens.push({
+      label: 'Canal de atualização',
+      submenu: [['stable', 'Stable'], ['nightly', 'Nightly']].map(([id, nome]) => ({
+        label: nome, type: 'radio', checked: a.canal === id, click: () => atualizacao.trocarCanal(id),
+      })),
+    })
+    itens.push({ label: a.situacao === 'procurando' ? 'Procurando atualizações…' : 'Procurar atualizações',
+      enabled: a.situacao !== 'procurando' && a.situacao !== 'baixando', click: () => atualizacao.procurar() })
+    if (a.situacao === 'erro') itens.push({ label: `Erro na atualização: ${a.erro}`.slice(0, 80), enabled: false })
+    itens.push({ type: 'separator' })
+    return itens
   }
 
   function mostrar() {
@@ -112,6 +137,7 @@ async function criarBandeja({ janela, comando, sair }) {
 
   return {
     estado(novo) { estado = { ...estado, ...novo }; atualizar() },
+    redesenhar: () => atualizar(),
     mostrar,
     destruir() { tray.destroy() },
   }
