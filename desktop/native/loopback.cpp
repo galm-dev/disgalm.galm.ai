@@ -11,6 +11,7 @@
 #include <windows.h>
 #include <audioclient.h>
 #include <audioclientactivationparams.h>
+#include <avrt.h>
 #include <mmdeviceapi.h>
 #include <tlhelp32.h>
 #include <wrl/client.h>
@@ -183,7 +184,11 @@ class Captura : public Napi::ObjectWrap<Captura> {
 
   void Rodar() {
     CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    // MMCSS: o agendador trata esta thread como áudio (menos atraso a acordar).
+    DWORD tarefa = 0;
+    HANDLE mmcss = AvSetMmThreadCharacteristicsW(L"Pro Audio", &tarefa);
     Capturar();
+    if (mmcss) AvRevertMmThreadCharacteristics(mmcss);
     Enviar(new Mensagem{Mensagem::Fim, {}, {}});
     tsfn_.Release();
     CoUninitialize();

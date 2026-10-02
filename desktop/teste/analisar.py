@@ -72,5 +72,10 @@ for caminho in sys.argv[1:]:
     taxa, x = ler(caminho)
     rms = math.sqrt(sum(v * v for v in x) / len(x)) if x else 0
     print(f'{caminho}  ({len(x) / taxa:.1f} s, RMS {db(rms):.1f} dBFS, resíduo sem os tons {db(residuo(x, taxa)):.1f} dBFS)')
+    # Bloco de 100 ms (resolução de 10 Hz): o app ajusta o passo de leitura em
+    # até ±0,3% (±3 Hz em 1 kHz), o que sai de um bin de 0,1 Hz do sinal inteiro.
+    n = taxa // 10
+    blocos = [x[i:i + n] for i in range(0, len(x) - n + 1, n)]
     for nome, f in FREQS.items():
-        print(f'  {nome:<20} {db(goertzel(x, taxa, f)):7.1f} dBFS')
+        amp = math.sqrt(sum(goertzel(b, taxa, f) ** 2 for b in blocos) / len(blocos)) if blocos else 0
+        print(f'  {nome:<20} {db(amp):7.1f} dBFS')

@@ -12,11 +12,15 @@ não consegue fazer isso: o `getDisplayMedia` leva o sistema inteiro.
   loopback** (`ActivateAudioInterfaceAsync` com
   `PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE`) e entrega float32
   estéreo a 48 kHz em pacotes de ~10 ms.
-- O PCM vai do processo principal, por `MessagePort`, direto a um AudioWorklet
-  (`renderer/pcm-worklet.js`, fila de 40 ms). Uma
+- A captura roda num processo utilitário só dela (`captura.js`), com a thread
+  WASAPI em MMCSS "Pro Audio". O PCM vai de lá, por `MessagePort`, direto a um
+  AudioWorklet (`renderer/pcm-worklet.js`). Uma
   `MediaStreamAudioDestinationNode` o transforma em `MediaStreamTrack`, e é
   essa track que entra no compartilhamento, no lugar do áudio do
   `getDisplayMedia`.
+- A fila do worklet parte de 80 ms. A leitura ajusta o passo em até ±0,3%
+  (interpolação linear) para compensar a deriva entre o relógio do WASAPI e o
+  do AudioContext. Se a fila secar mesmo assim, o alvo sobe 20 ms, até 160.
 - Na UI, em Ajustes, a opção **"Compartilhar áudio do sistema (sem o
   Discord)"** só aparece no app e vem ligada. Se a captura nativa falhar, o
   app volta ao áudio do sistema inteiro e registra o motivo no log. Na web,
@@ -53,6 +57,23 @@ do WebRTC (`recebida.wav`). Rode o script na sessão de desktop.
 python teste\analisar.py teste\saida\exclui\recebida.wav
 ```
 
+### Ponta a ponta numa sala
+
+`teste\e2e\rodar.mjs` sobe uma sala local com `wrangler dev`. A sinalização
+é a `Sala` de produção (`worker/src`) e a UI é a de `public/`; só o login
+GALM vira um membro fixo (`teste/e2e/sala.js`, que nunca deve ser
+publicado). O app Electron entra e compartilha a tela. Um Edge, pelo CDP,
+entra como segundo membro e grava o áudio da tela que recebe. Primeiro no
+modo sem o Discord, depois no do sistema inteiro (o mesmo da web). Com
+`--soak=N`, deixa o compartilhamento nativo ligado N minutos e conta
+engasgos e CPU.
+
+```powershell
+cd ..\worker; npm install; cd ..\desktop
+node teste\e2e\rodar.mjs --soak=10
+python teste\analisar.py teste\saida\e2e\nativo.wav teste\saida\e2e\controle.wav
+```
+
 Com `DISGALM_TESTE_INCLUIR=1`, o teste grava também `incluido.wav`, que tem
 só a árvore excluída. Serve para provar que o Discord de verdade estava
 tocando quando o som dele não é um tom.
@@ -69,6 +90,21 @@ do que sobra tirando os tons:
 
 Só o Discord, gravado à parte (`incluido.wav`), estava em −17,8 dBFS.
 
+Na sala local (`rodar.mjs`), com o Discord real tocando vídeo, o que o Edge
+recebeu:
+
+| Modo de quem compartilha | 1000 Hz | Resto (Discord) |
+|---|---|---|
+| Sem o Discord (nativo) | −12,3 dBFS | −45 (ruído do Opus) |
+| Sistema inteiro (`getDisplayMedia`, igual à web) | −31 | −21 |
+
+O caminho do sistema inteiro do Chromium entregou o tom 18 dB mais baixo que
+o nativo. Não investiguei o motivo.
+
+No soak de 10 min sem o Discord: nenhum pacote perdido. A fila do worklet
+secou 2 vezes nos primeiros 90 s e assentou em 120 ms; depois, nenhuma vez
+em 8,5 min. O processo principal do Electron ficou em 6,8% de CPU na VM.
+
 ## Como o Discord é achado
 
 A exclusão vale para a árvore de **um** PID. O Discord roda em vários
@@ -77,7 +113,8 @@ processos: o principal, mais GPU, renderer, rede, crashpad e o
 `Update.exe`, que já saiu. Por isso o alvo é a **raiz**: o `Discord.exe` cujo
 pai não é `Discord.exe`. Se o PID do pai foi reusado por um processo mais
 novo que o filho, ele não conta como pai. Com mais de uma raiz, fica a que
-tem mais descendentes. O app confere a cada 2 s e reabre a captura quando a
+tem mais descendentes (`alvo.js`, testado em `tests/desktop-alvo.test.js`).
+O app confere a cada 2 s e reabre a captura quando a
 raiz muda (Discord abriu, fechou ou reiniciou para se atualizar). Sem Discord
 aberto, exclui o próprio Disgalm, para o áudio que o app toca não voltar
 para quem assiste.
@@ -90,14 +127,22 @@ para quem assiste.
   ao mesmo tempo, então o áudio dos outros, tocado pelo app, vai junto. Para
   excluir os dois, seria preciso abrir uma captura INCLUDE por processo que
   toca (via `IAudioSessionManager2`) e mixar.
-- Discord PTB/Canary têm outro executável (`DiscordPTB.exe`). Hoje só um nome
-  é excluído (`DISGALM_EXCLUIR` troca o nome).
-- Troca de alvo ou de dispositivo de saída causa um corte curto, de dezenas de
-  ms, enquanto a captura é reaberta.
+- Discord, PTB e Canary (`Discord.exe`, `DiscordPTB.exe`,
+  `DiscordCanary.exe`) são procurados juntos, mas abertos ao mesmo tempo só o
+  de árvore maior sai (`DISGALM_EXCLUIR` troca a lista).
+- Troca de alvo causa um corte curto, de dezenas de ms, enquanto a captura é
+  reaberta. Desligar a saída (`Disable-PnpDevice` no endpoint) por 3 s no
+  meio da captura não cortou nada na VM, então o caminho de erro e reabertura
+  em 1 s nunca rodou de verdade.
 - Latência própria do caminho nativo: buffer WASAPI de 20 ms, pacotes de
-  ~10 ms e fila de 40 ms no worklet. A fila descarta o excesso acima de 200 ms
-  se os relógios divergirem. O jitter buffer do WebRTC medido no teste ficou
-  em ~31 ms.
+  ~10 ms e fila de 80 a 160 ms no worklet. O jitter buffer do WebRTC, medido
+  no teste, ficou em ~31 ms. Na VM, a fila ainda seca 2 ou 3 vezes nos
+  primeiros minutos (cortes de ~10 ms) até o alvo assentar. Medi pacotes com
+  até 64 ms de atraso, e o mesmo padrão aparece com a captura no processo
+  principal ou no utilitário. Por isso, a suspeita é o áudio virtual da VM.
+  Em hardware de verdade, não medi.
+- Se o processo de captura cair, a track fica muda e a página registra o erro.
+  Ele não volta sozinho para aquela track: é preciso compartilhar de novo.
 - O par `RTCPeerConnection` do teste usa o Opus padrão (mono). A sala de
   verdade força estéreo a 128 kbps (`opusEstereo` no `index.html`), e a track
   nativa é estéreo.

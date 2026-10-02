@@ -5,11 +5,12 @@
 // produção), mas os arquivos estáticos saem de ../public deste checkout: assim
 // a UI do app é a do branch, sem precisar publicar nada. /_desktop/* sai de
 // ./renderer e só existe no app.
-const { app, BrowserWindow, MessageChannelMain, desktopCapturer, dialog, ipcMain, net, protocol, session, webContents } =
-  require('electron')
+const { app, BrowserWindow, MessageChannelMain, desktopCapturer, dialog, ipcMain, net, protocol, session, utilityProcess,
+  webContents } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
 const { pathToFileURL } = require('node:url')
+const { raizesDe } = require('./alvo.js')
 
 const ORIGEM = new URL(process.env.DISGALM_URL || 'https://disgalm.galm.ai').origin
 // Argumento livre na linha de comando: uma URL do Disgalm (link de convite,
@@ -20,9 +21,10 @@ const PUBLIC = path.join(__dirname, '..', 'public')
 const RENDERER = path.join(__dirname, 'renderer')
 // Modo de teste: abre a página de gravação em vez da sala e sai ao terminar.
 const TESTE = process.argv.find(a => a.startsWith('--teste='))?.slice(8)
-// Nome do executável a excluir. DISGALM_EXCLUIR troca o Discord por um
-// substituto nos testes.
-const EXCLUIR = process.env.DISGALM_EXCLUIR || 'Discord.exe'
+// Executáveis a excluir (Discord estável, PTB e Canary). DISGALM_EXCLUIR troca
+// a lista, separada por vírgula; os testes põem um substituto.
+const EXCLUIR = (process.env.DISGALM_EXCLUIR || 'Discord.exe,DiscordPTB.exe,DiscordCanary.exe')
+  .split(',').map(n => n.trim()).filter(Boolean)
 
 let nativo = null
 let erroNativo = null
@@ -49,7 +51,9 @@ function arquivoLocal(pathname) {
 }
 
 function servirLocal() {
-  protocol.handle('https', async req => {
+  // O esquema da origem: https em produção, http no teste local
+  // (DISGALM_URL=http://localhost:8787).
+  protocol.handle(new URL(ORIGEM).protocol.slice(0, -1), async req => {
     const url = new URL(req.url)
     const f = url.origin === ORIGEM && req.method === 'GET' ? arquivoLocal(url.pathname) : null
     if (f) {
@@ -112,96 +116,48 @@ function tratarGetDisplayMedia() {
 
 // ---------- áudio do sistema sem o Discord ----------
 
-// O loopback exclui a árvore de UM processo. O Discord roda em vários
-// (principal, GPU, renderer, utilitários), todos filhos do Discord.exe
-// principal; então o alvo é a raiz: o Discord.exe cujo pai não é Discord.exe.
-// Um PID reusado conta como "não pai" quando o pai nasceu depois do filho.
-function raizesDe(nome) {
-  const procs = nativo.listarProcessos()
-  const alvo = procs.filter(p => p.nome.toLowerCase() === nome.toLowerCase())
-  const pids = new Map(alvo.map(p => [p.pid, p]))
-  const criado = new Map()
-  const criadoEm = pid => {
-    if (!criado.has(pid)) criado.set(pid, nativo.criadoEm(pid))
-    return criado.get(pid)
-  }
-  const raizes = alvo.filter(p => {
-    if (!pids.has(p.ppid)) return true
-    const pai = criadoEm(p.ppid), filho = criadoEm(p.pid)
-    return pai != null && filho != null && pai > filho
-  })
-  // Mais de uma raiz (Discord reiniciando, ou um órfão cujo pai morreu): fica
-  // com a que tem mais descendentes, que é a que toca a voz.
-  const filhos = pid => procs.filter(p => p.ppid === pid)
-  const contar = pid => filhos(pid).reduce((n, p) => n + 1 + contar(p.pid), 0)
-  return raizes.map(p => ({ pid: p.pid, descendentes: contar(p.pid) })).sort((a, b) => b.descendentes - a.descendentes)
-}
-
-// Sem Discord aberto, exclui o próprio Disgalm: o áudio que o app toca (tela
-// dos outros) não volta para quem está assistindo.
-function escolherAlvo() {
-  const raizes = raizesDe(EXCLUIR)
-  if (raizes.length) return { pid: raizes[0].pid, nome: EXCLUIR, raizes: raizes.length }
-  return { pid: process.pid, nome: 'o próprio Disgalm', raizes: 0 }
-}
-
-const capturas = new Map()
+// A captura roda num processo utilitário (captura.js): no principal, os
+// pacotes chegavam ao JS com buracos de até ~100 ms. O PCM vai de lá por um
+// MessagePort direto até o AudioWorklet; o principal só repassa os eventos.
+let utilitario = null
+const capturas = new Map() // id → webContents
 let proximoId = 1
 
-// Uma captura por pedido do renderer. O PCM vai por um MessagePort direto até o
-// AudioWorklet, sem passar pela thread principal da página.
+function avisar(id, tipo, valor) {
+  const wc = capturas.get(id)
+  if (wc && !wc.isDestroyed()) wc.send('audio-evento', { id, tipo, valor })
+}
+
+function processoDeCaptura() {
+  if (utilitario) return utilitario
+  utilitario = utilityProcess.fork(path.join(__dirname, 'captura.js'), [], { serviceName: 'Disgalm: áudio' })
+  utilitario.on('message', m => avisar(m.id, m.tipo, m.valor))
+  // Se o processo cair, as tracks abertas ficam mudas; avisa a página. A
+  // próxima captura sobe um processo novo.
+  utilitario.on('exit', codigo => {
+    utilitario = null
+    for (const id of capturas.keys()) avisar(id, 'erro', `processo de captura saiu (${codigo})`)
+  })
+  return utilitario
+}
+
 function abrirCaptura(webContents) {
   const id = proximoId++
   const { port1, port2 } = new MessageChannelMain()
-  const c = { id, porta: port1, alvo: null, nativa: null, relogio: null, webContents, fechada: false }
-  capturas.set(id, c)
-
-  const avisar = (tipo, valor) => {
-    if (!webContents.isDestroyed()) webContents.send('audio-evento', { id, tipo, valor })
-  }
-  const ligar = () => {
-    if (c.fechada) return
-    c.alvo = escolherAlvo()
-    avisar('alvo', c.alvo)
-    c.nativa = new nativo.Captura(c.alvo.pid, false, (tipo, valor) => {
-      if (tipo === 'dados') port1.postMessage(valor)
-      else if (tipo === 'erro') {
-        avisar('erro', valor)
-        // Dispositivo trocou: reabre em 1 s.
-        setTimeout(religar, 1000)
-      } else avisar(tipo, valor)
-    })
-  }
-  const religar = () => {
-    c.nativa?.parar()
-    c.nativa = null
-    ligar()
-  }
-  // O Discord abre, fecha e se atualiza (PID novo) durante a chamada; o alvo
-  // da exclusão é fixado na ativação, então reabre quando a raiz muda.
-  c.relogio = setInterval(() => {
-    if (escolherAlvo().pid !== c.alvo?.pid) religar()
-  }, 2000)
-
-  port1.start()
-  ligar()
+  capturas.set(id, webContents)
+  processoDeCaptura().postMessage({ abrir: id, excluir: EXCLUIR, pidApp: process.pid }, [port1])
   webContents.postMessage('audio-porta', { id, taxa: 48000, canais: 2 }, [port2])
   webContents.once('destroyed', () => fecharCaptura(id))
   return id
 }
 
 function fecharCaptura(id) {
-  const c = capturas.get(id)
-  if (!c) return
-  c.fechada = true
-  clearInterval(c.relogio)
-  c.nativa?.parar()
-  c.porta.close()
-  capturas.delete(id)
+  if (!capturas.delete(id)) return
+  utilitario?.postMessage({ fechar: id })
 }
 
 ipcMain.on('audio-disponivel', e => {
-  e.returnValue = { disponivel: !!nativo, motivo: erroNativo, excluir: EXCLUIR, teste: TESTE || null }
+  e.returnValue = { disponivel: !!nativo, motivo: erroNativo, excluir: EXCLUIR.join(', '), teste: TESTE || null }
 })
 ipcMain.handle('audio-abrir', e => {
   if (!nativo) throw new Error(erroNativo)
@@ -224,7 +180,8 @@ ipcMain.handle('teste-salvar', (_e, nome, dados) => {
 let incluido = null
 if (TESTE && process.env.DISGALM_TESTE_INCLUIR && nativo) {
   app.whenReady().then(() => {
-    const alvo = escolherAlvo()
+    const raiz = raizesDe(nativo.listarProcessos(), EXCLUIR, nativo.criadoEm)[0]
+    const alvo = raiz ? { pid: raiz.pid, nome: raiz.nome } : { pid: process.pid, nome: 'o próprio Disgalm' }
     const pedacos = []
     const captura = new nativo.Captura(alvo.pid, true, (tipo, valor) => {
       if (tipo === 'dados') pedacos.push(Buffer.from(valor.buffer, valor.byteOffset, valor.byteLength))
