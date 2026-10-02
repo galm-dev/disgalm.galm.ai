@@ -221,7 +221,7 @@ para quem assiste.
 - Se o processo de captura cair, a track fica muda e a página registra o erro.
   Ele não volta sozinho para aquela track: é preciso compartilhar de novo.
 - O par `RTCPeerConnection` do teste usa o Opus padrão (mono). A sala de
-  verdade força estéreo a 128 kbps (`opusEstereo` no `index.html`), e a track
+  verdade força estéreo a 128 kbps (`opusEstereo` em `public/transporte-mesh.js`), e a track
   nativa é estéreo.
 - A UI local depende de interceptar `https://disgalm.galm.ai` no Electron.
   Como o handler recebe pedidos sem `Origin`, o app o repõe nos POST para a

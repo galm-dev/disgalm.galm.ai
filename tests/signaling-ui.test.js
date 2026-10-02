@@ -1,9 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
+import { rodarCliente } from './cliente.js'
 
-const script = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8').split('<script>')[1].split('</script>')[0]
 function fixture(storage = new Map()) {
   const elements = new Map()
   const get = id => {
@@ -19,7 +18,7 @@ function fixture(storage = new Map()) {
     setItem(key, value) { storage.set(key, String(value)) },
   }
   const state = { document: {getElementById:get}, addEventListener() {}, setInterval() {}, localStorage, URL }
-  runInNewContext(script, state)
+  rodarCliente(state)
   return { get, state, execute: code => runInNewContext(code, state) }
 }
 
@@ -66,7 +65,7 @@ test('novo welcome limpa o estado de desconexão', () => {
 test('perda da sinalização não encerra mídia que ainda possa estar funcionando', () => {
   const {get,state} = fixture()
   state.peer = {nome:'Teste',pc:{connectionState:'connected',iceConnectionState:'connected',close(){throw Error('mídia encerrada')}}}
-  runInNewContext("pares.set('p', peer)",state)
+  runInNewContext("pares.set('p', peer); pessoas.set('p', peer)",state)
   state.sinalizacaoFechada({code:1006,reason:'',wasClean:false})
   assert.match(get('log').textContent, /conexão com Teste: connected; ICE=connected/)
 })

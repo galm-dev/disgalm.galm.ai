@@ -273,6 +273,9 @@
   </dialog>
   <script src="/auth.js"></script>
   <script src="/ruido.js"></script>
+  <script src="/transporte.js"></script>
+  <script src="/fontes.js"></script>
+  <script src="/transporte-mesh.js"></script>
   <script>
     const $ = id => document.getElementById(id)
     // Cada linha leva a hora: sem ela, o relatório não diz se a queda veio antes
@@ -324,7 +327,7 @@
     }
     setInterval(() => enviarTelemetria(), 10_000)
     addEventListener('pagehide', () => {
-      for (const [id, p] of pares) informarRelay(id, p)
+      transporte.relatarUso()
       enviarTelemetria(true)
     })
 
@@ -336,27 +339,21 @@
     // O que cai primeiro sob falta de banda NÃO vem da dica: aplicarQualidade fixa
     // degradationPreference na tela, porque 'motion' sozinho manda o Chrome manter
     // os quadros e encolher a imagem até 320x180.
+    //
+    // Cada preset tem duas partes: o que a captura pede (resolução, fps, dica)
+    // e o teto de envio de uma cópia da tela. Como esse teto se divide entre
+    // cópias e telas é conta do transporte (planejarEnvio).
     const PRESETS = {
-      codigo: { w: 1920, h: 1080, fps: 5,  kbps: 1500,  hint: 'detail' },
-      equil:  { w: 1920, h: 1080, fps: 30, kbps: 4000,  hint: 'motion' },
-      fluido: { w: 1920, h: 1080, fps: 120, kbps: 15000, hint: 'motion' },
-      jogo:   { w: 2560, h: 1440, fps: 60, kbps: 12000, hint: 'motion' },
-      max:    { w: 3840, h: 2160, fps: 60, kbps: 25000, hint: 'motion' },
+      codigo: { captura: { w: 1920, h: 1080, fps: 5,   hint: 'detail' }, envio: { kbps: 1500 } },
+      equil:  { captura: { w: 1920, h: 1080, fps: 30,  hint: 'motion' }, envio: { kbps: 4000 } },
+      fluido: { captura: { w: 1920, h: 1080, fps: 120, hint: 'motion' }, envio: { kbps: 15000 } },
+      jogo:   { captura: { w: 2560, h: 1440, fps: 60,  hint: 'motion' }, envio: { kbps: 12000 } },
+      max:    { captura: { w: 3840, h: 2160, fps: 60,  hint: 'motion' }, envio: { kbps: 25000 } },
     }
-    let qualidade = { ...PRESETS.equil }
-    const CAP_CAM = 800_000   // rosto não precisa do bitrate de tela
-
-    // Em malha você envia uma cópia para CADA par, e as conexões não coordenam
-    // entre si: cada uma sonda a banda sozinha e a que subir primeiro fica com
-    // ela. Declarar o teto POR PAR faz a subida total crescer a cada pessoa que
-    // entra. Declarar o total e dividir é o que evita uma conexão matar a outra.
-    const kbpsPorPar = () => {
-      const orc = +($('orc')?.value || 0)
-      if (!orc) return qualidade.kbps
-      return Math.min(qualidade.kbps, Math.floor(orc / Math.max(1, pares.size)))
-    }
-    // Toda tela vai a todo par, mesmo que ele só olhe uma: dividem o teto.
-    const kbpsPorTela = () => Math.floor(kbpsPorPar() / Math.max(1, telas.length))
+    const copiarPreset = p => ({ captura: { ...p.captura }, envio: { ...p.envio } })
+    let qualidade = copiarPreset(PRESETS.equil)
+    // Rosto se move: quadros valem mais que nitidez, e não precisa do bitrate de tela.
+    const CAMERA = { captura: { w: 1280, h: 720, fps: 30, hint: 'motion' }, envio: { kbps: 800 } }
 
     let ws, meuId, ice, micStream, camStream
     // Cada tela é um MediaStream próprio, na ordem em que foi aberta. Só uma leva
@@ -370,7 +367,43 @@
 
     // Sem mic é o mesmo que mudo do ponto de vista de quem olha o tile.
     const estouMudo = () => !micStream || !micStream.getAudioTracks()[0]?.enabled
-    const pares = new Map()
+
+    // O que esta aba publica, como fontes lógicas (fontes.js). micStream,
+    // camStream e telas continuam sendo a captura; o transporte só vê fontes.
+    const fontes = disgalmFontes.criarRegistro()
+    let fonteMic = null
+
+    // Quem está na sala, como a interface mostra: nome, foto, estado anunciado e
+    // a mídia recebida. Não guarda conexão: isso é do transporte.
+    const pessoas = new Map()
+    const nomeDe = id => pessoas.get(id)?.nome ?? nomes.get(id)
+
+    const transporte = criarTransporteMesh({
+      meuId: () => meuId,
+      nome: nomeDe,
+      ice: () => ice,
+      soRelay: () => $('sorelay').checked,
+      sinalizar: (para, data) => sinalizar(para, data),
+      sinalizacaoAberta: () => ws?.readyState === 1,
+      fontes,
+      log: (...a) => log(...a),
+      telemetria: (evento, campos) => telemetria(evento, campos),
+      pessoaConectando: (id, nome) => novaPessoa(id, nome),
+      pessoaDesconectando: (id, p) => {
+        // Quem sai leva as amostras junto; o relatório ainda precisa delas.
+        saidos.push({ ...estadoPar([id, p]), saiuEm: new Date().toISOString() })
+        if (saidos.length > 8) saidos.shift()
+        informarRelay(id, p)
+      },
+      pessoaDesconectada: id => removerPessoa(id),
+      pessoaReconectada: id => { anunciar(id); redividir() },
+      trackRecebida: (id, track, stream) => receberTrack(id, track, stream),
+      conexaoMudou: () => limparAusentes(),
+      amostrar: (id, pc, anteriores) => atualizarVideo(id, pc, anteriores),
+      relayUsado: (id, p) => informarRelay(id, p),
+    })
+    // Mapa id → conexão da malha, para o diagnóstico e o relatório.
+    const pares = transporte.pares
 
     // ---------- estado anunciado ----------
     // O receptor não tem como saber, olhando a track, se um áudio é voz ou tela.
@@ -395,8 +428,11 @@
         // chamada avisa por aqui, junto com a foto da conta.
         nome: perfil.nome,
         foto: perfil.foto,
+        // Fontes com id lógico, tipo, geração e tela. Clientes anteriores
+        // ignoram o campo e continuam pelos streamIds acima.
+        fontes: fontes.catalogo(),
       }
-      const alvos = para ? [para] : [...pares.keys()]
+      const alvos = para ? [para] : [...pessoas.keys()]
       for (const id of alvos) sinalizar(id, { estado: est })
       avisarBandeja()
     }
@@ -429,6 +465,8 @@
     }
 
     function pararMic() {
+      if (fonteMic) { transporte.parar(fonteMic); fontes.fechar(fonteMic) }
+      fonteMic = null
       mic?.parar()
       mic = null
       micStream = null
@@ -448,6 +486,7 @@
         mic = await abrirMic()
         micStream = mic.stream
         micStream.getAudioTracks()[0].enabled = !$('b-mic').classList.contains('cortado')
+        fonteMic = fontes.abrir('mic', micStream.getAudioTracks()[0], micStream)
         $('b-mic').disabled = false
         medirFala('local', micStream)
       } catch (e) {
@@ -479,9 +518,10 @@
       const tAntiga = micStream.getAudioTracks()[0]
       const tNova = novo.stream.getAudioTracks()[0]
       tNova.enabled = tAntiga.enabled
-      for (const [, p] of pares)
-        for (const sd of p.pc.getSenders())
-          if (sd.track === tAntiga) await sd.replaceTrack(tNova)
+      if (fonteMic) {
+        await transporte.substituir(fonteMic, tNova)
+        fontes.substituir(fonteMic, tNova, novo.stream)
+      }
       mic = novo
       micStream = novo.stream
       antigo.parar()
@@ -582,16 +622,17 @@
       if (camStream) return pararCam()
       // Virar escolhe pelo lado; sem isso vale o dispositivo escolhido nos ajustes.
       const dev = lado ? '' : $('camdev').value
+      const c = CAMERA.captura
       camStream = await navigator.mediaDevices.getUserMedia({
         video: {
           ...(dev ? { deviceId: { exact: dev } } : { facingMode: lado || ladoCam }),
-          width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 },
+          width: { ideal: c.w }, height: { ideal: c.h }, frameRate: { ideal: c.fps },
         },
       })
       const t = camStream.getVideoTracks()[0]
-      t.contentHint = 'motion'                  // rosto se move: quadros valem mais que nitidez
+      t.contentHint = c.hint
       t.onended = () => pararCam()
-      for (const [, p] of pares) p.pc.addTrack(t, camStream)
+      transporte.publicar(fontes.abrir('camera', t, camStream))
       $('b-cam').classList.replace('cortado', 'on')
       controle('b-cam', 'Desligar câmera')
       await listarCams()                        // os rótulos só existem depois da permissão
@@ -599,7 +640,7 @@
       if (cfg.deviceId) $('camdev').value = cfg.deviceId
       ladoCam = cfg.facingMode || ladoCam
       $('b-virar').hidden = !cfg.facingMode || $('camdev').options.length < 2
-      telemetria('camera', { ligada: true, lado: cfg.facingMode ?? null, res: `${cfg.width}x${cfg.height}`, pares: pares.size })
+      telemetria('camera', { ligada: true, lado: cfg.facingMode ?? null, res: `${cfg.width}x${cfg.height}`, pares: pessoas.size })
       desenharTile('local')
       anunciar()
       aplicarQualidade()
@@ -607,11 +648,8 @@
 
     function pararCam() {
       if (!camStream) return
-      const ts = camStream.getTracks()
-      for (const [, p] of pares)
-        for (const sd of p.pc.getSenders())
-          if (sd.track && ts.includes(sd.track)) p.pc.removeTrack(sd)
-      for (const t of ts) t.stop()
+      for (const f of fontes.doStream(camStream)) { transporte.parar(f); fontes.fechar(f) }
+      for (const t of camStream.getTracks()) t.stop()
       camStream = null
       telemetria('camera', { ligada: false })
       $('b-cam').classList.replace('on', 'cortado')
@@ -637,7 +675,7 @@
     }
 
     async function adicionarTela() {
-      const q = qualidade
+      const q = qualidade.captura
       // Só pede áudio se nenhuma tela aberta já leva o do sistema.
       const comAudio = !telas.some(t => t.getAudioTracks().length)
       const nativo = comAudio && usarSemDiscord() ? await audioSemDiscord() : null
@@ -673,7 +711,10 @@
         t.onended = () => pararTelaPeloNavegador(tela)
       }
       telas.push(tela)
-      for (const [, p] of pares) for (const t of tela.getTracks()) p.pc.addTrack(t, tela)
+      // Vídeo e áudio da mesma tela levam o mesmo id lógico de tela.
+      const idTela = fontes.novaTela()
+      for (const t of tela.getTracks())
+        transporte.publicar(fontes.abrir(t.kind === 'video' ? 'tela-video' : 'tela-audio', t, tela, { tela: idTela }))
       atualizarBotoesTela()
       desenharTile('local')
       telaVista.set('local', tela.id)
@@ -682,13 +723,12 @@
       aplicarQualidade()
     }
 
-    // Recria a captura da primeira tela na qualidade atual e troca a track nos
-    // senders existentes. replaceTrack não renegocia, então o receptor nem vê
-    // troca — e some o transceiver morto que o par removeTrack/addTrack deixava.
+    // Recria a captura da primeira tela na qualidade atual e troca a track das
+    // fontes dela: mesmo id lógico, geração seguinte, sem renegociar.
     async function recapturar() {
       const tela = telas[0]
       if (!tela) return
-      const q = qualidade
+      const q = qualidade.captura
       // O áudio nativo não depende da captura de vídeo: fica como está.
       const nativo = tela.getAudioTracks().some(t => t.disgalmNativo)
       const novo = await navigator.mediaDevices.getDisplayMedia({
@@ -698,9 +738,11 @@
 
       const trocar = async (antigo, novoT) => {
         if (!novoT) return
-        for (const [, p] of pares)
-          for (const sd of p.pc.getSenders())
-            if (sd.track === antigo) await sd.replaceTrack(novoT)
+        const fonte = antigo && fontes.porTrack(antigo)
+        if (fonte) {
+          await transporte.substituir(fonte, novoT)
+          fontes.substituir(fonte, novoT)
+        }
         if (antigo) { tela.removeTrack(antigo); antigo.stop() }
         tela.addTrack(novoT)
       }
@@ -724,11 +766,8 @@
       const i = telas.indexOf(tela)
       if (i < 0) return
       telas.splice(i, 1)
-      const tracks = tela.getTracks()
-      for (const [, p] of pares)
-        for (const s of p.pc.getSenders())
-          if (s.track && tracks.includes(s.track)) p.pc.removeTrack(s)
-      for (const t of tracks) t.stop()
+      for (const f of fontes.doStream(tela)) { transporte.parar(f); fontes.fechar(f) }
+      for (const t of tela.getTracks()) t.stop()
       atualizarBotoesTela()
       desenharTile('local')
       if (foco === 'local') focar(telas.length ? 'local' : proximoComVideo())
@@ -772,11 +811,15 @@
       $('b-tela').setAttribute('aria-expanded', String(!$('menu-telas').hidden))
     }
 
-    // Aplica resolução/fps na captura e bitrate/fps no encoder de cada par.
+    // O transporte diz quantas cópias saem e quanto cabe em cada tela.
+    const planoEnvio = () => transporte.planejarEnvio({
+      kbpsTela: qualidade.envio.kbps, orcamentoKbps: +($('orc')?.value || 0), telas: telas.length })
+
+    // Aplica resolução/fps na captura e bitrate/fps no encoder de cada fonte.
     // Depois relata PEDIDO vs OBTIDO: a captura não entrega 4K se o monitor não
     // for 4K, e nesse caso o número escolhido é ficção.
     async function aplicarQualidade() {
-      const q = qualidade
+      const q = qualidade.captura
       const vt = telas[0]?.getVideoTracks()[0]
 
       for (const t of telas.flatMap(t => t.getVideoTracks())) {
@@ -790,24 +833,15 @@
         } catch (e) { log('applyConstraints:', e.message) }
       }
 
-      for (const [, p] of pares)
-        for (const s of p.pc.getSenders()) {
-          if (s.track?.kind !== 'video') continue
-          const par = s.getParameters()
-          par.encodings = par.encodings?.length ? par.encodings : [{}]
-          // Câmera e tela dividem o mesmo uplink mas não o mesmo teto: rosto em
-          // 800 kbps é bom, e o resto fica para a tela.
-          const ehCam = !!camStream?.getVideoTracks().includes(s.track)
-          par.encodings[0].maxBitrate = ehCam ? CAP_CAM : kbpsPorTela() * 1000
-          par.encodings[0].maxFramerate = ehCam ? 30 : q.fps
-          // Tela ilegível é pior que tela lenta: sem banda, o encoder descarta
-          // quadros e mantém a resolução. A câmera segue a dica 'motion'.
-          if (!ehCam) par.degradationPreference = 'maintain-resolution'
-          await s.setParameters(par).catch(e => log('setParameters:', e.message))
-          const aplicada = s.getParameters().degradationPreference
-          if (!ehCam && aplicada !== 'maintain-resolution')
-            log(`navegador não aplicou maintain-resolution na tela (ficou ${aplicada ?? 'sem valor'})`)
-        }
+      const { kbpsPorTela } = planoEnvio()
+      await transporte.aplicarEnvio(fonte =>
+        // Câmera e tela dividem o mesmo uplink mas não o mesmo teto: rosto em
+        // 800 kbps é bom, e o resto fica para a tela.
+        fonte.tipo === 'camera' ? { maxBitrate: CAMERA.envio.kbps * 1000, maxFramerate: CAMERA.captura.fps }
+        // Tela ilegível é pior que tela lenta: sem banda, o encoder descarta
+        // quadros e mantém a resolução. A câmera segue a dica 'motion'.
+        : fonte.tipo === 'tela-video' ? { maxBitrate: kbpsPorTela * 1000, maxFramerate: q.fps, degradacao: 'maintain-resolution' }
+        : null)
 
       const s = vt?.getSettings()
       if (s) {
@@ -831,11 +865,12 @@
     // se 4K60 é viável no seu link, e ela cresce com o número de pessoas.
     function custoUpload() {
       if (!telas.length && !camStream) return ''
-      const n = Math.max(1, pares.size)
-      const por = (telas.length ? kbpsPorPar() : 0) + (camStream ? CAP_CAM / 1000 : 0)
+      const { copias: n, kbpsPorCopia } = planoEnvio()
+      const teto = qualidade.envio.kbps
+      const por = (telas.length ? kbpsPorCopia : 0) + (camStream ? CAMERA.envio.kbps : 0)
       const tot = (por * n / 1000).toFixed(1)
-      const cortado = telas.length && kbpsPorPar() < qualidade.kbps
-        ? ` (teto ${qualidade.kbps / 1000} cortado p/ ${kbpsPorPar() / 1000})` : ''
+      const cortado = telas.length && kbpsPorCopia < teto
+        ? ` (teto ${teto / 1000} cortado p/ ${kbpsPorCopia / 1000})` : ''
       return ` · teto de vídeo ${tot} Mbps = ${por / 1000} × ${n}${cortado}`
     }
 
@@ -862,7 +897,7 @@
       if (id === 'local') return { nome: perfil.nome || 'Você', foto: perfil.foto, telas, cam: camStream, local: true,
         estado: { compartilhando: telas.length > 0, temAudio: telas.some(t => t.getAudioTracks().length),
                   camera: !!camStream, mudo: estouMudo(), surdo } }
-      const p = pares.get(id)
+      const p = pessoas.get(id)
       return p && { nome: p.nome, foto: p.foto, telas: [...p.telas.values()], cam: p.cam, estado: p.estado, local: false }
     }
 
@@ -923,7 +958,7 @@
       el.classList.toggle('traseira', !!d.local && ladoCam === 'environment')
 
       for (const inp of el.querySelectorAll('.vols input')) {
-        const p = pares.get(id)
+        const p = pessoas.get(id)
         inp.value = p?.volumes[inp.dataset.tipo] ?? 1
         inp.oninput = () => {
           p.volumes[inp.dataset.tipo] = +inp.value
@@ -981,7 +1016,7 @@
       $('palco-live').hidden = !d?.estado?.compartilhando
       $('palco-semaudio').hidden = !(d?.estado?.compartilhando && !d?.estado?.temAudio)
       $('palco-vol').disabled = !d || d.local
-      $('palco-vol').value = (id && pares.get(id)?.volumes.tela) ?? 1
+      $('palco-vol').value = (id && pessoas.get(id)?.volumes.tela) ?? 1
       for (const el of document.querySelectorAll('.tile')) el.classList.toggle('focado', el.id === 't-' + id)
     }
 
@@ -1008,14 +1043,14 @@
     }
 
     const proximoComVideo = () =>
-      [...pares.keys()].find(id => pares.get(id).telas.size) ||
-      [...pares.keys()].find(id => pares.get(id).cam.getVideoTracks().length) ||
+      [...pessoas.keys()].find(id => pessoas.get(id).telas.size) ||
+      [...pessoas.keys()].find(id => pessoas.get(id).cam.getVideoTracks().length) ||
       (telas.length || camStream ? 'local' : null)
 
     // ---------- áudio recebido ----------
 
     function aplicarVolumes(id) {
-      const p = pares.get(id)
+      const p = pessoas.get(id)
       if (!p) return
       for (const [, a] of p.audios) a.el.volume = surdo ? 0 : (p.volumes[a.tipo] ?? 1)
     }
@@ -1038,7 +1073,7 @@
     // <video> segue exibindo o último quadro para sempre. Então quem manda é o
     // anúncio: track cujo streamId não é mais anunciado está morta e sai.
     function classificarVideo(id) {
-      const p = pares.get(id)
+      const p = pessoas.get(id)
       if (!p) return
       const e = p.estado || {}
       const sabemos = 'compartilhando' in e     // já recebemos anúncio deste par?
@@ -1072,7 +1107,7 @@
     const idsTelas = e => e.idsTelas || [e.streamId, e.idTela2].filter(Boolean)
 
     function classificar(id) {
-      const p = pares.get(id)
+      const p = pessoas.get(id)
       if (!p) return
       const ids = idsTelas(p.estado || {})
       for (const [sid, a] of p.audios) a.tipo = ids.includes(sid) ? 'tela' : 'voz'
@@ -1080,7 +1115,7 @@
     }
 
     function receberAudio(id, track, streamId) {
-      const p = pares.get(id)
+      const p = pessoas.get(id)
       if (!p) return
       const el = document.createElement('audio')
       el.autoplay = true
@@ -1101,7 +1136,7 @@
       ctx.createMediaStreamSource(stream).connect(an)
       const buf = new Float32Array(an.fftSize)
       const tick = () => {
-        if (id !== 'local' && !pares.has(id)) return
+        if (id !== 'local' && !pessoas.has(id)) return
         if (stream.getAudioTracks().every(t => t.readyState === 'ended')) return ctx.close()
         an.getFloatTimeDomainData(buf)
         let s = 0
@@ -1113,187 +1148,41 @@
       tick()
     }
 
-    // ---------- Opus estéreo ----------
-
-    const OPUS = 'stereo=1;sprop-stereo=1;maxaveragebitrate=128000;useinbandfec=1'
-
-    function opusEstereo(sdp) {
-      const linhas = sdp.split(/\r\n|\n/)
-      const pts = linhas.flatMap(l => l.match(/^a=rtpmap:(\d+) opus\/48000\/2$/)?.[1] ?? [])
-      for (const pt of pts) {
-        const i = linhas.findIndex(l => l.startsWith(`a=fmtp:${pt} `))
-        if (i >= 0) {
-          if (!linhas[i].includes('stereo=1')) linhas[i] += ';' + OPUS
-        } else {
-          const j = linhas.findIndex(l => l.startsWith(`a=rtpmap:${pt} `))
-          linhas.splice(j + 1, 0, `a=fmtp:${pt} ${OPUS}`)
-        }
-      }
-      return linhas.join('\r\n')
-    }
-
-    async function definirLocal(pc) {
-      const sd = pc.signalingState === 'have-remote-offer' ? await pc.createAnswer() : await pc.createOffer()
-      sd.sdp = opusEstereo(sd.sdp)
-      await pc.setLocalDescription(sd)
-    }
-
-    // ---------- WebRTC ----------
-
-    // Papel no perfect negotiation vem da ordem dos ids, não de quem chegou
-    // primeiro: depois de uma queda os dois lados podem recriar a conexão ao
-    // mesmo tempo, e só uma regra simétrica garante um polite e um impolite.
-    function criarPar(id, nome) {
-      const polite = meuId < id
-      // 'relay' descarta candidatos host e srflx: se conectar assim, foi TURN de
-      // verdade. Sem isso, o par quase sempre fecha direto e o TURN nunca é exercido.
-      const pc = new RTCPeerConnection({
-        iceServers: ice,
-        iceTransportPolicy: $('sorelay').checked ? 'relay' : 'all',
-      })
+    // ---------- pessoas ----------
+    // A mídia com a pessoa começou do zero (conexão nova ou refeita): o que
+    // chegou antes não vale mais, e o estado volta a esperar o anúncio dela.
+    function novaPessoa(id, nome) {
       nomes.set(id, nome)
-      // Cada conexão tem id próprio, que vai em toda mensagem: é assim que se
-      // percebe que o outro lado recriou a dele e a nossa ficou órfã.
-      const p = { pc, polite, fazendoOferta: false, ignorandoOferta: false, nome,
-                  conexao: Math.random().toString(36).slice(2, 10), remota: null,
-                  // tela e câmera são as duas vídeo: só o streamId anunciado separa.
-                  videos: new Map(), telas: new Map(), cam: new MediaStream(),
-                  audios: new Map(), volumes: { voz: 1, tela: 1 }, estado: {},
-                  amostras: [], relato: null }
-      pares.set(id, p)
-      telemetria('par_criado', { par: id, polite, soRelay: $('sorelay').checked,
-        enviaCam: !!camStream, enviaTelas: telas.length, enviaMic: !!micStream })
+      pessoas.set(id, { nome, foto: null,
+                        // tela e câmera são as duas vídeo: só o streamId anunciado separa.
+                        videos: new Map(), telas: new Map(), cam: new MediaStream(),
+                        audios: new Map(), volumes: { voz: 1, tela: 1 }, estado: {} })
       desenharTile(id)
-
-      // Quem recebe a imagem ruim não sabe por que o emissor degradou; quem envia
-      // sabe. Cada lado manda ao outro o próprio envio por este canal. Negociado
-      // com id fixo: os dois lados o criam e ninguém depende de ondatachannel.
-      // Par direto, então não custa mensagem no Durable Object da sinalização.
-      p.canal = pc.createDataChannel('telemetria', { negotiated: true, id: 0 })
-      p.canal.onmessage = e => {
-        try { p.relato = { ...JSON.parse(e.data), recebidoEm: Date.now() } }
-        catch { log(`relato inválido de ${nome}`) }
-      }
-
-      if (micStream) for (const t of micStream.getTracks()) pc.addTrack(t, micStream)
-      for (const tela of telas) for (const t of tela.getTracks()) pc.addTrack(t, tela)
-      if (camStream) for (const t of camStream.getTracks()) pc.addTrack(t, camStream)
-
-      pc.ontrack = e => {
-        const sid = e.streams[0]?.id || 'sem-stream'
-        log(`track ${e.track.kind} de ${nome}`)
-        telemetria('track', { par: id, tipo: e.track.kind, temStream: !!e.streams[0],
-          eCam: sid === p.estado?.idCam, mudo: e.track.muted })
-        if (e.track.kind === 'audio') return receberAudio(id, e.track, sid)
-
-        p.videos.set(sid, e.track)
-        e.track.addEventListener('ended', () => { p.videos.delete(sid); classificarVideo(id) })
-        classificarVideo(id)
-        if (!foco || foco === 'local' && !telas.length) focar(id)
-      }
-
-      const tipos = new Set()
-      pc.onicecandidate = e => {
-        if (!e.candidate) {
-          telemetria('candidatos_locais', { par: id, tipos: [...tipos].join(',') || 'nenhum' })
-          return log(`candidatos de ${nome}: ${[...tipos].join(', ') || 'NENHUM'}`)
-        }
-        if (!tipos.has(e.candidate.type)) {
-          tipos.add(e.candidate.type)
-          log(`candidato ${e.candidate.type}/${e.candidate.protocol} para ${nome}`)
-        }
-        sinalizar(id, { candidate: e.candidate })
-      }
-      pc.onicecandidateerror = e => {
-        log(`ICE erro ${e.errorCode} em ${e.url} — ${e.errorText}`)
-        telemetria('ice_erro', { par: id, codigo: e.errorCode, url: e.url, texto: e.errorText })
-      }
-
-      pc.oniceconnectionstatechange = () => {
-        log(`${nome}: ${pc.iceConnectionState}`)
-        telemetria('ice', { par: id, estado: pc.iceConnectionState })
-        if (pc.iceConnectionState === 'connected') { tipoDeCaminho(id, pc); acompanharVideo(id, pc) }
-        if (pc.iceConnectionState === 'failed') {
-          porQueFalhou(id, pc)
-          // Rede trocada no meio da chamada: novos candidatos, mesma conexão.
-          if (ws?.readyState === 1) pc.restartIce()
-        }
-      }
-      pc.onconnectionstatechange = () => {
-        log(`${nome}: conexão ${pc.connectionState}`)
-        telemetria('conexao', { par: id, estado: pc.connectionState })
-        if (pares.get(id)?.pc === pc) limparAusentes()
-      }
-
-      // A primeira oferta é sempre do impolite. Se as duas pontas oferecem juntas
-      // e a polite tem mais mídia (câmera ligada, a outra não), o Chromium falha
-      // ao responder depois do rollback ("Failed to start SCTP transport") e a
-      // conexão nunca sai de 'new'. Era o caso de dois celulares. O evento volta
-      // a disparar quando a resposta deixa a conexão estável. Se a polite recriou
-      // a conexão sozinha (retomada com a antiga morta), ninguém mais oferece:
-      // depois de 3 s sem oferta, ela oferece como antes.
-      pc.onnegotiationneeded = async () => {
-        if (polite && !pc.remoteDescription) {
-          if (!p.esperandoOferta) p.esperandoOferta = setTimeout(() => {
-            if (pares.get(id) === p && !pc.remoteDescription && pc.signalingState === 'stable') negociar()
-          }, 3000)
-          return
-        }
-        return negociar()
-      }
-      const negociar = async () => {
-        try {
-          p.fazendoOferta = true
-          await definirLocal(pc)
-          sinalizar(id, { description: pc.localDescription })
-        } catch (e) { log('negotiationneeded:', e.message); telemetria('negociacao_erro', { par: id, erro: e.message }) }
-        finally { p.fazendoOferta = false }
-      }
-      return p
     }
 
-    async function tipoDeCaminho(id, pc) {
-      const st = await pc.getStats()
-      let atual
-      st.forEach(r => { if (r.type === 'candidate-pair' && r.state === 'succeeded' && r.nominated) atual = r })
-      if (!atual) return
-      const l = st.get(atual.localCandidateId), r = st.get(atual.remoteCandidateId)
-      const via = l?.candidateType === 'relay' || r?.candidateType === 'relay' ? 'RELAY (TURN)' : 'direto'
-      // Com dois TURN na lista, saber que houve relay não diz qual respondeu. O
-      // endereço do candidato relay é o do servidor que alocou.
-      const quem = l?.candidateType === 'relay' ? ` via ${l.address}` : ''
-      log(`caminho com ${pares.get(id)?.nome}: ${via}${quem} — ${l?.candidateType}/${r?.candidateType}`)
-      telemetria('caminho', { par: id, local: l?.candidateType, protocolo: l?.relayProtocol ?? l?.protocol,
-        remoto: r?.candidateType, relay: l?.candidateType === 'relay' ? l.url ?? null : null })
+    function removerPessoa(id) {
+      const p = pessoas.get(id)
+      if (!p) return
+      for (const [, a] of p.audios) a.el.remove()
+      pessoas.delete(id)
+      document.getElementById('t-' + id)?.remove()
+      if (foco === id) focar(proximoComVideo())
+      redividir()
     }
 
-    async function porQueFalhou(id, pc) {
-      const st = await pc.getStats()
-      const cand = new Map()
-      st.forEach(r => { if (r.type.endsWith('candidate')) cand.set(r.id, r) })
-      const linhas = []
-      st.forEach(r => {
-        if (r.type !== 'candidate-pair') return
-        const l = cand.get(r.localCandidateId), rm = cand.get(r.remoteCandidateId)
-        linhas.push(`  ${l?.candidateType}/${l?.protocol} → ${rm?.candidateType}: ${r.state}`)
-      })
-      const remotos = new Set([...cand.values()].filter(c => c.type === 'remote-candidate').map(c => c.candidateType))
-      telemetria('ice_falhou', { par: id, pares: linhas.map(l => l.trim()).slice(0, 30),
-        candidatosRemotos: [...remotos].join(',') || 'nenhum' })
-      log(`por que falhou com ${pares.get(id)?.nome}:\n${linhas.join('\n') || '  nenhum par formado'}`)
-    }
+    function receberTrack(id, track, stream) {
+      const p = pessoas.get(id)
+      if (!p) return
+      const sid = stream?.id || 'sem-stream'
+      log(`track ${track.kind} de ${p.nome}`)
+      telemetria('track', { par: id, tipo: track.kind, temStream: !!stream,
+        eCam: sid === p.estado?.idCam, mudo: track.muted })
+      if (track.kind === 'audio') return receberAudio(id, track, sid)
 
-    function acompanharVideo(id, pc) {
-      const p = pares.get(id)
-      // ICE volta a 'connected' depois de cada 'disconnected': sem a trava, cada
-      // volta somava outro timer e duplicava as amostras.
-      if (!p || p.timer) return
-      const anteriores = new Map()
-      p.timer = setInterval(async () => {
-        if (pares.get(id) !== p) return clearInterval(p.timer)
-        try { await atualizarVideo(id, pc, anteriores) }
-        catch (e) { log(`estatísticas de vídeo: ${e.message}`) }
-      }, 2000)
+      p.videos.set(sid, track)
+      track.addEventListener('ended', () => { p.videos.delete(sid); classificarVideo(id) })
+      classificarVideo(id)
+      if (!foco || foco === 'local' && !telas.length) focar(id)
     }
 
     // ---------- telemetria ----------
@@ -1371,7 +1260,7 @@
       return {
         maxKbps: e?.maxBitrate && e.maxBitrate / 1000, maxFps: e?.maxFramerate,
         degradacao: par.degradationPreference, dica: track.contentHint,
-        pedido: `${qualidade.w}x${qualidade.h}@${qualidade.fps}`,
+        pedido: `${qualidade.captura.w}x${qualidade.captura.h}@${qualidade.captura.fps}`,
       }
     }
 
@@ -1401,14 +1290,14 @@
     // Só transições entram no log; o resto fica nas amostras.
     function registrarMudancas(id, p, a) {
       const caminho = a.transporte?.caminho
-      if (caminho && caminho !== p.caminho) log(`caminho com ${p.nome}: ${caminho}`)
+      if (caminho && caminho !== p.caminho) log(`caminho com ${nomeDe(id)}: ${caminho}`)
       p.caminho = caminho ?? p.caminho
       const limite = a.envio?.limite
       if (limite && limite !== p.limite && (limite !== 'none' || p.limite))
-        log(`envio para ${p.nome}: ${limite === 'none' ? 'sem limitação' : `limitado por ${limite}`} em ` +
+        log(`envio para ${nomeDe(id)}: ${limite === 'none' ? 'sem limitação' : `limitado por ${limite}`} em ` +
             `${a.envio.res} ${a.envio.fps ?? '?'}fps, estimativa ${a.transporte?.bweKbps ?? '?'}kbps`)
       p.limite = limite ?? p.limite
-      if (a.causa && a.causa !== p.causa) log(`vídeo de ${p.nome}: ${a.causa}`)
+      if (a.causa && a.causa !== p.causa) log(`vídeo de ${nomeDe(id)}: ${a.causa}`)
       const resumo = JSON.stringify([a.envio?.limite, a.envio?.res, a.recebe?.res, !!a.recebe, !!a.envio, caminho])
       if (resumo !== p.resumoEnvio) {
         p.resumoEnvio = resumo
@@ -1447,13 +1336,13 @@
 
     async function atualizarVideo(id, pc, anteriores) {
       const st = await pc.getStats()
-      const p = pares.get(id)
-      if (!p || p.pc !== pc) return
+      const p = pares.get(id), pessoa = pessoas.get(id)
+      if (!p || p.pc !== pc || !pessoa) return
       const videoLocal = telas[0]?.getVideoTracks()[0] || camStream?.getVideoTracks()[0]
-      const videoRemoto = [...p.telas.values()][0]?.getVideoTracks()[0] || p.cam.getVideoTracks()[0]
-      let recebido, enviado, retorno, transporte
+      const videoRemoto = [...pessoa.telas.values()][0]?.getVideoTracks()[0] || pessoa.cam.getVideoTracks()[0]
+      let recebido, enviado, retorno, transp
       st.forEach(r => {
-        if (r.type === 'transport') transporte ??= r
+        if (r.type === 'transport') transp ??= r
         if (r.kind !== 'video') return
         if (r.type === 'inbound-rtp' && videoRemoto && r.trackIdentifier === videoRemoto.id) recebido = r
         if (r.type === 'outbound-rtp' && videoLocal &&
@@ -1476,7 +1365,7 @@
           ` · ${bytes === undefined ? '?' : Math.round(bytes * 8 / 1000)}kbps`
       }
 
-      const cp = st.get(st.get((enviado || recebido)?.transportId ?? transporte?.id)?.selectedCandidatePairId)
+      const cp = st.get(st.get((enviado || recebido)?.transportId ?? transp?.id)?.selectedCandidatePairId)
       registrarRelay(p, st, cp)
       const a = {
         t: Date.now(),
@@ -1486,7 +1375,7 @@
         config: configEnvio(pc, videoLocal),
       }
       if (p.relato && a.t - p.relato.recebidoEm < 6000) a.relato = p.relato
-      a.causa = diagnosticar(a.recebe, a.relato, p.nome)
+      a.causa = diagnosticar(a.recebe, a.relato, pessoa.nome)
       p.amostras.push(a)
       if (p.amostras.length > MAX_AMOSTRAS) p.amostras.shift()
       if (p.canal?.readyState === 'open')
@@ -1522,8 +1411,8 @@
     }
 
     const estadoPar = ([id, p]) => ({
-      id, nome: p.nome, conexao: p.pc.connectionState, ice: p.pc.iceConnectionState,
-      negociacao: p.pc.signalingState, canal: p.canal?.readyState, estado: p.estado, amostras: p.amostras,
+      id, nome: nomeDe(id), conexao: p.pc.connectionState, ice: p.pc.iceConnectionState,
+      negociacao: p.pc.signalingState, canal: p.canal?.readyState, estado: pessoas.get(id)?.estado, amostras: p.amostras,
     })
 
     // Tudo o que é preciso para achar a causa sem ter estado na chamada.
@@ -1549,55 +1438,21 @@
       setTimeout(() => URL.revokeObjectURL(url), 1000)
     }
 
+    // Estado é da pessoa, não da conexão: vale venha de qual instância vier. O
+    // resto (descrição e candidatos) é do transporte.
     async function receberSinal(id, data) {
-      let p = pares.get(id)
-      // Estado é da pessoa, não da conexão: vale venha de qual instância vier.
-      if (data.estado) {
-        if (!p) return
-        p.estado = data.estado
-        const nome = typeof data.estado.nome === 'string' ? data.estado.nome.trim().slice(0, 24).trim() : ''
-        const foto = fotoValida(data.estado.foto)
-        const mudou = (nome && nome !== p.nome) || foto !== (p.foto ?? null)
-        if (nome) { p.nome = nome; nomes.set(id, nome) }
-        p.foto = foto
-        classificar(id)
-        classificarVideo(id)
-        if (mudou) { desenharTile(id); atualizarParticipantes() }
-        return
-      }
-      // Oferta de outra instância: o outro lado recriou a conexão (voltou de uma
-      // queda, ou achou a nossa morta). A nossa não tem mais par; recria e aceita.
-      if (data.de && data.description?.type === 'offer' && (!p || (p.remota && p.remota !== data.de))) {
-        log(`${nomes.get(id) ?? id} recriou a conexão — recriando a nossa`)
-        telemetria('par_recriado', { par: id })
-        removerPar(id)
-        p = criarPar(id, nomes.get(id) ?? '?')
-        anunciar(id)
-        redividir()
-      }
+      if (!data.estado) return transporte.receberSinal(id, data)
+      const p = pessoas.get(id)
       if (!p) return
-      if (data.de) {
-        if (p.remota && p.remota !== data.de) return      // resto da instância velha
-        p.remota = data.de
-      }
-      const { pc } = p
-      try {
-        if (data.description) {
-          const colisao = data.description.type === 'offer' && (p.fazendoOferta || pc.signalingState !== 'stable')
-          p.ignorandoOferta = !p.polite && colisao
-          if (p.ignorandoOferta) {
-            telemetria('oferta_ignorada', { par: id })
-            return log(`oferta ignorada de ${p.nome} (impolite)`)
-          }
-          await pc.setRemoteDescription(data.description)
-          if (data.description.type === 'offer') {
-            await definirLocal(pc)
-            sinalizar(id, { description: pc.localDescription })
-          }
-        } else if (data.candidate) {
-          try { await pc.addIceCandidate(data.candidate) } catch (e) { if (!p.ignorandoOferta) throw e }
-        }
-      } catch (e) { log('sinal:', e.message); telemetria('sinal_erro', { par: id, erro: e.message }) }
+      p.estado = data.estado
+      const nome = typeof data.estado.nome === 'string' ? data.estado.nome.trim().slice(0, 24).trim() : ''
+      const foto = fotoValida(data.estado.foto)
+      const mudou = (nome && nome !== p.nome) || foto !== (p.foto ?? null)
+      if (nome) { p.nome = nome; nomes.set(id, nome) }
+      p.foto = foto
+      classificar(id)
+      classificarVideo(id)
+      if (mudou) { desenharTile(id); atualizarParticipantes() }
     }
 
     // ---------- sinalização ----------
@@ -1616,9 +1471,10 @@
     const naSala = new Set()        // quem o servidor diz estar na sala agora
 
     const nomes = new Map()         // id → nome, para recriar par sem o aviso de entrada
+    // O transporte acrescenta o id da conexão dele ao que é dele; o anúncio de
+    // estado é da pessoa e vai sem.
     const sinalizar = (to, data) => ws?.readyState === 1 &&
-      ws.send(JSON.stringify({ t: 'signal', to, data: { ...data, de: pares.get(to)?.conexao } }))
-    const morto = pc => pc.connectionState === 'failed' || pc.connectionState === 'closed'
+      ws.send(JSON.stringify({ t: 'signal', to, data }))
 
     // Identifica a aba, não a carga da página: sobrevive ao F5. É assim que o
     // servidor reconhece o id antigo desta aba como fantasma e avisa a saída.
@@ -1644,8 +1500,8 @@
         visivel: globalThis.document?.visibilityState ?? null, online: globalThis.navigator?.onLine ?? null })
       log(`${new Date().toISOString()} sinalização fechou: código=${ev.code}; ` +
           `motivo=${ev.reason || '(não informado)'}; fechamento completo=${ev.wasClean}`)
-      for (const [, p] of pares)
-        log(`conexão com ${p.nome}: ${p.pc.connectionState}; ICE=${p.pc.iceConnectionState}`)
+      for (const [id, p] of pares)
+        log(`conexão com ${nomeDe(id)}: ${p.pc.connectionState}; ICE=${p.pc.iceConnectionState}`)
       atualizarSinalizacao(false)
     }
 
@@ -1705,77 +1561,29 @@
       limparAusentes()
     }
 
-    // Par que o servidor não lista e cuja conexão morreu é fantasma: a pessoa
-    // recarregou ou saiu enquanto a sinalização estava fora e o aviso se perdeu.
-    // Par fora da lista com mídia viva fica: ele pode estar reconectando.
-    function limparAusentes() {
-      for (const [id, p] of pares)
-        if (!naSala.has(id) && (morto(p.pc) || p.pc.connectionState === 'disconnected')) {
-          log(`${p.nome} não está na sala e a conexão está ${p.pc.connectionState} — removendo`)
-          removerPar(id)
-        }
-    }
-
-    // Uma oferta mandada pelo socket que caiu, ou para o socket morto do outro,
-    // nunca chegou. localDescription já carrega os candidatos coletados.
-    function ressincronizar(id) {
-      const p = pares.get(id)
-      if (p.pc.signalingState === 'have-local-offer') {
-        log(`reenviando oferta pendente para ${p.nome}`)
-        sinalizar(id, { description: p.pc.localDescription })
-      }
-      if (p.pc.iceConnectionState === 'failed') p.pc.restartIce()
-    }
-
-    function removerPar(id) {
-      const p = pares.get(id)
-      if (!p) return
-      // Quem sai leva as amostras junto; o relatório ainda precisa delas.
-      saidos.push({ ...estadoPar([id, p]), saiuEm: new Date().toISOString() })
-      if (saidos.length > 8) saidos.shift()
-      informarRelay(id, p)
-      clearInterval(p.timer)
-      p.pc.close()
-      for (const [, a] of p.audios) a.el.remove()
-      pares.delete(id)
-      document.getElementById('t-' + id)?.remove()
-      if (foco === id) focar(proximoComVideo())
-      redividir()
-    }
+    // Quem o servidor não lista e está com a mídia morta é fantasma (ver
+    // transporte.limparAusentes).
+    const limparAusentes = () => transporte.limparAusentes(naSala)
 
     function bemVindo(m) {
       tentativas = 0
       const retomada = !!meuId && m.id === meuId
       if (meuId) log(retomada ? `sinalização retomada como ${m.id}`
                               : `sinalização voltou com id novo ${m.id} — refazendo as conexões`)
-      // Id novo: para os outros somos outra pessoa e os pares antigos nunca mais
-      // recebem sinal. Retomada: os pares continuam, só a negociação é conferida.
-      if (!retomada) for (const id of [...pares.keys()]) removerPar(id)
       meuId = m.id
+      fontes.definirDono(meuId)
       naSala.clear()
+      for (const par of m.peers) naSala.add(par.id)
       atualizarSinalizacao(true)
-      for (const par of m.peers) {
-        naSala.add(par.id)
-        const p = pares.get(par.id)
-        if (p && !morto(p.pc)) ressincronizar(par.id)
-        else { removerPar(par.id); criarPar(par.id, par.name) }
-      }
+      transporte.entrar(m.peers.map(par => ({ id: par.id, nome: par.name })), { retomada })
       if (retomada) anunciar()
       atualizarDiag()
     }
 
-    // O outro reconectou com o mesmo id. O que mandamos para o socket velho
-    // dele pode ter se perdido.
     function voltou(m) {
       naSala.add(m.id)
-      const p = pares.get(m.id)
       log(`${m.name} voltou à sinalização`)
-      if (p && !morto(p.pc)) ressincronizar(m.id)
-      else {
-        removerPar(m.id)
-        criarPar(m.id, m.name)
-        redividir()
-      }
+      if (transporte.pessoaVoltou(m.id, m.name)) redividir()
       anunciar(m.id)
     }
 
@@ -1787,8 +1595,7 @@
       if (m.t === 'peer-back') return voltou(m)
       if (m.t === 'peer-join') {
         naSala.add(m.id)
-        removerPar(m.id)
-        criarPar(m.id, m.name)
+        transporte.pessoaEntrou(m.id, m.name)
         anunciar(m.id)
         redividir()
       }
@@ -1797,10 +1604,8 @@
       // retomar o id em segundos. limparAusentes remove se a mídia morrer.
       if (m.t === 'peer-left') {
         naSala.delete(m.id)
-        const p = pares.get(m.id)
-        if (m.volta && p?.pc.connectionState === 'connected')
-          return log(`${p.nome} caiu da sinalização; a mídia segue enquanto ela volta`)
-        removerPar(m.id)
+        if (!transporte.pessoaSaiu(m.id, { volta: m.volta }))
+          return log(`${nomeDe(m.id)} caiu da sinalização; a mídia segue enquanto ela volta`)
         log('saiu:', m.id)
       }
     }
@@ -1841,7 +1646,7 @@
     // o microfone é liberado até a próxima entrada.
     function sairDaSala() {
       if (!sala) return
-      for (const [id, p] of pares) informarRelay(id, p)
+      transporte.relatarUso()
       telemetria('saiu_da_sala')
       enviarTelemetria()
       const s = ws
@@ -1849,8 +1654,9 @@
       ws = null
       clearTimeout(religar)
       try { s?.close(1000, 'saiu') } catch {}
-      for (const id of [...pares.keys()]) removerPar(id)
+      transporte.sair()
       meuId = null
+      fontes.definirDono(null)
       tentativas = 0
       naSala.clear()
       nomes.clear()
@@ -1985,9 +1791,9 @@
     }
 
     const atualizarDiag = () => {
-      $('diag').textContent = `${pares.size + 1}/4 na sala` + custoUpload()
-      if ($('people-count')) $('people-count').textContent = `${pares.size + 1} / 4`
-      $('quality-caption').textContent = `Tela em ${qualidade.h}p · ${qualidade.fps} fps`
+      $('diag').textContent = `${pessoas.size + 1}/4 na sala` + custoUpload()
+      if ($('people-count')) $('people-count').textContent = `${pessoas.size + 1} / 4`
+      $('quality-caption').textContent = `Tela em ${qualidade.captura.h}p · ${qualidade.captura.fps} fps`
       atualizarParticipantes()
     }
 
@@ -2145,7 +1951,7 @@
       surdo = valor
       $('b-surdo').classList.toggle('cortado', surdo)
       controle('b-surdo', surdo ? 'Ativar áudio da sala' : 'Silenciar áudio da sala')
-      for (const id of pares.keys()) aplicarVolumes(id)
+      for (const id of pessoas.keys()) aplicarVolumes(id)
     }
 
     $('b-mic').onclick = () => {
@@ -2175,7 +1981,7 @@
     }
 
     $('palco-vol').oninput = e => {
-      const p = pares.get(foco)
+      const p = pessoas.get(foco)
       if (!p) return
       p.volumes.tela = +e.target.value
       aplicarVolumes(foco)
@@ -2196,8 +2002,8 @@
 
     function lerManual() {
       const [w, h] = $('res').value.split('x').map(Number)
-      qualidade = { w, h, fps: +$('fps').value, kbps: +$('kbps').value,
-                    hint: +$('fps').value <= 10 ? 'detail' : 'motion' }
+      const fps = +$('fps').value
+      qualidade = { captura: { w, h, fps, hint: fps <= 10 ? 'detail' : 'motion' }, envio: { kbps: +$('kbps').value } }
     }
 
     $('preset').onchange = () => {
@@ -2205,10 +2011,11 @@
       $('manual').hidden = v !== 'manual'
       if (v === 'manual') lerManual()
       else {
-        qualidade = { ...PRESETS[v] }
-        $('res').value = `${qualidade.w}x${qualidade.h}`
-        $('fps').value = String(qualidade.fps)
-        $('kbps').value = String(qualidade.kbps)
+        qualidade = copiarPreset(PRESETS[v])
+        const { captura: c, envio } = qualidade
+        $('res').value = `${c.w}x${c.h}`
+        $('fps').value = String(c.fps)
+        $('kbps').value = String(envio.kbps)
       }
       aplicarQualidade()
     }
@@ -2266,8 +2073,8 @@
     }
     function atualizarParticipantes() {
       if (!$('people')) return
-      const pessoas = [{nome: perfil.nome || 'Você', foto: perfil.foto, estado: {mudo: estouMudo()}, local:true}, ...[...pares.values()].map(p => ({nome:p.nome,foto:p.foto,estado:p.estado}))]
-      $('people').innerHTML = pessoas.map(p => `<div class="person">${avatar(p.nome, p.foto)}<span class="person-name">${textoHtml(p.nome)}${p.local ? ' <span class="muted">(você)</span>' : ''}</span>${p.estado?.compartilhando ? '<span class="tag live">LIVE</span>' : ''}${p.estado?.mudo ? ICONES.mudo : ''}</div>`).join('')
+      const lista = [{nome: perfil.nome || 'Você', foto: perfil.foto, estado: {mudo: estouMudo()}, local:true}, ...[...pessoas.values()].map(p => ({nome:p.nome,foto:p.foto,estado:p.estado}))]
+      $('people').innerHTML = lista.map(p => `<div class="person">${avatar(p.nome, p.foto)}<span class="person-name">${textoHtml(p.nome)}${p.local ? ' <span class="muted">(você)</span>' : ''}</span>${p.estado?.compartilhando ? '<span class="tag live">LIVE</span>' : ''}${p.estado?.mudo ? ICONES.mudo : ''}</div>`).join('')
     }
     addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('[data-icon]').forEach(el => el.innerHTML = svgIcon(el.dataset.icon))

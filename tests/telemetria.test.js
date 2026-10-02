@@ -1,10 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
+import { rodarCliente } from './cliente.js'
 
-const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
-const script = html.split('<script>')[1].split('</script>')[0]
 const stream = id => {
   const tracks = id ? [{ id }] : []
   return { getVideoTracks: () => tracks }
@@ -30,9 +28,9 @@ function fixture() {
     navigator: { userAgent: 'teste' },
     addEventListener() {}, setInterval() {}, clearInterval() {},
   }
-  runInNewContext(script, state)
+  rodarCliente(state)
   Object.assign(state, { pc, p, screen: stream('screen') })
-  runInNewContext("pares.set('peer', p); telas.splice(0, telas.length, screen); foco = 'peer'", state)
+  runInNewContext("pares.set('peer', p); pessoas.set('peer', p); telas.splice(0, telas.length, screen); foco = 'peer'", state)
   const previous = new Map()
   return {
     state, p, pc, $, enviados,
@@ -145,7 +143,8 @@ test('tela pede maintain-resolution; câmera fica com a dica dela', async () => 
   })
   f.pc.getSenders = () => [sender(tela), sender(cam)]
   Object.assign(f.state, { tela, cam })
-  f.run('telas.splice(0, telas.length, { getVideoTracks: () => [tela] }); camStream = { getVideoTracks: () => [cam] }')
+  f.run(`telas.splice(0, telas.length, { getVideoTracks: () => [tela] }); camStream = { getVideoTracks: () => [cam] }
+    fontes.abrir('tela-video', tela, telas[0], { tela: fontes.novaTela() }); fontes.abrir('camera', cam, camStream)`)
   await f.run('aplicarQualidade()')
   assert.equal(aplicados.get(tela).degradationPreference, 'maintain-resolution')
   assert.equal(aplicados.get(cam).degradationPreference, undefined)

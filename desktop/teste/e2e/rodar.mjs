@@ -90,7 +90,7 @@ function tom(hz, arquivo) {
 
 // Grava, no Edge, o áudio da tela que chega de quem transmite.
 const GRAVAR = segundos => `(async () => {
-  const p = [...pares.values()].find(p => p.telas?.size)
+  const p = [...pessoas.values()].find(p => p.telas?.size)
   if (!p) return { erro: 'ninguém compartilhando' }
   const ids = idsTelas(p.estado || {})
   const a = [...p.audios.entries()].find(([sid]) => ids.includes(sid))?.[1]

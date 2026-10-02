@@ -1,10 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
+import { rodarCliente } from './cliente.js'
 
-const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
-const script = html.split('<script>')[1].split('</script>')[0]
 
 class PC {
   constructor() {
@@ -48,7 +46,7 @@ function fixture() {
     sessionStorage: { getItem: k => sessao.get(k) ?? null, setItem: (k, v) => sessao.set(k, v) },
     crypto: { randomUUID: () => `aba-${++uuid}` }, alert() {},
   }
-  runInNewContext(script, state)
+  rodarCliente(state)
   for (const f of ['desenharTile', 'focar', 'classificar', 'classificarVideo', 'atualizarParticipantes', 'aplicarQualidade'])
     state[f] = () => {}
   const run = code => runInNewContext(code, state)
@@ -161,7 +159,7 @@ test('oferta de outra instância recria a conexão; resto da instância velha é
   assert.notEqual(novo, velho)
   assert.equal(velho.pc.connectionState, 'closed')
   assert.equal(novo.remota, 'nova')
-  assert.equal(novo.nome, 'B')
+  assert.equal(f.run("pessoas.get('bbbb0002').nome"), 'B')
   assert.equal(novo.pc.remotas[0].type, 'offer')
 
   await f.run("receberSinal('bbbb0002', { de: 'velha', candidate: { candidate: 'x' } })")
@@ -173,7 +171,7 @@ test('estado vale mesmo vindo de instância nova antes da oferta', async () => {
   f.entrar('aaaa0001', [{ id: 'bbbb0002', name: 'B' }])
   await f.run("receberSinal('bbbb0002', { de: 'velha', description: { type: 'answer', sdp: '' } })")
   await f.run("receberSinal('bbbb0002', { de: 'nova', estado: { compartilhando: true } })")
-  assert.equal(f.run("pares.get('bbbb0002').estado.compartilhando"), true)
+  assert.equal(f.run("pessoas.get('bbbb0002').estado.compartilhando"), true)
 })
 
 test('batimento pinga; 45 s de silêncio descartam o socket e religam na hora', () => {
@@ -236,11 +234,11 @@ test('nome e foto anunciados pelo outro lado substituem os da entrada; foto só 
   const f = fixture()
   f.entrar('aaaa0001', [{ id: 'bbbb0002', name: 'B' }])
   await f.run("receberSinal('bbbb0002', { estado: { nome: '  Gabriel Fernandes Silva Costa  ', foto: 'https://lh3.example/a.png' } })")
-  assert.equal(f.run("pares.get('bbbb0002').nome"), 'Gabriel Fernandes Silva')
-  assert.equal(f.run("pares.get('bbbb0002').foto"), 'https://lh3.example/a.png')
+  assert.equal(f.run("pessoas.get('bbbb0002').nome"), 'Gabriel Fernandes Silva')
+  assert.equal(f.run("pessoas.get('bbbb0002').foto"), 'https://lh3.example/a.png')
   await f.run("receberSinal('bbbb0002', { estado: { foto: 'javascript:alert(1)' } })")
-  assert.equal(f.run("pares.get('bbbb0002').nome"), 'Gabriel Fernandes Silva')
-  assert.equal(f.run("pares.get('bbbb0002').foto"), null)
+  assert.equal(f.run("pessoas.get('bbbb0002').nome"), 'Gabriel Fernandes Silva')
+  assert.equal(f.run("pessoas.get('bbbb0002').foto"), null)
 })
 
 test('anúncio leva o nome atual; renomear avisa quem já está na sala', () => {

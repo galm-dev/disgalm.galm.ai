@@ -1,10 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
 import { runInNewContext } from 'node:vm'
+import { rodarCliente } from './cliente.js'
 
-const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8')
-const script = html.split('<script>')[1].split('</script>')[0]
 const stream = id => ({ getVideoTracks: () => id ? [{ id }] : [] })
 
 function fixture() {
@@ -20,12 +18,12 @@ function fixture() {
     $, document: { getElementById: $, querySelector: () => $('env') },
     addEventListener() {}, Map, setInterval() {}, clearInterval() {},
   }
-  runInNewContext(script, state)
+  rodarCliente(state)
   state.pc = pc
   state.p = p
   state.screen = stream('screen')
   state.camera = stream('camera')
-  runInNewContext("pares.set('peer', p); telas.splice(0, telas.length, screen); camStream = camera; foco = 'peer'", state)
+  runInNewContext("pares.set('peer', p); pessoas.set('peer', p); telas.splice(0, telas.length, screen); camStream = camera; foco = 'peer'", state)
   const previous = new Map()
   return {
     state, p, $, previous,
