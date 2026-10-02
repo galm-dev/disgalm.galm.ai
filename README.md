@@ -9,9 +9,17 @@ WebSocket por sala. A mídia WebRTC passa entre os participantes ou pelo TURN.
 O navegador usa o client público `disgalm` do https://auth.galm.ai com OAuth
 authorization code + PKCE S256. O único redirect registrado é
 `https://disgalm.galm.ai/auth/callback`. Não há client secret. Access e refresh
-tokens ficam só na memória da aba; ao recarregar ou sair da sala, a pessoa pede
-um novo login pelo auth. O auth concede `disgalm:use` a toda conta cadastrada,
-inclusive novos cadastros.
+tokens ficam só na memória da aba; ao recarregar, a pessoa pede um novo login
+pelo auth. O auth concede `disgalm:use` a toda conta cadastrada, inclusive novos
+cadastros.
+
+Depois do login, o app entra direto na sala pedida em `?sala=`, na última sala
+usada neste navegador ou em `galm`. Nome e foto vêm do `/userinfo` do auth; sem
+nome, vale a parte do email antes do `@`. Clicar no perfil, no canto inferior da
+barra lateral, troca o nome exibido; o apelido fica salvo no navegador e vai aos
+outros participantes no anúncio de estado. A barra lateral lista as salas já
+usadas neste navegador e cria salas novas; trocar de sala ou clicar em **Sair**
+não recarrega a página nem pede login de novo.
 
 O Worker exige JWT ES256 válido com `iss` do auth, `aud=disgalm`,
 `scope=disgalm:use` e `amr` contendo `passkey` antes de responder `/ice` ou abrir

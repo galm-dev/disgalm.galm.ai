@@ -17,21 +17,20 @@
   let error = ''
   let guestRoom = null
   let guestPending = false
+  let profile = null
 
   function showStatus() {
     const state = document.getElementById('auth-state')
     const login = document.getElementById('auth-login')
-    const enter = document.getElementById('entrar')
-    if (!state || !login || !enter) return
+    const guest = document.getElementById('guest-entry')
+    if (!state || !login || !guest) return
     const authenticated = !!tokens
     state.textContent = authenticated ? 'Conectado com GALM' : guestRoom ?
-      'Entrando como convidado · acesso válido por 24 horas' : guestPending ?
-      'Verificando convite…' : error || 'Entre com GALM ou abra um convite para entrar como convidado.'
+      `Convite para a sala ${guestRoom} · acesso válido por 24 horas` : guestPending ?
+      'Verificando convite…' : error || 'Entre com sua conta GALM ou abra um convite.'
     state.classList.toggle('erro', !!error)
     login.hidden = authenticated || !!guestRoom || guestPending
-    enter.disabled = !authenticated && !guestRoom
-    const room = document.getElementById('sala-cod')
-    if (room && guestRoom) { room.value = guestRoom; room.readOnly = true }
+    guest.hidden = authenticated || !guestRoom
   }
 
   function accept(body) {
@@ -75,12 +74,33 @@
           params.get('iss') !== issuer) throw new Error('Resposta do login inválida. Tente novamente.')
       accept(await postToken({ grant_type: 'authorization_code', code: params.get('code'),
         redirect_uri: redirectUri, code_verifier: saved.verifier }))
-      const room = new URL(returnTo, location.origin).searchParams.get('sala')
-      if (room) document.getElementById('sala-cod').value = room
     } catch (e) {
       error = e.message
       showStatus()
     }
+  }
+
+  // Nome e foto vêm da conta; o access token só carrega o email. Sem /userinfo,
+  // o email ainda dá um nome razoável.
+  function claims() {
+    try {
+      const part = tokens.access_token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+      return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(part), c => c.charCodeAt(0))))
+    } catch { return {} }
+  }
+
+  async function loadProfile() {
+    const email = String(claims().email || '')
+    const fallback = { name: email.split('@')[0] || '', email, picture: null }
+    try {
+      const response = await fetch(`${issuer}/userinfo`, {
+        headers: { authorization: `Bearer ${await accessToken()}` },
+        credentials: 'omit', cache: 'no-store' })
+      if (!response.ok) return fallback
+      const body = await response.json()
+      return { name: String(body.name || '').trim() || fallback.name, email: body.email || email,
+        picture: /^https:\/\/[^\s"'<>]{1,2000}$/.test(body.picture || '') ? body.picture : null }
+    } catch { return fallback }
   }
 
   async function login() {
@@ -134,9 +154,12 @@
   }
 
   const isGuest = room => !!guestRoom && guestRoom === room && !tokens
+  const member = () => !!tokens
+  const guestInvite = () => tokens ? null : guestRoom
+  const account = () => profile ??= tokens ? loadProfile() : Promise.resolve(null)
 
   const ready = callback().then(guestBootstrap)
-  window.disgalmAuth = { ready, login, accessToken, currentToken, isGuest }
+  window.disgalmAuth = { ready, login, accessToken, currentToken, isGuest, member, guestInvite, account }
   document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('auth-login').addEventListener('click', login)
     showStatus()

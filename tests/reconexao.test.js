@@ -42,7 +42,8 @@ function fixture() {
     addEventListener() {}, setInterval() {}, clearInterval() {},
     setTimeout: (f, ms) => { timers.push({ f, ms }); return timers.length }, clearTimeout() {},
     WebSocket: WS, RTCPeerConnection: PC, MediaStream: class { getVideoTracks() { return [] } getTracks() { return [] } },
-    disgalmAuth: { currentToken: () => 'teste', accessToken: async () => 'teste', isGuest: () => false },
+    disgalmAuth: { currentToken: () => 'teste', accessToken: async () => 'teste', isGuest: () => false,
+                   member: () => true, guestInvite: () => null },
     location: { protocol: 'https:', host: 'disgalm.test' }, URLSearchParams, URL,
     sessionStorage: { getItem: k => sessao.get(k) ?? null, setItem: (k, v) => sessao.set(k, v) },
     crypto: { randomUUID: () => `aba-${++uuid}` }, alert() {},
@@ -217,4 +218,46 @@ test('socket substituído por outra aba não religa sozinho', () => {
   f.ws().onclose({ code: 1000, reason: 'substituída', wasClean: true })
   assert.equal(f.timers.length, n)
   assert.equal(f.$('connection-alert').hidden, false)
+})
+
+test('sala cheia sai da sala e avisa, sem alert', () => {
+  const f = fixture()
+  f.entrar('aaaa0001')
+  f.chega({ t: 'cheia' })
+  assert.equal(f.run('sala'), null)
+  assert.equal(f.$('ui-notice').textContent, 'Sala cheia (limite de 4).')
+})
+
+test('nome e foto anunciados pelo outro lado substituem os da entrada; foto só https', async () => {
+  const f = fixture()
+  f.entrar('aaaa0001', [{ id: 'bbbb0002', name: 'B' }])
+  await f.run("receberSinal('bbbb0002', { estado: { nome: '  Gabriel Fernandes Silva Costa  ', foto: 'https://lh3.example/a.png' } })")
+  assert.equal(f.run("pares.get('bbbb0002').nome"), 'Gabriel Fernandes Silva')
+  assert.equal(f.run("pares.get('bbbb0002').foto"), 'https://lh3.example/a.png')
+  await f.run("receberSinal('bbbb0002', { estado: { foto: 'javascript:alert(1)' } })")
+  assert.equal(f.run("pares.get('bbbb0002').nome"), 'Gabriel Fernandes Silva')
+  assert.equal(f.run("pares.get('bbbb0002').foto"), null)
+})
+
+test('anúncio leva o nome atual; renomear avisa quem já está na sala', () => {
+  const f = fixture()
+  f.run("perfil.nome = 'Marcus'")
+  f.entrar('aaaa0001', [{ id: 'bbbb0002', name: 'B' }])
+  f.run("salvarPerfil('Marquinhos')")
+  const estados = f.sinais('bbbb0002').filter(d => d.estado)
+  assert.equal(estados.at(-1).estado.nome, 'Marquinhos')
+  assert.equal(f.run('sala.nome'), 'Marquinhos')
+})
+
+test('sair da sala fecha a sinalização como saída de verdade, sem religar', () => {
+  const f = fixture()
+  f.entrar('aaaa0001', [{ id: 'bbbb0002', name: 'B' }])
+  const s = f.ws()
+  const n = f.timers.length
+  f.run('sairDaSala()')
+  assert.deepEqual(s.fechadoCom, [1000, 'saiu'])
+  assert.equal(f.run('pares.size'), 0)
+  assert.equal(f.run('meuId'), null)
+  assert.equal(f.timers.length, n)
+  assert.equal(f.$('connection-alert').hidden, true)
 })

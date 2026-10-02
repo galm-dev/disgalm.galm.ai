@@ -14,33 +14,22 @@
     <form class="entry-card" id="entry-form">
       <div class="wordmark">disgalm<span>.</span></div>
       <h1>A galera está aqui.</h1>
-      <p>Entre na sala. Compartilhe a tela, o jogo e a conversa.</p>
+      <p>Compartilhe a tela, o jogo e a conversa.</p>
       <p id="auth-state" role="status">Verificando acesso GALM…</p>
-      <button id="auth-login" type="button" hidden>Entrar com GALM</button>
-      <label for="nome">Seu nome</label
-      ><input
-        id="nome"
-        type="text"
-        placeholder="Como a galera te chama?"
-        autocomplete="nickname"
-        maxlength="24"
-      />
-      <label for="sala-cod">Sala</label
-      ><input
-        id="sala-cod"
-        type="text"
-        placeholder="Código da sala"
-        value="galm"
-        required
-      />
-      <button id="entrar" type="submit" disabled>Entrar na sala →</button>
-      <details>
-        <summary>Opções de conexão</summary>
-        <label
-          ><input type="checkbox" id="sorelay" /> Forçar conexão via relay
-          (TURN)</label
-        >
-      </details>
+      <button id="auth-login" type="button" hidden>Entrar com conta GALM</button>
+      <div id="guest-entry" hidden>
+        <label for="nome">Seu nome</label
+        ><input
+          id="nome"
+          type="text"
+          placeholder="Como a galera te chama?"
+          autocomplete="nickname"
+          maxlength="24"
+          required
+        />
+        <button id="entrar" type="submit">Entrar como convidado →</button>
+      </div>
+      <button id="b-retry" type="button" hidden>Tentar de novo</button>
       <div id="entry-error" role="status" class="ui-notice"></div>
       <div class="entry-foot">Até 4 pessoas · Conta GALM ou convite de 24 horas</div>
     </form>
@@ -59,12 +48,13 @@
     <aside class="sidebar">
       <div class="sidebar-head"><span class="wordmark">Disgalm</span></div>
       <div class="sidebar-body">
-        <div class="eyebrow">SALA DE VOZ</div>
-        <div class="channel">
-          <span data-icon="voice"></span><strong id="channel-name">galm</strong
-          ><span class="count" id="people-count">1 / 4</span>
-        </div>
-        <div class="people" id="people"></div>
+        <div class="eyebrow">SALAS DE VOZ</div>
+        <div id="channels"></div>
+        <form id="new-room" hidden>
+          <input id="new-room-name" type="text" placeholder="nome-da-sala" maxlength="40"
+            aria-label="Nome da nova sala" autocomplete="off" />
+        </form>
+        <button id="b-new-room" class="channel-add" type="button"><span data-icon="plus"></span> Nova sala</button>
         <div class="eyebrow">JUNTOS NA SALA</div>
         <p class="sidebar-note">
           Abra a câmera ou compartilhe sua tela.<br />A conversa continua por
@@ -78,13 +68,13 @@
         </div>
         <small id="connection-room">galm / Disgalm</small>
       </div>
-      <div class="profile">
+      <button class="profile" id="b-profile" type="button" title="Editar perfil">
         <span class="avatar-small" id="my-avatar">V</span>
-        <div style="min-width:0">
-          <div class="profile-name" id="my-name">Você</div>
+        <span style="min-width:0">
+          <span class="profile-name" id="my-name">Você</span>
           <small id="my-status">Conectando…</small>
-        </div>
-      </div>
+        </span>
+      </button>
     </aside>
     <main class="room-main">
       <header class="room-head">
@@ -189,6 +179,7 @@
         <option value="manual">Manual…</option>
       </select>
       <button id="b-recap" hidden></button>
+      <label class="check"><input type="checkbox" id="sorelay" /> Forçar conexão via relay (TURN) na próxima sala</label>
       <span id="manual" hidden>
         <label for="res">Resolução</label
         ><select id="res">
@@ -237,7 +228,28 @@
       </details>
     </div>
   </dialog>
+  <dialog id="perfil" aria-labelledby="profile-title">
+    <form id="profile-form">
+      <div class="dialog-head">
+        <h2 id="profile-title">Seu perfil</h2>
+        <button id="b-close-profile" type="button" aria-label="Fechar perfil">✕</button>
+      </div>
+      <div class="settings-body">
+        <div class="profile-preview">
+          <span class="avatar-small" id="profile-avatar">V</span>
+          <small id="profile-account"></small>
+        </div>
+        <label for="profile-name">Nome na sala</label
+        ><input id="profile-name" type="text" maxlength="24" autocomplete="nickname" />
+        <div class="profile-actions">
+          <button id="b-profile-reset" type="button">Usar nome da conta</button>
+          <button id="b-profile-save" type="submit">Salvar</button>
+        </div>
+      </div>
+    </form>
+  </dialog>
   <script src="/auth.js"></script>
+  <script src="/ruido.js"></script>
   <script>
     const $ = id => document.getElementById(id)
     // Cada linha leva a hora: sem ela, o relatório não diz se a queda veio antes
@@ -280,7 +292,11 @@
     }
 
     let ws, meuId, ice, micStream, telaStream, camStream
+    // mic = captura com o filtro de ruído (ruido.js); micStream é o que vai aos pares.
+    let mic = null
     let foco = null, surdo = false
+    // conta = nome vindo do GALM; nome = o que aparece na sala (apelido ou conta).
+    const perfil = { nome: '', foto: null, conta: '', email: '' }
 
     // Sem mic é o mesmo que mudo do ponto de vista de quem olha o tile.
     const estouMudo = () => !micStream || !micStream.getAudioTracks()[0]?.enabled
@@ -301,6 +317,10 @@
         idCam: camStream?.id || null,
         mudo: estouMudo(),
         surdo,
+        // O Worker só conhece o nome da entrada; quem renomeia no meio da
+        // chamada avisa por aqui, junto com a foto da conta.
+        nome: perfil.nome,
+        foto: perfil.foto,
       }
       const alvos = para ? [para] : [...pares.keys()]
       for (const id of alvos) sinalizar(id, { estado: est })
@@ -316,13 +336,27 @@
       if (loop) $('loopdev').value = loop.deviceId
     }
 
+    async function abrirMic() {
+      const aberto = await disgalmRuido.abrir(undefined, e => log(`RNNoise indisponível (${e.name}: ${e.message}) — usando o filtro do navegador`))
+      log(`microfone: supressão de ruído ${aberto.modo}`)
+      return aberto
+    }
+
+    function pararMic() {
+      mic?.parar()
+      mic = null
+      micStream = null
+    }
+
     async function pegarMic() {
       try {
-        micStream = await navigator.mediaDevices.getUserMedia({
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        })
+        mic = await abrirMic()
+        micStream = mic.stream
+        micStream.getAudioTracks()[0].enabled = !$('b-mic').classList.contains('cortado')
+        $('b-mic').disabled = false
         medirFala('local', micStream)
       } catch (e) {
+        mic = null
         micStream = null
         log(`microfone indisponível (${e.name}) — entrando sem voz`)
         $('b-mic').disabled = true
@@ -545,11 +579,11 @@
     }
 
     function dadosTile(id) {
-      if (id === 'local') return { nome: $('nome').value.trim() || 'Você', tela: telaStream, cam: camStream, local: true,
+      if (id === 'local') return { nome: perfil.nome || 'Você', foto: perfil.foto, tela: telaStream, cam: camStream, local: true,
         estado: { compartilhando: !!telaStream, temAudio: !!telaStream?.getAudioTracks().length,
                   camera: !!camStream, mudo: estouMudo(), surdo } }
       const p = pares.get(id)
-      return p && { nome: p.nome, tela: p.tela, cam: p.cam, estado: p.estado, local: false }
+      return p && { nome: p.nome, foto: p.foto, tela: p.tela, cam: p.cam, estado: p.estado, local: false }
     }
 
     function desenharTile(id) {
@@ -587,7 +621,7 @@
         (temTela ? '<div class="midia"><video class="v-tela" autoplay playsinline muted></video>' +
             (temCam ? '<video class="v-cam mini" autoplay playsinline muted></video>' : '') + '</div>'
           : temCam ? '<div class="midia"><video class="v-cam" autoplay playsinline muted></video></div>'
-          : `<div class="semvideo"><span class="avatar">${textoHtml(inicial(d.nome))}</span></div>`) +
+          : `<div class="semvideo">${avatar(d.nome, d.foto, 'avatar')}</div>`) +
         (temVideo ? `<button class="tile-maximize" title="Maximizar vídeo" aria-label="Maximizar vídeo">${svgIcon('maximize')}</button>` : '') +
         `<div class="env"></div><div class="nome"><span>${textoHtml(d.nome)}${d.local ? ' <span class="muted">(você)</span>' : ''}</span><span class="badges">
            ${d.estado?.mudo ? ICONES.mudo : ''}
@@ -749,6 +783,7 @@
       const buf = new Float32Array(an.fftSize)
       const tick = () => {
         if (id !== 'local' && !pares.has(id)) return
+        if (stream.getAudioTracks().every(t => t.readyState === 'ended')) return ctx.close()
         an.getFloatTimeDomainData(buf)
         let s = 0
         for (const v of buf) s += v * v
@@ -1110,7 +1145,7 @@
       return JSON.stringify({
         gerado: new Date().toISOString(),
         navegador: navigator.userAgent,
-        eu: { id: meuId, nome: $('nome').value, sala: $('sala-cod').value },
+        eu: { id: meuId, nome: perfil.nome, sala: sala?.cod },
         sinalizacao: ['conectando', 'aberta', 'fechando', 'fechada'][ws?.readyState] ?? 'nunca abriu',
         naSala: [...naSala], tentativasDeReconexao: tentativas,
         qualidade, orcamentoKbps: +($('orc')?.value || 0),
@@ -1134,8 +1169,14 @@
       if (data.estado) {
         if (!p) return
         p.estado = data.estado
+        const nome = typeof data.estado.nome === 'string' ? data.estado.nome.trim().slice(0, 24).trim() : ''
+        const foto = fotoValida(data.estado.foto)
+        const mudou = (nome && nome !== p.nome) || foto !== (p.foto ?? null)
+        if (nome) { p.nome = nome; nomes.set(id, nome) }
+        p.foto = foto
         classificar(id)
         classificarVideo(id)
+        if (mudou) { desenharTile(id); atualizarParticipantes() }
         return
       }
       // Oferta de outra instância: o outro lado recriou a conexão (voltou de uma
@@ -1177,7 +1218,7 @@
     // compartilhar a tela e a oferta some. Daí o batimento, a reconexão
     // automática e a retomada do mesmo id, que preserva as conexões dos outros.
     const BATIDA_MS = 20_000, SEM_RESPOSTA_MS = 45_000
-    let sala = null                 // { cod, nome } depois de entrar
+    let sala = null                 // { cod, nome } enquanto está numa sala
     let ultimoSinal = 0, tentativas = 0, religar = null
     const naSala = new Set()        // quem o servidor diz estar na sala agora
 
@@ -1342,7 +1383,7 @@
     function tratarMensagem(m) {
       ultimoSinal = Date.now()
       if (m.t === 'pong') return
-      if (m.t === 'cheia') { sala = null; return alert('sala cheia (limite de 4)') }
+      if (m.t === 'cheia') { sairDaSala(); $('ui-notice').textContent = 'Sala cheia (limite de 4).'; return }
       if (m.t === 'welcome') return bemVindo(m)
       if (m.t === 'peer-back') return voltou(m)
       if (m.t === 'peer-join') {
@@ -1365,8 +1406,7 @@
       }
     }
 
-    async function entrarNaSala() {
-      const cod = $('sala-cod').value.trim().toLowerCase()
+    async function entrarNaSala(cod) {
       const guest = disgalmAuth.isGuest(cod)
       const token = guest ? null : await disgalmAuth.accessToken()
       const response = await fetch(`/ice?sala=${encodeURIComponent(cod)}`, {
@@ -1375,31 +1415,163 @@
         'Acesso negado. Entre com GALM ou peça um novo convite.' : 'Não foi possível obter o relay.')
       ice = await response.json()
       log('ICE:', ice.map(s => s.urls).flat().join(' '))
-      await pegarMic()
-      await listarLoopback()
-      await listarCams()
+      if (!micStream) await pegarMic()
+      if (!entrarNaSala.dispositivos) {
+        entrarNaSala.dispositivos = true
+        await listarLoopback()
+        await listarCams()
+      }
       $('entrada').style.display = 'none'
       $('sala').classList.add('ativa')
-      desenharTile('local')
 
-      const meuNome = $('nome').value.trim() || 'anon'
-      for (const id of ['room-title', 'channel-name']) $(id).textContent = cod
+      sala = { cod, nome: perfil.nome || 'anon' }
+      $('room-title').textContent = cod
       $('connection-room').textContent = cod + ' / Disgalm'
-      $('my-name').textContent = meuNome
-      $('my-avatar').textContent = inicial(meuNome)
-      sala = { cod, nome: meuNome }
       $('b-invite').hidden = guest
+      if (!guest) lembrarSala(cod)
+      history.replaceState(null, '', `/?sala=${encodeURIComponent(cod)}`)
+      desenharTile('local')
+      renderSalas()
       conectar()
-      setInterval(bater, BATIDA_MS)
-      // Voltar da rede ou do sono não precisa esperar o próximo batimento.
-      addEventListener('online', () => { if (!ws || ws.readyState > 1) conectar() })
-      addEventListener('disgalm-token-refreshed', () => { if (sala) conectar() })
-      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') bater() })
+    }
+
+    // Sair da sala não sai do app: como no Discord, a lista de salas continua e
+    // o microfone é liberado até a próxima entrada.
+    function sairDaSala() {
+      if (!sala) return
+      const s = ws
+      sala = null
+      ws = null
+      clearTimeout(religar)
+      try { s?.close(1000, 'saiu') } catch {}
+      for (const id of [...pares.keys()]) removerPar(id)
+      meuId = null
+      tentativas = 0
+      naSala.clear()
+      nomes.clear()
+      pararTela()
+      pararCam()
+      pararTesteMic()
+      pararMic()
+      document.getElementById('t-local')?.remove()
+      focar(null)
+      $('connection-alert').hidden = true
+      $('sala').classList.toggle('desconectada', false)
+      $('connection-label').textContent = 'Fora da sala'
+      $('my-status').textContent = 'Fora da sala'
+      $('room-title').textContent = 'Escolha uma sala'
+      $('connection-room').textContent = 'Disgalm'
+      $('b-invite').hidden = true
+      renderSalas()
+    }
+
+    let trocando = false
+    async function trocarSala(cod) {
+      if (trocando || cod === sala?.cod) return
+      trocando = true
+      $('ui-notice').textContent = ''
+      try {
+        sairDaSala()
+        $('connection-label').textContent = `Entrando em ${cod}…`
+        await entrarNaSala(cod)
+      } catch (e) {
+        log(`falhou ao entrar em ${cod} — ${e.name}: ${e.message}`)
+        $('connection-label').textContent = 'Fora da sala'
+        $('ui-notice').textContent = `Não foi possível entrar em ${cod}. ${e.message}`
+      } finally { trocando = false }
+    }
+
+    // ---------- salas e perfil ----------
+
+    const SALA_PADRAO = 'galm'
+    const nomeDeSala = v => String(v || '').trim().toLowerCase().replace(/\s+/g, '-').slice(0, 40)
+    function salasConhecidas() {
+      try {
+        const lista = JSON.parse(lerLocal('disgalm.salas') || 'null')
+        if (Array.isArray(lista)) return lista.filter(x => typeof x === 'string' && x).slice(0, 30)
+      } catch {}
+      return [SALA_PADRAO]
+    }
+    function lembrarSala(cod) {
+      const lista = salasConhecidas()
+      if (!lista.includes(cod)) gravarLocal('disgalm.salas', JSON.stringify([...lista, cod]))
+      gravarLocal('disgalm.ultima', cod)
+    }
+
+    function renderSalas() {
+      const convite = disgalmAuth.guestInvite()
+      const lista = convite ? [convite] : [...new Set([...salasConhecidas(), ...(sala ? [sala.cod] : [])])]
+      $('channels').innerHTML = lista.map(cod => cod === sala?.cod
+        ? `<div class="channel ativa">${svgIcon('voice')}<strong>${textoHtml(cod)}</strong><span class="count" id="people-count"></span></div><div class="people" id="people"></div>`
+        : `<button class="channel" type="button" data-sala="${textoHtml(cod)}">${svgIcon('voice')}<strong>${textoHtml(cod)}</strong></button>`).join('')
+      $('b-new-room').hidden = !!convite
+      if (sala) atualizarDiag()
+    }
+
+    const fotoValida = f => typeof f === 'string' && /^https:\/\/[^\s"'<>]{1,2000}$/.test(f) ? f : null
+    const conteudoAvatar = (nome, foto) => foto
+      ? `<img src="${textoHtml(foto)}" alt="" referrerpolicy="no-referrer" />` : textoHtml(inicial(nome))
+    const avatar = (nome, foto, classe = 'avatar-small') =>
+      `<span class="${classe}" style="--hue:${corPessoa(nome)}">${conteudoAvatar(nome, foto)}</span>`
+
+    function mostrarPerfil() {
+      $('my-name').textContent = perfil.nome || 'Você'
+      $('my-avatar').innerHTML = conteudoAvatar(perfil.nome, perfil.foto)
+      $('profile-avatar').innerHTML = conteudoAvatar(perfil.nome, perfil.foto)
+      $('profile-account').textContent = perfil.email ? `Conta GALM · ${perfil.email}` : 'Convidado'
+    }
+
+    // Apelido só existe se a pessoa escolheu um diferente do nome da conta;
+    // trocar o nome no GALM continua valendo para quem nunca personalizou.
+    function salvarPerfil(nome) {
+      nome = nome.trim().slice(0, 24).trim()
+      if (disgalmAuth.member()) {
+        gravarLocal('disgalm.apelido', nome && nome !== perfil.conta ? nome : '')
+        perfil.nome = nome || perfil.conta || 'anon'
+      } else if (nome) {
+        salvarNome(nome)
+        perfil.nome = nome
+      } else return
+      if (sala) sala.nome = perfil.nome
+      mostrarPerfil()
+      if (sala) desenharTile('local')
+      atualizarParticipantes()
+      anunciar()
+    }
+
+    async function entrarAutomatico() {
+      const pedida = new URL(location.href).searchParams.get('sala')
+      const cod = (pedida || '').trim().toLowerCase() || lerLocal('disgalm.ultima') || SALA_PADRAO
+      $('auth-state').textContent = `Entrando em ${cod}…`
+      $('b-retry').hidden = true
+      $('entry-error').textContent = ''
+      try { await entrarNaSala(cod) }
+      catch (e) {
+        log(`falhou ao entrar — ${e.name}: ${e.message}`)
+        $('entry-error').textContent = 'Não foi possível entrar. ' + e.message
+        $('auth-state').textContent = 'Conectado com GALM'
+        $('b-retry').hidden = false
+      }
+    }
+
+    async function iniciar() {
+      await disgalmAuth.ready
+      if (disgalmAuth.member()) {
+        const conta = await disgalmAuth.account()
+        perfil.conta = String(conta?.name || '').slice(0, 24).trim()
+        perfil.email = conta?.email || ''
+        perfil.foto = fotoValida(conta?.picture)
+        perfil.nome = lerLocal('disgalm.apelido') || perfil.conta || 'anon'
+        mostrarPerfil()
+        renderSalas()
+        return entrarAutomatico()
+      }
+      if (disgalmAuth.guestInvite()) $('nome').value = nomeSalvo()
     }
 
     const atualizarDiag = () => {
       $('diag').textContent = `${pares.size + 1}/4 na sala` + custoUpload()
-      $('people-count').textContent = `${pares.size + 1} / 4`
+      if ($('people-count')) $('people-count').textContent = `${pares.size + 1} / 4`
       $('quality-caption').textContent = `Tela em ${qualidade.h}p · ${qualidade.fps} fps`
       atualizarParticipantes()
     }
@@ -1413,31 +1585,38 @@
     addEventListener('unhandledrejection', e => log('ERRO não tratado:', e.reason?.message || e.reason))
     addEventListener('error', e => log('ERRO:', e.message))
 
-    const nomeSalvo = () => {
-      try { return localStorage.getItem('disgalm.nome') || '' }
+    const lerLocal = chave => {
+      try { return localStorage.getItem(chave) || '' }
       catch { return '' }
     }
-    const salvarNome = nome => {
-      try { localStorage.setItem('disgalm.nome', nome) }
+    const gravarLocal = (chave, valor) => {
+      try { valor ? localStorage.setItem(chave, valor) : localStorage.removeItem(chave) }
       catch {}
     }
+    const nomeSalvo = () => lerLocal('disgalm.nome')
+    const salvarNome = nome => gravarLocal('disgalm.nome', nome)
 
+    // Conta GALM entra sozinha; o formulário só aparece para convidado.
     $('entry-form').onsubmit = async ev => {
       ev.preventDefault()
+      const convite = disgalmAuth.guestInvite()
+      const nome = $('nome').value.trim().slice(0, 24)
+      if (!convite || !nome) return
       $('entry-error').textContent = ''
       $('entrar').textContent = 'Conectando…'
       $('entrar').disabled = true
       try {
-        const nome = $('nome').value.trim()
-        if (nome) salvarNome(nome)
-        await entrarNaSala()
+        salvarNome(nome)
+        perfil.nome = nome
+        mostrarPerfil()
+        await entrarNaSala(convite)
       }
       catch (e) {
         log(`falhou ao entrar — ${e.name}: ${e.message}`)
         $('entry-error').textContent = 'Não foi possível entrar. ' + e.message
         $('entrada').style.display = ''
         $('sala').classList.remove('ativa')
-      } finally { $('entrar').disabled = false; $('entrar').textContent = 'Entrar na sala →' }
+      } finally { $('entrar').disabled = false; $('entrar').textContent = 'Entrar como convidado →' }
     }
 
     $('b-tela').onclick = () => compartilhar().catch(e => log(`tela — ${e.name}: ${e.message}`))
@@ -1487,7 +1666,7 @@
       ? document.exitPictureInPicture()
       : $('v-palco').requestPictureInPicture().catch(e => log('PiP:', e.message))
 
-    $('b-sair').onclick = () => location.reload()
+    $('b-sair').onclick = () => sairDaSala()
     $('b-rejoin').onclick = () => { tentativas = 0; conectar() }
 
     function lerManual() {
@@ -1537,6 +1716,7 @@
       people: '<circle cx="8" cy="8" r="3"/><path d="M2 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6m1 4a5 5 0 0 1 5 5"/>',
       maximize: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 8h18"/>',
       full: '<path d="M3 9V3h6m6 0h6v6M3 15v6h6m6 0h6v-6"/>',
+      plus: '<path d="M12 5v14M5 12h14"/>',
     }
     const svgIcon = name => `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${UI_ICONS[name]}</svg>`
     const textoHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
@@ -1550,15 +1730,47 @@
       el.setAttribute('aria-label', label)
     }
     function atualizarParticipantes() {
-      const pessoas = [{nome: $('nome').value.trim() || 'Você', estado: {mudo: estouMudo()}, local:true}, ...[...pares.values()].map(p => ({nome:p.nome,estado:p.estado}))]
-      $('people').innerHTML = pessoas.map(p => `<div class="person"><span class="avatar-small" style="--hue:${corPessoa(p.nome)}">${textoHtml(inicial(p.nome))}</span><span class="person-name">${textoHtml(p.nome)}${p.local ? ' <span class="muted">(você)</span>' : ''}</span>${p.estado?.compartilhando ? '<span class="tag live">LIVE</span>' : ''}${p.estado?.mudo ? ICONES.mudo : ''}</div>`).join('')
+      if (!$('people')) return
+      const pessoas = [{nome: perfil.nome || 'Você', foto: perfil.foto, estado: {mudo: estouMudo()}, local:true}, ...[...pares.values()].map(p => ({nome:p.nome,foto:p.foto,estado:p.estado}))]
+      $('people').innerHTML = pessoas.map(p => `<div class="person">${avatar(p.nome, p.foto)}<span class="person-name">${textoHtml(p.nome)}${p.local ? ' <span class="muted">(você)</span>' : ''}</span>${p.estado?.compartilhando ? '<span class="tag live">LIVE</span>' : ''}${p.estado?.mudo ? ICONES.mudo : ''}</div>`).join('')
     }
     addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('[data-icon]').forEach(el => el.innerHTML = svgIcon(el.dataset.icon))
       for (const id of ['b-mic','b-surdo','b-cam','b-tela','b-settings','b-sair','b-pip','b-full']) controle(id, $(id).title)
-      $('nome').value = nomeSalvo()
-      const room = new URL(location.href).searchParams.get('sala')
-      if (room) $('sala-cod').value = room
+      setInterval(bater, BATIDA_MS)
+      // Voltar da rede ou do sono não precisa esperar o próximo batimento.
+      addEventListener('online', () => { if (sala && (!ws || ws.readyState > 1)) conectar() })
+      addEventListener('disgalm-token-refreshed', () => { if (sala) conectar() })
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') bater() })
+      $('b-retry').onclick = entrarAutomatico
+      $('channels').onclick = ev => {
+        const botao = ev.target.closest('[data-sala]')
+        if (botao) trocarSala(botao.dataset.sala)
+      }
+      const fecharNovaSala = () => { $('new-room').hidden = true; $('b-new-room').hidden = !!disgalmAuth.guestInvite() }
+      $('b-new-room').onclick = () => {
+        $('new-room').hidden = false
+        $('b-new-room').hidden = true
+        $('new-room-name').value = ''
+        $('new-room-name').focus()
+      }
+      $('new-room-name').onblur = fecharNovaSala
+      $('new-room-name').onkeydown = ev => { if (ev.key === 'Escape') fecharNovaSala() }
+      $('new-room').onsubmit = ev => {
+        ev.preventDefault()
+        const cod = nomeDeSala($('new-room-name').value)
+        fecharNovaSala()
+        if (cod) trocarSala(cod)
+      }
+      $('b-profile').onclick = () => {
+        $('profile-name').value = perfil.nome
+        $('b-profile-reset').hidden = !disgalmAuth.member() || !perfil.conta
+        $('perfil').showModal()
+      }
+      $('b-close-profile').onclick = () => $('perfil').close()
+      $('b-profile-reset').onclick = () => { $('profile-name').value = perfil.conta }
+      $('profile-form').onsubmit = ev => { ev.preventDefault(); salvarPerfil($('profile-name').value); $('perfil').close() }
+      iniciar()
       $('b-sidebar').onclick = () => { $('sala').classList.toggle('lateral-oculta'); atualizarLayout() }
       $('b-participants').onclick = () => { $('sala').classList.toggle('participantes-ocultos'); atualizarLayout() }
       $('b-maximize').onclick = () => definirMaximizada(!$('sala').classList.contains('maximizada'))
