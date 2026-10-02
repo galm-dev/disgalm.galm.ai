@@ -115,9 +115,7 @@
               ><span class="tag live" id="palco-live" hidden>AO VIVO</span
               ><span class="tag semaudio" id="palco-semaudio" hidden
                 >sem áudio</span
-              ><span class="telas" id="palco-telas" role="group" aria-label="Qual tela ver" hidden
-                ><button data-tela="1" aria-pressed="true">Tela 1</button
-                ><button data-tela="2" aria-pressed="false">Tela 2</button></span
+              ><span class="telas" id="palco-telas" role="group" aria-label="Qual tela ver" hidden></span
               >
             </div>
             <div class="base">
@@ -141,6 +139,7 @@
       </div>
       <div class="toolbar-wrap">
         <p id="ui-notice" class="ui-notice" role="status"></p>
+        <div id="menu-telas" role="menu" aria-label="Telas compartilhadas" hidden></div>
         <div id="barra">
           <div class="control-group">
             <button id="b-mic" title="Silenciar microfone">Microfone</button
@@ -149,7 +148,6 @@
           </div>
           <div class="control-group">
             <button id="b-tela" title="Compartilhar tela">Tela</button
-            ><button id="b-tela2" title="Compartilhar outra tela" hidden>Outra tela</button
             ><button id="b-settings" title="Ajustes da chamada">Ajustes</button>
           </div>
           <button id="b-sair" class="perigo" title="Sair da sala">Sair</button>
@@ -309,12 +307,13 @@
       if (!orc) return qualidade.kbps
       return Math.min(qualidade.kbps, Math.floor(orc / Math.max(1, pares.size)))
     }
-    // As duas telas vão a todo par, mesmo que ele só olhe uma: dividem o teto.
-    const kbpsPorTela = () => Math.floor(kbpsPorPar() / (tela2Stream ? 2 : 1))
+    // Toda tela vai a todo par, mesmo que ele só olhe uma: dividem o teto.
+    const kbpsPorTela = () => Math.floor(kbpsPorPar() / Math.max(1, telas.length))
 
-    // tela2Stream é a segunda tela: só vídeo, porque o áudio do sistema já vai na
-    // primeira e tocaria em dobro. Parar a primeira promove a segunda.
-    let ws, meuId, ice, micStream, telaStream, tela2Stream, camStream
+    let ws, meuId, ice, micStream, camStream
+    // Cada tela é um MediaStream próprio, na ordem em que foi aberta. Só uma leva
+    // o áudio do sistema: em mais de uma ele tocaria em dobro.
+    const telas = []
     // mic = captura com o filtro de ruído (ruido.js); micStream é o que vai aos pares.
     let mic = null
     let foco = null, surdo = false
@@ -331,11 +330,13 @@
     // AO VIVO e o aviso de "compartilhando sem áudio".
     function anunciar(para) {
       const est = {
-        compartilhando: !!telaStream,
-        streamId: telaStream?.id || null,
-        // Cliente antigo ignora este campo e trata a 2ª tela como fonte morta.
-        idTela2: tela2Stream?.id || null,
-        temAudio: !!telaStream?.getAudioTracks().length,
+        compartilhando: telas.length > 0,
+        // Todas as telas, na ordem. streamId e idTela2 ficam para clientes de
+        // versões anteriores, que conhecem só uma ou duas.
+        idsTelas: telas.map(t => t.id),
+        streamId: telas[0]?.id || null,
+        idTela2: telas[1]?.id || null,
+        temAudio: telas.some(t => t.getAudioTracks().length),
         // O receptor não distingue tela de câmera olhando a track: as duas são
         // vídeo. Quem transmite anuncia o streamId de cada uma.
         camera: !!camStream,
@@ -536,28 +537,28 @@
       $('b-cam').classList.replace('on', 'cortado')
       controle('b-cam', 'Ligar câmera')
       desenharTile('local')
-      if (foco === 'local' && !telaStream) focar(proximoComVideo())
+      if (foco === 'local' && !telas.length) focar(proximoComVideo())
       anunciar()
       atualizarDiag()
     }
 
-    async function compartilhar() {
-      if (telaStream) return pararTela()
-
-      telaStream = await navigator.mediaDevices.getDisplayMedia({
-        video: { width: { ideal: qualidade.w }, height: { ideal: qualidade.h },
-                 frameRate: { ideal: qualidade.fps } },
-        audio: true,
+    async function adicionarTela() {
+      const q = qualidade
+      // Só pede áudio se nenhuma tela aberta já leva o do sistema.
+      const comAudio = !telas.some(t => t.getAudioTracks().length)
+      const tela = await navigator.mediaDevices.getDisplayMedia({
+        video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: q.fps } },
+        audio: comAudio,
       })
 
-      if (telaStream.getAudioTracks().length === 0) {
+      if (comAudio && tela.getAudioTracks().length === 0) {
         const dev = $('loopdev').value
         if (dev) {
           const s = await navigator.mediaDevices.getUserMedia({
             audio: { deviceId: { exact: dev }, echoCancellation: false, noiseSuppression: false,
                      autoGainControl: false, channelCount: 2 },
           })
-          telaStream.addTrack(s.getAudioTracks()[0])
+          tela.addTrack(s.getAudioTracks()[0])
           log('áudio do sistema via loopback')
         } else {
           log('AVISO: compartilhando SEM áudio. No Windows marque "compartilhar áudio do sistema" ' +
@@ -565,27 +566,30 @@
         }
       }
 
-      for (const t of telaStream.getTracks()) {
-        t.contentHint = t.kind === 'video' ? qualidade.hint : 'music'
-        t.onended = () => pararTela()
+      for (const t of tela.getTracks()) {
+        t.contentHint = t.kind === 'video' ? q.hint : 'music'
+        t.onended = () => pararTela(tela)
       }
-      for (const [, p] of pares) for (const t of telaStream.getTracks()) p.pc.addTrack(t, telaStream)
+      telas.push(tela)
+      for (const [, p] of pares) for (const t of tela.getTracks()) p.pc.addTrack(t, tela)
       atualizarBotoesTela()
       desenharTile('local')
+      telaVista.set('local', tela.id)
       focar('local')
       anunciar()
       aplicarQualidade()
     }
 
-    // Recria a captura na qualidade atual e troca a track nos senders existentes.
-    // replaceTrack não renegocia, então o receptor nem vê troca — e some o
-    // transceiver morto que o par removeTrack/addTrack deixava a cada ciclo.
+    // Recria a captura da primeira tela na qualidade atual e troca a track nos
+    // senders existentes. replaceTrack não renegocia, então o receptor nem vê
+    // troca — e some o transceiver morto que o par removeTrack/addTrack deixava.
     async function recapturar() {
-      if (!telaStream) return
+      const tela = telas[0]
+      if (!tela) return
       const q = qualidade
       const novo = await navigator.mediaDevices.getDisplayMedia({
         video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: q.fps } },
-        audio: true,
+        audio: tela.getAudioTracks().length > 0,
       })
 
       const trocar = async (antigo, novoT) => {
@@ -593,94 +597,71 @@
         for (const [, p] of pares)
           for (const sd of p.pc.getSenders())
             if (sd.track === antigo) await sd.replaceTrack(novoT)
-        if (antigo) { telaStream.removeTrack(antigo); antigo.stop() }
-        telaStream.addTrack(novoT)
+        if (antigo) { tela.removeTrack(antigo); antigo.stop() }
+        tela.addTrack(novoT)
       }
 
       const vNovo = novo.getVideoTracks()[0]
       vNovo.contentHint = q.hint
-      vNovo.onended = () => pararTela()
-      await trocar(telaStream.getVideoTracks()[0], vNovo)
+      vNovo.onended = () => pararTela(tela)
+      await trocar(tela.getVideoTracks()[0], vNovo)
 
       const aNovo = novo.getAudioTracks()[0]
-      if (aNovo) { aNovo.contentHint = 'music'; await trocar(telaStream.getAudioTracks()[0], aNovo) }
+      if (aNovo) { aNovo.contentHint = 'music'; aNovo.onended = () => pararTela(tela); await trocar(tela.getAudioTracks()[0], aNovo) }
 
+      atualizarBotoesTela()
       desenharTile('local')
       if (foco === 'local') focar('local')
       anunciar()
       await aplicarQualidade()
     }
 
-    function pararTela() {
-      if (!telaStream) return
-      const tracks = telaStream.getTracks()
+    function pararTela(tela) {
+      const i = telas.indexOf(tela)
+      if (i < 0) return
+      telas.splice(i, 1)
+      const tracks = tela.getTracks()
       for (const [, p] of pares)
         for (const s of p.pc.getSenders())
           if (s.track && tracks.includes(s.track)) p.pc.removeTrack(s)
       for (const t of tracks) t.stop()
-      telaStream = null
-      if (tela2Stream) {
-        // A segunda vira a primeira: o receptor só vê o anúncio mudar de campo.
-        telaStream = tela2Stream
-        tela2Stream = null
-        telaStream.getVideoTracks()[0].onended = () => pararTela()
-        atualizarBotoesTela()
-        desenharTile('local')
-        if (foco === 'local') focar('local')
-        anunciar()
-        aplicarQualidade()
-        return
-      }
       atualizarBotoesTela()
       desenharTile('local')
-      if (foco === 'local') focar(proximoComVideo())
+      if (foco === 'local') focar(telas.length ? 'local' : proximoComVideo())
       anunciar()
+      if (telas.length) aplicarQualidade()
     }
 
-    async function compartilharSegunda() {
-      if (tela2Stream) return pararTela2()
-      if (!telaStream) return
-      const q = qualidade
-      tela2Stream = await navigator.mediaDevices.getDisplayMedia({
-        video: { width: { ideal: q.w }, height: { ideal: q.h }, frameRate: { ideal: q.fps } },
-        audio: false,
-      })
-      // Pode ter parado a primeira enquanto o seletor estava aberto.
-      if (!telaStream) { telaStream = tela2Stream; tela2Stream = null }
-      const t = (tela2Stream || telaStream).getVideoTracks()[0]
-      t.contentHint = q.hint
-      t.onended = () => tela2Stream?.getVideoTracks()[0] === t ? pararTela2() : pararTela()
-      const s = tela2Stream || telaStream
-      for (const [, p] of pares) p.pc.addTrack(t, s)
-      atualizarBotoesTela()
-      desenharTile('local')
-      telaVista.set('local', tela2Stream ? 2 : 1)
-      focar('local')
-      anunciar()
-      aplicarQualidade()
-    }
+    const pararTelas = () => { for (const t of [...telas]) pararTela(t) }
 
-    function pararTela2() {
-      if (!tela2Stream) return
-      const tracks = tela2Stream.getTracks()
-      for (const [, p] of pares)
-        for (const s of p.pc.getSenders())
-          if (s.track && tracks.includes(s.track)) p.pc.removeTrack(s)
-      for (const t of tracks) t.stop()
-      tela2Stream = null
-      atualizarBotoesTela()
-      desenharTile('local')
-      if (foco === 'local') focar('local')
-      anunciar()
-      aplicarQualidade()
+    // Sem dizer o que é, "Tela 2" não diz qual parar. displaySurface diz o tipo;
+    // o rótulo da track só ajuda quando é um nome (título da janela), não um id
+    // como "screen:1:0".
+    function rotuloTela(t) {
+      const v = t.getVideoTracks()[0]
+      const tipo = { monitor: 'Monitor inteiro', window: 'Janela', browser: 'Aba' }[v?.getSettings?.().displaySurface] || ''
+      const nome = /\s/.test(v?.label || '') ? v.label : ''
+      return [tipo, nome].filter(Boolean).join(' · ')
     }
 
     function atualizarBotoesTela() {
-      controle('b-tela', telaStream ? 'Parar compartilhamento' : 'Compartilhar tela')
-      $('b-tela').classList.toggle('on', !!telaStream)
-      $('b-tela2').hidden = !telaStream
-      controle('b-tela2', tela2Stream ? 'Parar segunda tela' : 'Compartilhar outra tela')
-      $('b-tela2').classList.toggle('on', !!tela2Stream)
+      const n = telas.length
+      controle('b-tela', n ? `Telas compartilhadas (${n})` : 'Compartilhar tela')
+      $('b-tela').classList.toggle('on', n > 0)
+      if (n > 1) $('b-tela').insertAdjacentHTML('beforeend', `<span class="contador" aria-hidden="true">${n}</span>`)
+      if (!n) $('menu-telas').hidden = true
+      $('b-tela').setAttribute('aria-expanded', String(!$('menu-telas').hidden))
+      $('menu-telas').innerHTML = telas.map((t, i) =>
+        `<div class="menu-tela"><span><strong>Tela ${i + 1}</strong>` +
+        `${rotuloTela(t) ? `<small>${textoHtml(rotuloTela(t))}</small>` : ''}</span>` +
+        `<button type="button" data-parar="${i}">Parar</button></div>`).join('') +
+        `<button type="button" class="menu-acao" data-acao="adicionar">${svgIcon('plus')} Adicionar tela</button>` +
+        (n > 1 ? `<button type="button" class="menu-acao perigo" data-acao="parar-todas">Parar todas</button>` : '')
+    }
+
+    function alternarMenuTelas(aberto = $('menu-telas').hidden) {
+      $('menu-telas').hidden = !aberto || !telas.length
+      $('b-tela').setAttribute('aria-expanded', String(!$('menu-telas').hidden))
     }
 
     // Aplica resolução/fps na captura e bitrate/fps no encoder de cada par.
@@ -688,9 +669,9 @@
     // for 4K, e nesse caso o número escolhido é ficção.
     async function aplicarQualidade() {
       const q = qualidade
-      const vt = telaStream?.getVideoTracks()[0]
+      const vt = telas[0]?.getVideoTracks()[0]
 
-      for (const t of [vt, tela2Stream?.getVideoTracks()[0]]) {
+      for (const t of telas.flatMap(t => t.getVideoTracks())) {
         if (!t) continue
         t.contentHint = q.hint
         try {
@@ -741,11 +722,11 @@
     // Malha: você envia sua tela para cada par separadamente. É a conta que decide
     // se 4K60 é viável no seu link, e ela cresce com o número de pessoas.
     function custoUpload() {
-      if (!telaStream && !camStream) return ''
+      if (!telas.length && !camStream) return ''
       const n = Math.max(1, pares.size)
-      const por = (telaStream ? kbpsPorPar() : 0) + (camStream ? CAP_CAM / 1000 : 0)
+      const por = (telas.length ? kbpsPorPar() : 0) + (camStream ? CAP_CAM / 1000 : 0)
       const tot = (por * n / 1000).toFixed(1)
-      const cortado = telaStream && kbpsPorPar() < qualidade.kbps
+      const cortado = telas.length && kbpsPorPar() < qualidade.kbps
         ? ` (teto ${qualidade.kbps / 1000} cortado p/ ${kbpsPorPar() / 1000})` : ''
       return ` · teto de vídeo ${tot} Mbps = ${por / 1000} × ${n}${cortado}`
     }
@@ -770,11 +751,11 @@
     }
 
     function dadosTile(id) {
-      if (id === 'local') return { nome: perfil.nome || 'Você', foto: perfil.foto, tela: telaStream, tela2: tela2Stream, cam: camStream, local: true,
-        estado: { compartilhando: !!telaStream, temAudio: !!telaStream?.getAudioTracks().length,
+      if (id === 'local') return { nome: perfil.nome || 'Você', foto: perfil.foto, telas, cam: camStream, local: true,
+        estado: { compartilhando: telas.length > 0, temAudio: telas.some(t => t.getAudioTracks().length),
                   camera: !!camStream, mudo: estouMudo(), surdo } }
       const p = pares.get(id)
-      return p && { nome: p.nome, foto: p.foto, tela: p.tela, tela2: p.tela2, cam: p.cam, estado: p.estado, local: false }
+      return p && { nome: p.nome, foto: p.foto, telas: [...p.telas.values()], cam: p.cam, estado: p.estado, local: false }
     }
 
     function desenharTile(id) {
@@ -847,17 +828,18 @@
     // Clicar na miniatura troca as duas; mudar de pessoa volta a tela para o centro.
     let camNoCentro = false
 
-    // Quem compartilha duas telas manda as duas; quem assiste escolhe qual ver,
-    // por pessoa. Sem a segunda, volta para a primeira.
+    // Quem compartilha várias telas manda todas; quem assiste escolhe qual ver,
+    // por pessoa (pessoa → streamId). Se a escolhida para, volta para a primeira.
     const telaVista = new Map()
     const temImagem = s => !!s?.getVideoTracks().length
+    const telasComImagem = d => (d?.telas || []).filter(temImagem)
     function telaEscolhida(id, d) {
-      if (temImagem(d?.tela2) && (telaVista.get(id) === 2 || !temImagem(d.tela))) return d.tela2
-      return temImagem(d?.tela) ? d.tela : null
+      const ts = telasComImagem(d)
+      return ts.find(t => t.id === telaVista.get(id)) || ts[0] || null
     }
-    function verTela(n) {
+    function verTela(sid) {
       if (!foco) return
-      telaVista.set(foco, n)
+      telaVista.set(foco, sid)
       desenharTile(foco)
       focar(foco)
     }
@@ -867,10 +849,10 @@
       foco = id
       const d = id && dadosTile(id)
       const tela = telaEscolhida(id, d)
-      const duas = temImagem(d?.tela) && temImagem(d?.tela2)
-      $('palco-telas').hidden = !duas
-      for (const b of $('palco-telas').querySelectorAll('button'))
-        b.setAttribute('aria-pressed', String(duas && (b.dataset.tela === '2') === (tela === d.tela2)))
+      const ts = telasComImagem(d)
+      $('palco-telas').hidden = ts.length < 2
+      $('palco-telas').innerHTML = ts.length < 2 ? '' : ts.map((t, i) =>
+        `<button type="button" data-tela="${textoHtml(t.id)}" aria-pressed="${t === tela}">Tela ${i + 1}</button>`).join('')
       const cam = d?.cam?.getVideoTracks().length ? d.cam : null
       const ambos = !!(tela && cam)
       const fonte = ambos && camNoCentro ? cam : tela || cam
@@ -917,9 +899,9 @@
     }
 
     const proximoComVideo = () =>
-      [...pares.keys()].find(id => pares.get(id).tela.getVideoTracks().length) ||
+      [...pares.keys()].find(id => pares.get(id).telas.size) ||
       [...pares.keys()].find(id => pares.get(id).cam.getVideoTracks().length) ||
-      (telaStream || camStream ? 'local' : null)
+      (telas.length || camStream ? 'local' : null)
 
     // ---------- áudio recebido ----------
 
@@ -951,25 +933,35 @@
       if (!p) return
       const e = p.estado || {}
       const sabemos = 'compartilhando' in e     // já recebemos anúncio deste par?
-      const cam = [], tela = [], tela2 = []
+      // Antes do 1º anúncio, mostrar tudo como tela.
+      const ids = sabemos ? idsTelas(e) : [...p.videos.keys()]
+      const cam = [], porTela = new Map(ids.map(sid => [sid, []]))
       for (const [sid, t] of p.videos) {
-        if (!sabemos) { tela.push(t); continue }   // antes do 1º anúncio, mostrar
-        if (sid === e.idCam) cam.push(t)
-        else if (sid === e.streamId) tela.push(t)
-        else if (sid === e.idTela2) tela2.push(t)
+        if (sabemos && sid === e.idCam) cam.push(t)
+        else if (porTela.has(sid)) porTela.get(sid).push(t)
         else p.videos.delete(sid)                  // fonte não anunciada: morta
       }
       sincroniza(p.cam, cam)
-      sincroniza(p.tela, tela)
-      sincroniza(p.tela2, tela2)
+      // Reaproveita o MediaStream de cada tela: trocar o srcObject pisca o vídeo.
+      const telasNovas = new Map()
+      for (const [sid, ts] of porTela) {
+        const s = p.telas.get(sid) || new MediaStream()
+        sincroniza(s, ts)
+        if (s.getVideoTracks().length) telasNovas.set(sid, s)
+      }
+      p.telas = telasNovas
       desenharTile(id)
       if (foco === id) focar(id)
     }
 
+    // Anúncio de versão anterior traz só streamId e, talvez, idTela2.
+    const idsTelas = e => e.idsTelas || [e.streamId, e.idTela2].filter(Boolean)
+
     function classificar(id) {
       const p = pares.get(id)
       if (!p) return
-      for (const [sid, a] of p.audios) a.tipo = sid === p.estado?.streamId ? 'tela' : 'voz'
+      const ids = idsTelas(p.estado || {})
+      for (const [sid, a] of p.audios) a.tipo = ids.includes(sid) ? 'tela' : 'voz'
       aplicarVolumes(id)
     }
 
@@ -1051,7 +1043,7 @@
       const p = { pc, polite, fazendoOferta: false, ignorandoOferta: false, nome,
                   conexao: Math.random().toString(36).slice(2, 10), remota: null,
                   // tela e câmera são as duas vídeo: só o streamId anunciado separa.
-                  videos: new Map(), tela: new MediaStream(), tela2: new MediaStream(), cam: new MediaStream(),
+                  videos: new Map(), telas: new Map(), cam: new MediaStream(),
                   audios: new Map(), volumes: { voz: 1, tela: 1 }, estado: {},
                   amostras: [], relato: null }
       pares.set(id, p)
@@ -1068,8 +1060,7 @@
       }
 
       if (micStream) for (const t of micStream.getTracks()) pc.addTrack(t, micStream)
-      if (telaStream) for (const t of telaStream.getTracks()) pc.addTrack(t, telaStream)
-      if (tela2Stream) for (const t of tela2Stream.getTracks()) pc.addTrack(t, tela2Stream)
+      for (const tela of telas) for (const t of tela.getTracks()) pc.addTrack(t, tela)
       if (camStream) for (const t of camStream.getTracks()) pc.addTrack(t, camStream)
 
       pc.ontrack = e => {
@@ -1080,7 +1071,7 @@
         p.videos.set(sid, e.track)
         e.track.addEventListener('ended', () => { p.videos.delete(sid); classificarVideo(id) })
         classificarVideo(id)
-        if (!foco || foco === 'local' && !telaStream) focar(id)
+        if (!foco || foco === 'local' && !telas.length) focar(id)
       }
 
       const tipos = new Set()
@@ -1278,8 +1269,8 @@
       const st = await pc.getStats()
       const p = pares.get(id)
       if (!p || p.pc !== pc) return
-      const videoLocal = telaStream?.getVideoTracks()[0] || camStream?.getVideoTracks()[0]
-      const videoRemoto = p.tela.getVideoTracks()[0] || p.cam.getVideoTracks()[0]
+      const videoLocal = telas[0]?.getVideoTracks()[0] || camStream?.getVideoTracks()[0]
+      const videoRemoto = [...p.telas.values()][0]?.getVideoTracks()[0] || p.cam.getVideoTracks()[0]
       let recebido, enviado, retorno, transporte
       st.forEach(r => {
         if (r.type === 'transport') transporte ??= r
@@ -1330,7 +1321,7 @@
         const via = caminho?.every(Boolean)
           ? ` · ${caminho.some(c => c.candidateType === 'relay') ? 'relay' : 'direto'}` : ''
         env.textContent = enviado
-          ? `→ ${telaStream ? 'tela' : 'câmera'} ${formato(enviado, true)}` +
+          ? `→ ${telas.length ? 'tela' : 'câmera'} ${formato(enviado, true)}` +
             `${banda === undefined ? '' : ` · banda estimada ${Math.round(banda / 1000)}kbps`}` +
             `${via}${motivo ? ` · limitado: ${motivo}` : ''}`
           : ''
@@ -1363,7 +1354,7 @@
         sinalizacao: ['conectando', 'aberta', 'fechando', 'fechada'][ws?.readyState] ?? 'nunca abriu',
         naSala: [...naSala], tentativasDeReconexao: tentativas,
         qualidade, orcamentoKbps: +($('orc')?.value || 0),
-        compartilhando: !!telaStream, camera: !!camStream,
+        compartilhando: telas.length > 0, camera: !!camStream,
         pares: [...pares].map(estadoPar), saidos, eventos,
       }, null, 1)
     }
@@ -1663,8 +1654,7 @@
       tentativas = 0
       naSala.clear()
       nomes.clear()
-      pararTela2()
-      pararTela()
+      pararTelas()
       pararCam()
       pararTesteMic()
       pararMic()
@@ -1793,7 +1783,7 @@
 
     // Entrou ou saiu gente: o orçamento total se redivide por um número diferente
     // de pares. Fica fora de atualizarDiag para não recursar com aplicarQualidade.
-    const redividir = () => { atualizarDiag(); if (telaStream) aplicarQualidade() }
+    const redividir = () => { atualizarDiag(); if (telas.length) aplicarQualidade() }
 
     // ---------- controles ----------
 
@@ -1834,16 +1824,29 @@
       } finally { $('entrar').disabled = false; $('entrar').textContent = 'Entrar como convidado →' }
     }
 
-    // Compara a stream, não só se existe: parar a primeira tela promove a segunda.
-    async function alternarTelaComSom(pegar, iniciar, rotulo) {
-      const antes = pegar()
-      await iniciar().catch(e => log(`${rotulo} — ${e.name}: ${e.message}`))
-      if (pegar() === antes) return
-      bip(antes ? SONS.telaParada : SONS.telaLigada)
+    // Som só quando o número de telas muda: cancelar o seletor não toca nada.
+    async function mexerNasTelas(acao) {
+      const antes = telas.length
+      await acao()
+      if (telas.length !== antes) bip(telas.length > antes ? SONS.telaLigada : SONS.telaParada)
     }
-    $('b-tela').onclick = () => alternarTelaComSom(() => telaStream, compartilhar, 'tela')
-    $('b-tela2').onclick = () => alternarTelaComSom(() => tela2Stream, compartilharSegunda, 'segunda tela')
-    $('palco-telas').onclick = ev => { const b = ev.target.closest?.('[data-tela]'); if (b) verTela(+b.dataset.tela) }
+    const novaTela = () => mexerNasTelas(() => adicionarTela().catch(e => log(`tela — ${e.name}: ${e.message}`)))
+    // Sem tela, o botão compartilha direto; com alguma, abre o menu para
+    // adicionar outra ou escolher qual parar.
+    $('b-tela').onclick = () => telas.length ? alternarMenuTelas() : novaTela()
+    $('menu-telas').onclick = ev => {
+      const b = ev.target.closest?.('button')
+      if (!b) return
+      alternarMenuTelas(false)
+      if (b.dataset.parar) mexerNasTelas(() => pararTela(telas[+b.dataset.parar]))
+      else if (b.dataset.acao === 'adicionar') novaTela()
+      else if (b.dataset.acao === 'parar-todas') mexerNasTelas(pararTelas)
+    }
+    addEventListener('pointerdown', ev => {
+      if (!ev.target.closest?.('#menu-telas, #b-tela')) alternarMenuTelas(false)
+    })
+    addEventListener('keydown', ev => { if (ev.key === 'Escape') alternarMenuTelas(false) })
+    $('palco-telas').onclick = ev => { const b = ev.target.closest?.('[data-tela]'); if (b) verTela(b.dataset.tela) }
 
     $('b-cam').onclick = async () => {
       const ligada = !!camStream
@@ -1986,7 +1989,6 @@
       camera: '<rect x="2" y="5" width="13" height="14" rx="3"/><path d="m15 9 7-4v14l-7-4"/>',
       'camera-off': '<rect x="2" y="5" width="13" height="14" rx="3"/><path d="m15 9 7-4v14l-7-4"/><path d="M3 3l18 18" stroke-width="2.4"/>',
       screen: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M12 13V7m-3 3 3-3 3 3"/>',
-      screens: '<path d="M7 3h13a2 2 0 0 1 2 2v9"/><rect x="2" y="7" width="16" height="11" rx="2"/><path d="M7 21h6M10 18v3"/>',
       settings: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="currentColor" stroke="none"/><circle cx="16" cy="17" r="3" fill="currentColor" stroke="none"/>',
       phone: '<path d="M3 16v-4c4-5 14-5 18 0v4l-5-1v-4M8 11v4l-5 1"/>',
       voice: '<path d="m11 4-6 5H2v6h3l6 5V4ZM15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>',
@@ -2003,7 +2005,7 @@
     const textoHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
     const corPessoa = nome => [...(nome || '?')].reduce((s,c) => s + c.charCodeAt(0) * 13, 0) % 360
     function controle(id, label) {
-      const icons = {'b-mic':'mic','b-surdo':'headphones','b-cam':'camera','b-tela':'screen','b-tela2':'screens','b-settings':'settings','b-sair':'phone','b-pip':'pip','b-full':'full','b-maximize':'maximize'}
+      const icons = {'b-mic':'mic','b-surdo':'headphones','b-cam':'camera','b-tela':'screen','b-settings':'settings','b-sair':'phone','b-pip':'pip','b-full':'full','b-maximize':'maximize'}
       const el = $(id)
       const icone = el.classList.contains('cortado') ? `${icons[id]}-off` : icons[id]
       el.innerHTML = svgIcon(icone) + `<span class="sr">${textoHtml(label)}</span>`
@@ -2017,7 +2019,7 @@
     }
     addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('[data-icon]').forEach(el => el.innerHTML = svgIcon(el.dataset.icon))
-      for (const id of ['b-mic','b-surdo','b-cam','b-tela','b-tela2','b-settings','b-sair','b-pip','b-full']) controle(id, $(id).title)
+      for (const id of ['b-mic','b-surdo','b-cam','b-tela','b-settings','b-sair','b-pip','b-full']) controle(id, $(id).title)
       setInterval(bater, BATIDA_MS)
       // Voltar da rede ou do sono não precisa esperar o próximo batimento.
       addEventListener('online', () => { if (sala && (!ws || ws.readyState > 1)) conectar() })

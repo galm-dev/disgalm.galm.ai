@@ -15,7 +15,7 @@ function fixture() {
   }
   let stats = new Map()
   const pc = { getStats: async () => stats }
-  const p = { pc, tela: stream('remote-screen'), cam: stream('remote-camera'), amostras: [] }
+  const p = { pc, telas: new Map([['tela', stream('remote-screen')]]), cam: stream('remote-camera'), amostras: [] }
   const state = {
     $, document: { getElementById: $, querySelector: () => $('env') },
     addEventListener() {}, Map, setInterval() {}, clearInterval() {},
@@ -25,7 +25,7 @@ function fixture() {
   state.p = p
   state.screen = stream('screen')
   state.camera = stream('camera')
-  runInNewContext("pares.set('peer', p); telaStream = screen; camStream = camera; foco = 'peer'", state)
+  runInNewContext("pares.set('peer', p); telas.splice(0, telas.length, screen); camStream = camera; foco = 'peer'", state)
   const previous = new Map()
   return {
     state, p, $, previous,
@@ -78,8 +78,8 @@ test('recebimento funciona sem envio e limpa indicador de envio anterior', async
 
 test('câmera é medida quando não há tela compartilhada', async () => {
   const f = fixture()
-  runInNewContext('telaStream = null', f.state)
-  f.p.tela = stream()
+  runInNewContext('telas.length = 0', f.state)
+  f.p.telas = new Map()
   await f.tick([source('camera'), out(), incoming({ trackIdentifier: 'remote-camera' })])
   assert.match(f.$('env').textContent, /câmera 1920x1080/)
   assert.match(f.$('palco-stats').textContent, /1280x720/)

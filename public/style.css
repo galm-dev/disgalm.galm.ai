@@ -1483,3 +1483,73 @@ button.channel:hover:not(:disabled) {
   background: var(--fg);
   color: var(--bg);
 }
+/* Várias telas: o botão Tela mostra quantas e abre o menu para parar uma. */
+#barra #b-tela {
+  position: relative;
+}
+#b-tela .contador {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: var(--fg);
+  color: var(--bg);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 15px;
+}
+.toolbar-wrap {
+  position: relative;
+}
+#menu-telas {
+  position: absolute;
+  bottom: calc(100% - 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 280px;
+  max-width: min(420px, calc(100vw - 24px));
+  padding: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line-2);
+  border-radius: var(--r-2);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+#menu-telas[hidden] {
+  display: none;
+}
+#menu-telas .menu-tela {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 6px 6px 10px;
+}
+#menu-telas .menu-tela span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+#menu-telas small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-3);
+  font-size: 11px;
+}
+#menu-telas .menu-acao {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-start;
+}
+#menu-telas .menu-acao .icon {
+  width: 16px;
+  height: 16px;
+}

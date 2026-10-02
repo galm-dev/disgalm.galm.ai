@@ -24,7 +24,7 @@ function fixture() {
     signalingState: 'stable', getSenders: () => [],
   }
   const canal = { readyState: 'open', send: m => enviados.push(JSON.parse(m)) }
-  const p = { pc, nome: 'A', tela: stream('remote-screen'), cam: stream(), amostras: [], canal, estado: {} }
+  const p = { pc, nome: 'A', telas: new Map([['tela', stream('remote-screen')]]), cam: stream(), amostras: [], canal, estado: {} }
   const state = {
     document: { getElementById: $, querySelector: () => $('env') },
     navigator: { userAgent: 'teste' },
@@ -32,7 +32,7 @@ function fixture() {
   }
   runInNewContext(script, state)
   Object.assign(state, { pc, p, screen: stream('screen') })
-  runInNewContext("pares.set('peer', p); telaStream = screen; foco = 'peer'", state)
+  runInNewContext("pares.set('peer', p); telas.splice(0, telas.length, screen); foco = 'peer'", state)
   const previous = new Map()
   return {
     state, p, pc, $, enviados,
@@ -145,7 +145,7 @@ test('tela pede maintain-resolution; câmera fica com a dica dela', async () => 
   })
   f.pc.getSenders = () => [sender(tela), sender(cam)]
   Object.assign(f.state, { tela, cam })
-  f.run('telaStream = { getVideoTracks: () => [tela] }; camStream = { getVideoTracks: () => [cam] }')
+  f.run('telas.splice(0, telas.length, { getVideoTracks: () => [tela] }); camStream = { getVideoTracks: () => [cam] }')
   await f.run('aplicarQualidade()')
   assert.equal(aplicados.get(tela).degradationPreference, 'maintain-resolution')
   assert.equal(aplicados.get(cam).degradationPreference, undefined)

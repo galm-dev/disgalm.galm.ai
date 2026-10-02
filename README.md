@@ -69,13 +69,15 @@ do filtro. As gravações ficam só na memória da aba e são descartadas na
 próxima gravação. Fora de uma sala, o teste abre o microfone só durante a
 gravação.
 
-## Duas telas
+## Várias telas
 
-Com uma tela compartilhada, **Outra tela** abre o seletor de novo e manda uma
-segunda captura, só de vídeo: o áudio do sistema continua na primeira. Quem
-assiste escolhe no palco qual das duas ver, por pessoa. As duas vão a todos os
-pares e dividem o teto de bitrate da tela. Parar a primeira promove a segunda.
-Um cliente sem suporte vê só a primeira.
+Sem tela compartilhada, o botão **Tela** compartilha direto. Com alguma, ele
+mostra quantas e abre um menu: **Adicionar tela** abre o seletor de novo, e
+cada tela tem seu **Parar**, com o tipo (monitor, janela ou aba) para saber
+qual é. Só uma tela leva o áudio do sistema; nas outras ele tocaria em dobro.
+Quem assiste escolhe no palco qual tela ver, por pessoa. Todas as telas vão a
+todos os pares e dividem o teto de bitrate da tela. Recapturar refaz só a
+primeira. Um cliente de versão anterior vê só a primeira ou as duas primeiras.
 
 ## Operação
 
