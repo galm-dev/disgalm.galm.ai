@@ -21,6 +21,41 @@ const guestCookie = req => /^([0-9a-f]{64})$/.exec((req.headers.get('cookie') ||
 const roomObject = (env, room) => env.SALA.get(env.SALA.idFromName(room))
 const internal = (url, method, headers = {}, body) => new Request(url, { method, headers, body })
 
+// Logs estruturados. Sempre no console do Worker; com BETTERSTACK_TOKEN e
+// BETTERSTACK_HOST (secrets), também no Better Stack, num POST por lote. O plano
+// gratuito do Workers não tem Logpush, por isso o envio sai daqui mesmo.
+// Regra da Galm: nunca nome, email, token, credencial TURN nem IP cru; id de
+// conexão e sub (UUID) podem ir.
+async function enviarLogs(env, linhas) {
+  if (!linhas.length) return
+  for (const l of linhas) console.log(JSON.stringify(l))
+  if (!env?.BETTERSTACK_TOKEN || !env?.BETTERSTACK_HOST) return
+  try {
+    const r = await fetch(`https://${env.BETTERSTACK_HOST.replace(/^https?:\/\//, '')}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${env.BETTERSTACK_TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify(linhas),
+    })
+    if (!r.ok) console.log('Better Stack: HTTP', r.status)
+  } catch (e) { console.log('Better Stack falhou:', e.message) }
+}
+const linhaWorker = (evento, campos) =>
+  ({ dt: new Date().toISOString(), message: evento, origem: 'worker', evento, ...campos })
+
+// Eventos que o navegador manda sobre as próprias conexões. Limites para que um
+// cliente não encha a cota: lote pequeno, corpo pequeno, só campos simples.
+const MAX_EVENTOS = 100, MAX_CORPO = 64 * 1024
+const campoSimples = v => v === null || ['string', 'number', 'boolean'].includes(typeof v)
+function limparEvento(e) {
+  if (!e || typeof e !== 'object' || typeof e.evento !== 'string') return null
+  const out = {}
+  for (const [k, v] of Object.entries(e).slice(0, 30)) {
+    if (campoSimples(v)) out[k] = typeof v === 'string' ? v.slice(0, 500) : v
+    else if (Array.isArray(v) || typeof v === 'object') out[k] = JSON.stringify(v).slice(0, 2000)
+  }
+  return out
+}
+
 // O TURN da Cloudflare não tem usuário e senha fixos: credenciais são geradas
 // por API, com validade. O par (key id, api token) fica em secrets e NUNCA
 // chega ao navegador — só o usuário/senha efêmeros descem para o cliente.
@@ -34,10 +69,10 @@ async function turnCloudflare(env) {
         headers: { authorization: `Bearer ${env.CF_TURN_API_TOKEN}`, 'content-type': 'application/json' },
         body: JSON.stringify({ ttl: 86400 }),
       })
-    if (!r.ok) { console.log('TURN Cloudflare: HTTP', r.status); return [] }
+    if (!r.ok) { await enviarLogs(env, [linhaWorker('turn_cloudflare_falhou', { status: r.status })]); return [] }
     return (await r.json()).iceServers || []
   } catch (e) {
-    console.log('TURN Cloudflare falhou:', e.message)
+    await enviarLogs(env, [linhaWorker('turn_cloudflare_falhou', { erro: e.message })])
     return []
   }
 }
@@ -83,6 +118,21 @@ export class Sala extends DurableObject {
       .filter(ws => ws !== exceto)
       .map(ws => ({ ws, a: ws.deserializeAttachment() }))
       .filter(p => p.a)
+  }
+
+  // O objeto não tem ctx de request: o envio segura o objeto vivo por waitUntil.
+  #registrar(evento, campos) {
+    const envio = enviarLogs(this.env, [linhaWorker(evento, campos)])
+    if (this.ctx.waitUntil) this.ctx.waitUntil(envio)
+  }
+
+  // SHA de IPv4 puro se reverte por força bruta; com sal aleatório da sala, não.
+  async #ipHash(req) {
+    const ip = req.headers.get('cf-connecting-ip')
+    if (!ip) return null
+    let sal = await this.ctx.storage.get('sal-ip')
+    if (!sal) await this.ctx.storage.put('sal-ip', sal = randomToken())
+    return (await tokenHash(sal + ip)).slice(0, 16)
   }
 
   #envia(ws, obj) {
@@ -166,6 +216,7 @@ export class Sala extends DurableObject {
     if (!Number.isFinite(exp) || exp <= Math.floor(Date.now() / 1000))
       return new Response('acesso expirado', { status: 401 })
     const q = new URL(req.url).searchParams
+    const sala = (q.get('sala') || '').slice(0, 80)
     const nome = (q.get('nome') || 'anon').slice(0, 24)
     const aba = (q.get('aba') || '').slice(0, 64)
     const retomar = /^[0-9a-f]{8}$/.test(q.get('id') || '') ? q.get('id') : null
@@ -186,7 +237,7 @@ export class Sala extends DurableObject {
       }
       const ultimo = Math.max(p.a.desde || 0, this.ctx.getWebSocketAutoResponseTimestamp(p.ws)?.getTime() || 0)
       if (p.a.bate && agora - ultimo > FANTASMA_MS) {
-        console.log(`fantasma ${p.a.nome}/${p.a.id}: sem batimento há ${Math.round((agora - ultimo) / 1000)}s`)
+        this.#registrar('fantasma', { sala: p.a.sala, id: p.a.id, semBatimentoS: Math.round((agora - ultimo) / 1000) })
         this.#descarta(p, 'sem batimento')
         this.#avisaSaida(p.a.id, servidor, true)
       }
@@ -197,6 +248,7 @@ export class Sala extends DurableObject {
     for (const p of this.#peers(servidor)) {
       if (!aba || p.a.aba !== aba) continue
       this.#descarta(p, 'substituída')
+      this.#registrar('substituida', { sala: p.a.sala, id: p.a.id, retomada: p.a.id === retomar })
       if (p.a.id !== retomar) this.#avisaSaida(p.a.id, servidor, false)
     }
 
@@ -212,10 +264,14 @@ export class Sala extends DurableObject {
     // o id, então ele também volta.
     const retomada = !!retomar && !jaEstavam.some(p => p.a.id === retomar)
     const id = retomada ? retomar : crypto.randomUUID().slice(0, 8)
-    servidor.serializeAttachment({ id, nome, aba, desde: agora, bate: q.has('aba'), exp,
-      role, sub: role === 'member' ? req.headers.get('x-disgalm-sub') : null })
+    // Só a comparação sai daqui: dois celulares atrás do mesmo NAT dependem de
+    // hairpin ou de relay para se falarem. O IP fica em hash e nunca é logado.
+    const ipHash = await this.#ipHash(req)
+    const sub = role === 'member' ? req.headers.get('x-disgalm-sub') : null
+    servidor.serializeAttachment({ id, nome, aba, desde: agora, bate: q.has('aba'), exp, role, sub, ipHash, sala })
     await this.#alarme()
-    console.log(`${retomada ? 'voltou' : 'entrou'} ${nome}/${id} (${jaEstavam.length + 1})`)
+    this.#registrar(retomada ? 'voltou' : 'entrou', { sala, id, papel: role, sub, naSala: jaEstavam.length + 1,
+      pares: jaEstavam.map(p => ({ id: p.a.id, mesmoIpPublico: !!ipHash && p.a.ipHash === ipHash })) })
 
     this.#envia(servidor, {
       t: 'welcome', id, retomada,
@@ -254,14 +310,14 @@ export class Sala extends DurableObject {
     const a = ws.deserializeAttachment()
     if (!a) return
     ws.serializeAttachment(null)
-    console.log(`saiu ${a.nome}/${a.id} (${motivo}${volta ? ', pode voltar' : ''})`)
+    this.#registrar('saiu', { sala: a.sala, id: a.id, motivo: String(motivo), volta })
     this.#avisaSaida(a.id, ws, volta)
     await this.#alarme()
   }
 }
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const url = new URL(req.url)
     const room = roomName(url)
     const sameOrigin = req.headers.get('Origin') === url.origin
@@ -297,16 +353,39 @@ export default {
       return Response.json({ room, expiresAt: exp }, { headers })
     }
 
-    if (url.pathname === '/ice') {
+    // Membro pelo bearer; convidado pelo cookie, válido para esta sala.
+    const quem = async () => {
       const claims = await verifyAccess(bearer(req))
-      if (!claims) {
-        const token = guestCookie(req)
-        if (!validRoom(room) || !token) return new Response('acesso negado', { status: 401, headers: noStore })
-        const check = await roomObject(env, room).fetch(internal(`${url.origin}/guest/check`, 'POST',
-          { 'x-disgalm-guest-token': token }))
-        if (!check.ok) return new Response('acesso negado', { status: 401, headers: noStore })
-      }
+      if (claims) return { papel: 'member', sub: claims.sub }
+      const token = guestCookie(req)
+      if (!validRoom(room) || !token) return null
+      const check = await roomObject(env, room).fetch(internal(`${url.origin}/guest/check`, 'POST',
+        { 'x-disgalm-guest-token': token }))
+      return check.ok ? { papel: 'guest', sub: null } : null
+    }
+
+    if (url.pathname === '/ice') {
+      if (!await quem()) return new Response('acesso negado', { status: 401, headers: noStore })
       return Response.json(await env2ice(env), { headers: noStore })
+    }
+
+    if (url.pathname === '/telemetria') {
+      if (req.method !== 'POST') return new Response('método inválido', { status: 405 })
+      if (!sameOrigin) return new Response('origem inválida', { status: 403 })
+      if (!validRoom(room)) return new Response('sala inválida', { status: 400 })
+      const autor = await quem()
+      if (!autor) return new Response('acesso negado', { status: 401, headers: noStore })
+      const corpo = await req.text()
+      if (corpo.length > MAX_CORPO) return new Response('lote grande demais', { status: 413 })
+      let eventos
+      try { eventos = JSON.parse(corpo)?.eventos } catch {}
+      if (!Array.isArray(eventos)) return new Response('lote inválido', { status: 400 })
+      const linhas = eventos.slice(0, MAX_EVENTOS).map(limparEvento).filter(Boolean).map(e => ({
+        ...e, dt: typeof e.dt === 'string' ? e.dt : new Date().toISOString(), message: e.evento,
+        origem: 'navegador', sala: room, papel: autor.papel, sub: autor.sub,
+      }))
+      ctx.waitUntil(enviarLogs(env, linhas))
+      return new Response(null, { status: 204, headers: noStore })
     }
 
     if (url.pathname === '/ws') {

@@ -1,12 +1,13 @@
-// Captura do microfone com a supressão de ruído escolhida. No modo RNNoise o
-// navegador não filtra ruído (só eco e ganho) e o áudio passa por uma rede
-// neural pequena num AudioWorklet antes de ir para os pares. Os outros modos
-// entregam a track do getUserMedia direto, como antes.
+// Captura do microfone com a supressão de ruído escolhida. Nos modos RNNoise e
+// DeepFilterNet o navegador não filtra ruído (só eco e ganho) e o áudio passa
+// por uma rede neural num AudioWorklet antes de ir para os pares. Os outros
+// modos entregam a track do getUserMedia direto, como antes.
 (() => {
   const CHAVE = 'disgalm.ruido'
-  const MODOS = ['rnnoise', 'navegador', 'desligado']
+  const CHAVE_MIC = 'disgalm.microfone'
+  const MODOS = ['rnnoise', 'deepfilter', 'navegador', 'desligado']
   const ERROS_DE_CAPTURA = ['NotAllowedError', 'NotFoundError', 'NotReadableError', 'OverconstrainedError', 'SecurityError', 'AbortError']
-  let wasm = null
+  const ROTULOS = { rnnoise: 'Com RNNoise', deepfilter: 'Com DeepFilterNet', navegador: 'Com o filtro do navegador', desligado: 'Sem filtro de ruído' }
 
   const modo = () => {
     const salvo = localStorage.getItem(CHAVE)
@@ -14,10 +15,26 @@
   }
   const definirModo = m => { if (MODOS.includes(m)) localStorage.setItem(CHAVE, m) }
 
+  // Vazio é o padrão do sistema. O Chromium ignora deviceId ideal, então o
+  // escolhido vai como exact; se o aparelho sumiu (fone desconectado), a
+  // captura cai no padrão em vez de deixar a pessoa sem voz.
+  const microfone = () => localStorage.getItem(CHAVE_MIC) || ''
+  const definirMicrofone = id => { id ? localStorage.setItem(CHAVE_MIC, id) : localStorage.removeItem(CHAVE_MIC) }
+
   async function capturar(filtroDoNavegador) {
-    return navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: filtroDoNavegador, autoGainControl: true },
-    })
+    const audio = { echoCancellation: true, noiseSuppression: filtroDoNavegador, autoGainControl: true }
+    const id = microfone()
+    if (id) {
+      try { return await navigator.mediaDevices.getUserMedia({ audio: { ...audio, deviceId: { exact: id } } }) }
+      catch (e) { if (!['OverconstrainedError', 'NotFoundError'].includes(e.name)) throw e }
+    }
+    return navigator.mediaDevices.getUserMedia({ audio })
+  }
+
+  // Qual aparelho o navegador abriu de fato, para o seletor e o log.
+  function dispositivo(stream) {
+    const t = stream.getAudioTracks()[0]
+    return { id: t?.getSettings().deviceId || '', rotulo: t?.label || '' }
   }
 
   // Sem gesto do usuário (entrada automática depois do login) o contexto nasce
@@ -28,33 +45,80 @@
     for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, retomar, { once: true, capture: true })
   }
 
-  async function comRnnoise() {
-    wasm ??= fetch('/vendor/rnnoise/rnnoise.wasm').then(r => {
-      if (!r.ok) throw new Error(`rnnoise.wasm ${r.status}`)
-      return r.arrayBuffer()
+  const carregar = (url, ler) => fetch(url).then(r => {
+    if (!r.ok) throw new Error(`${url} ${r.status}`)
+    return ler(r)
+  })
+
+  // O WASM do DeepFilterNet tem 32 MiB e o Workers aceita 25 MiB por asset, por
+  // isso vai em gzip. Se algum servidor mandar Content-Encoding: gzip, o fetch
+  // já entrega o WASM; os primeiros bytes dizem qual dos dois chegou.
+  async function descompactar(r) {
+    const bytes = new Uint8Array(await r.arrayBuffer())
+    if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) return bytes
+    return new Response(new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))).arrayBuffer()
+  }
+
+  // Cada filtro: worklet, processador e o que o worklet recebe. O módulo vem
+  // pronto da thread principal porque o worklet não tem fetch.
+  const FILTROS = {
+    rnnoise: {
+      worklet: '/rnnoise-worklet.js',
+      processador: 'rnnoise',
+      opcoes: () => carregar('/vendor/rnnoise/rnnoise.wasm', r => r.arrayBuffer()).then(wasm => ({ wasm })),
+    },
+    deepfilter: {
+      worklet: '/deepfilter-worklet.js',
+      processador: 'deepfilter',
+      // O worklet só responde depois de instanciar o modelo; sem isso uma falha
+      // passaria áudio mudo para os pares.
+      esperarPronto: true,
+      opcoes: () => carregar('/vendor/deepfilternet/df_bg.wasm.gz', descompactar)
+        .then(b => WebAssembly.compile(b)).then(modulo => ({ modulo })),
+    },
+  }
+  const opcoesCache = {}
+
+  function pronto(filtro) {
+    return new Promise((ok, falha) => {
+      const limite = setTimeout(() => falha(new Error('o filtro não respondeu em 15 s')), 15000)
+      filtro.port.onmessage = ev => {
+        clearTimeout(limite)
+        if (ev.data?.pronto) ok()
+        else falha(new Error(ev.data?.erro || 'falha ao iniciar o filtro'))
+      }
     })
-    wasm.catch(() => { wasm = null })
-    const bytes = await wasm
+  }
+
+  async function comWorklet(m) {
+    const cfg = FILTROS[m]
+    opcoesCache[m] ??= cfg.opcoes()
+    opcoesCache[m].catch(() => { delete opcoesCache[m] })
+    const processorOptions = await opcoesCache[m]
     const ctx = new AudioContext({ sampleRate: 48000 })
     let bruto
     try {
-      await ctx.audioWorklet.addModule('/rnnoise-worklet.js')
-      bruto = await capturar(false)
-      const filtro = new AudioWorkletNode(ctx, 'rnnoise', {
-        processorOptions: { wasm: bytes },
+      await ctx.audioWorklet.addModule(cfg.worklet)
+      const filtro = new AudioWorkletNode(ctx, cfg.processador, {
+        processorOptions,
         outputChannelCount: [1],
         channelCount: 1,
         channelCountMode: 'explicit',
       })
+      // O contexto suspenso não roda o construtor do processador; destrava antes de esperar.
+      ctx.resume().catch(() => {})
+      if (cfg.esperarPronto) await pronto(filtro)
+      bruto = await capturar(false)
       const fonte = ctx.createMediaStreamSource(bruto)
       const destino = ctx.createMediaStreamDestination()
       destino.channelCount = 1     // voz mono; sem isso o destino duplica em estéreo
       fonte.connect(filtro).connect(destino)
-      ctx.resume().catch(() => {})
       destravar(ctx)
       return {
-        modo: 'rnnoise',
+        modo: m,
+        rotulo: ROTULOS[m],
         stream: destino.stream,
+        dispositivo: dispositivo(bruto),
         // A gravação usa destinos próprios: a track enviada aos pares pode estar
         // desativada pelo mudo, e a comparação precisa do mesmo trecho de fala
         // antes e depois do filtro.
@@ -88,7 +152,9 @@
   function direto(stream, m) {
     return {
       modo: m,
+      rotulo: ROTULOS[m],
       stream,
+      dispositivo: dispositivo(stream),
       tapar() {
         const copia = stream.getAudioTracks()[0].clone()
         copia.enabled = true
@@ -98,11 +164,11 @@
     }
   }
 
-  // Se o RNNoise falhar (navegador sem AudioWorklet, wasm fora do ar), a
+  // Se o filtro neural falhar (navegador sem AudioWorklet, wasm fora do ar), a
   // chamada segue com o filtro do navegador e quem chamou registra o motivo.
   async function abrir(m = modo(), aoFalhar = () => {}) {
-    if (m === 'rnnoise') {
-      try { return await comRnnoise() } catch (e) {
+    if (FILTROS[m]) {
+      try { return await comWorklet(m) } catch (e) {
         // Permissão negada ou microfone ausente não melhora trocando de filtro.
         if (ERROS_DE_CAPTURA.includes(e.name)) throw e
         aoFalhar(e)
@@ -112,5 +178,5 @@
     return direto(await capturar(m === 'navegador'), m)
   }
 
-  window.disgalmRuido = { MODOS, modo, definirModo, abrir }
+  window.disgalmRuido = { MODOS, modo, definirModo, microfone, definirMicrofone, abrir }
 })()

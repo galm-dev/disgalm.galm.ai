@@ -144,7 +144,8 @@
           <div class="control-group">
             <button id="b-mic" title="Silenciar microfone">Microfone</button
             ><button id="b-surdo" title="Silenciar tudo">Áudio</button
-            ><button id="b-cam" class="cortado" title="Ligar câmera">Câmera</button>
+            ><button id="b-cam" class="cortado" title="Ligar câmera">Câmera</button
+            ><button id="b-virar" title="Virar câmera" hidden>Virar câmera</button>
           </div>
           <div class="control-group">
             <button id="b-tela" title="Compartilhar tela">Tela</button
@@ -167,6 +168,8 @@
       <button id="b-close-settings" aria-label="Fechar ajustes">✕</button>
     </div>
     <div class="settings-body">
+      <label for="micdev">Microfone</label
+      ><select id="micdev" title="qual microfone"></select>
       <label for="camdev">Câmera</label
       ><select id="camdev" title="qual câmera" hidden></select>
       <label for="loopdev">Áudio do sistema</label
@@ -183,6 +186,7 @@
       </select>
       <button id="b-recap" hidden></button>
       <label class="check"><input type="checkbox" id="sorelay" /> Forçar conexão via relay (TURN) na próxima sala</label>
+      <label class="check"><input type="checkbox" id="verstats" /> Mostrar estatísticas de vídeo nos participantes</label>
       <span id="manual" hidden>
         <label for="res">Resolução</label
         ><select id="res">
@@ -225,7 +229,8 @@
       </select>
       <label for="ruido">Supressão de ruído do microfone</label
       ><select id="ruido">
-        <option value="rnnoise">RNNoise (rede neural no navegador)</option>
+        <option value="rnnoise">RNNoise (rede neural leve)</option>
+        <option value="deepfilter">DeepFilterNet (mais forte, baixa 12 MB uma vez)</option>
         <option value="navegador">Filtro do navegador</option>
         <option value="desligado">Desligada</option>
       </select>
@@ -234,7 +239,7 @@
           <button id="b-gravar" type="button">Testar microfone</button>
           <span id="mic-test-tempo" role="status"></span>
         </div>
-        <p>Fale o quanto quiser e pare para ouvir a gravação. Com RNNoise, as duas faixas são o mesmo trecho antes e depois do filtro.</p>
+        <p>Fale o quanto quiser e pare para ouvir a gravação. Com RNNoise ou DeepFilterNet, as duas faixas são o mesmo trecho antes e depois do filtro.</p>
         <div id="mic-test-result"></div>
       </div>
       <div id="diag"></div>
@@ -280,6 +285,45 @@
       $('log').textContent += linha + '\n'
       $('log').scrollTop = 1e9
     }
+
+    // ---------- telemetria remota ----------
+    // O log acima só existe na aba de quem está com o problema. Estes eventos vão
+    // ao Worker (/telemetria), que repassa ao Better Stack. Sem nome, email, IP,
+    // SDP nem credencial: pares aparecem pelo id de conexão da sala.
+    const NAVEGADOR = (() => {
+      const nav = globalThis.navigator, ua = nav?.userAgent || ''
+      const nome = nav?.brave ? 'Brave' : /Edg\//.test(ua) ? 'Edge' : /OPR\//.test(ua) ? 'Opera'
+        : /Firefox\//.test(ua) ? 'Firefox' : /Chrome\//.test(ua) ? 'Chrome' : /Safari\//.test(ua) ? 'Safari' : 'outro'
+      const versao = ua.match(/(?:Firefox|Chrome|Version)\/(\d+)/)?.[1] ?? '?'
+      const so = /Android/.test(ua) ? 'Android' : /iPhone|iPad/.test(ua) ? 'iOS' : /Windows/.test(ua) ? 'Windows'
+        : /Mac OS/.test(ua) ? 'macOS' : /Linux/.test(ua) ? 'Linux' : 'outro'
+      return `${nome} ${versao} ${so}`
+    })()
+    const filaTelemetria = []
+    function telemetria(evento, campos = {}) {
+      const rede = globalThis.navigator?.connection
+      filaTelemetria.push({ dt: new Date().toISOString(), evento, eu: meuId ?? null, nav: NAVEGADOR,
+        rede: rede?.type ?? rede?.effectiveType ?? null, ...campos })
+      if (filaTelemetria.length > 300) filaTelemetria.splice(0, filaTelemetria.length - 300)
+      if (filaTelemetria.length >= 50) enviarTelemetria()
+    }
+    // saindo: a página está fechando e não dá tempo de renovar o token.
+    async function enviarTelemetria(saindo) {
+      if (!filaTelemetria.length || !sala || typeof fetch !== 'function') return
+      const cod = sala.cod
+      const lote = filaTelemetria.splice(0, 100)
+      let token = null
+      try {
+        if (!disgalmAuth.isGuest(cod))
+          token = saindo ? disgalmAuth.currentToken() : await disgalmAuth.accessToken()
+      } catch {}
+      fetch(`/telemetria?sala=${encodeURIComponent(cod)}`, {
+        method: 'POST', keepalive: true, body: JSON.stringify({ eventos: lote }),
+        headers: { 'content-type': 'application/json', ...(token && { authorization: `Bearer ${token}` }) },
+      }).catch(() => {})
+    }
+    setInterval(() => enviarTelemetria(), 10_000)
+    addEventListener('pagehide', () => enviarTelemetria(true))
 
     // Presets de qualidade da própria tela. O bitrate ANDA JUNTO com resolução e
     // fps de propósito: 4K60 num teto de 2,5 Mbps fica pior que 1080p30, porque o
@@ -363,9 +407,20 @@
       if (loop) $('loopdev').value = loop.deviceId
     }
 
+    // Os ids "default" e "communications" do Chromium repetem um aparelho real,
+    // e o padrão do sistema já é a primeira opção.
+    async function listarMics() {
+      const devs = (await navigator.mediaDevices.enumerateDevices())
+        .filter(d => d.kind === 'audioinput' && d.deviceId && !['default', 'communications'].includes(d.deviceId))
+      $('micdev').innerHTML = '<option value="">Padrão do sistema</option>' +
+        devs.map(d => `<option value="${d.deviceId}">${d.label || 'microfone'}</option>`).join('')
+      const escolhido = disgalmRuido.microfone()
+      $('micdev').value = devs.some(d => d.deviceId === escolhido) ? escolhido : ''
+    }
+
     async function abrirMic() {
       const aberto = await disgalmRuido.abrir(undefined, e => log(`RNNoise indisponível (${e.name}: ${e.message}) — usando o filtro do navegador`))
-      log(`microfone: supressão de ruído ${aberto.modo}`)
+      log(`microfone: ${aberto.dispositivo.rotulo || 'sem nome'}, supressão de ruído ${aberto.modo}`)
       return aberto
     }
 
@@ -401,9 +456,18 @@
       }
     }
 
-    // Troca o filtro de ruído no meio da chamada sem renegociar, como recapturar.
+    // Troca o filtro ou o microfone no meio da chamada sem renegociar, como recapturar.
     async function trocarFiltroMic(modo) {
       disgalmRuido.definirModo(modo)
+      await reabrirMic()
+    }
+
+    async function trocarMicrofone(id) {
+      disgalmRuido.definirMicrofone(id)
+      await reabrirMic()
+    }
+
+    async function reabrirMic() {
       if (!micStream) return
       pararTesteMic()
       const antigo = mic
@@ -423,7 +487,7 @@
 
     // ---------- teste de microfone ----------
     // Grava sem limite e só toca depois: ouvindo em tempo real a própria voz
-    // cobre o ruído, e de volta, parado, ele fica evidente. Com RNNoise grava
+    // cobre o ruído, e de volta, parado, ele fica evidente. Com filtro neural grava
     // o mesmo trecho antes e depois do filtro. Fica só na memória da aba.
     let teste = null
     const urlsTeste = []
@@ -449,7 +513,7 @@
       }
       const faixas = []
       if (tap.bruto) faixas.push(gravar(tap.bruto, 'Sem filtro de ruído'))
-      faixas.push(gravar(tap.filtrado, fonte.modo === 'rnnoise' ? 'Com RNNoise' : fonte.modo === 'navegador' ? 'Com o filtro do navegador' : 'Sem filtro de ruído'))
+      faixas.push(gravar(tap.filtrado, fonte.rotulo))
       const inicio = Date.now()
       const relogio = setInterval(() => {
         const s = Math.floor((Date.now() - inicio) / 1000)
@@ -506,12 +570,17 @@
       $('camdev').hidden = devs.length < 2      // seletor só aparece se houver escolha
     }
 
-    async function alternarCam() {
+    // Câmera do celular: 'user' é a frontal e 'environment' a traseira. O botão de
+    // virar só aparece quando o navegador informa o lado, o que no desktop não ocorre.
+    let ladoCam = 'user'
+
+    async function alternarCam(lado) {
       if (camStream) return pararCam()
-      const dev = $('camdev').value
+      // Virar escolhe pelo lado; sem isso vale o dispositivo escolhido nos ajustes.
+      const dev = lado ? '' : $('camdev').value
       camStream = await navigator.mediaDevices.getUserMedia({
         video: {
-          ...(dev ? { deviceId: { exact: dev } } : {}),
+          ...(dev ? { deviceId: { exact: dev } } : { facingMode: lado || ladoCam }),
           width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 },
         },
       })
@@ -522,6 +591,11 @@
       $('b-cam').classList.replace('cortado', 'on')
       controle('b-cam', 'Desligar câmera')
       await listarCams()                        // os rótulos só existem depois da permissão
+      const cfg = t.getSettings()
+      if (cfg.deviceId) $('camdev').value = cfg.deviceId
+      ladoCam = cfg.facingMode || ladoCam
+      $('b-virar').hidden = !cfg.facingMode || $('camdev').options.length < 2
+      telemetria('camera', { ligada: true, lado: cfg.facingMode ?? null, res: `${cfg.width}x${cfg.height}`, pares: pares.size })
       desenharTile('local')
       anunciar()
       aplicarQualidade()
@@ -535,8 +609,10 @@
           if (sd.track && ts.includes(sd.track)) p.pc.removeTrack(sd)
       for (const t of ts) t.stop()
       camStream = null
+      telemetria('camera', { ligada: false })
       $('b-cam').classList.replace('on', 'cortado')
       controle('b-cam', 'Ligar câmera')
+      $('b-virar').hidden = true
       desenharTile('local')
       if (foco === 'local' && !telas.length) focar(proximoComVideo())
       anunciar()
@@ -840,6 +916,7 @@
       if (temCam) el.querySelector('.v-cam').srcObject = d.cam
       el.classList.toggle('focado', foco === id)
       el.classList.toggle('eu', !!d.local)
+      el.classList.toggle('traseira', !!d.local && ladoCam === 'environment')
 
       for (const inp of el.querySelectorAll('.vols input')) {
         const p = pares.get(id)
@@ -978,6 +1055,11 @@
         if (s.getVideoTracks().length) telasNovas.set(sid, s)
       }
       p.telas = telasNovas
+      // Só mudanças: o que chegou (streamIds) contra o que o par anunciou.
+      const resumo = { par: id, anunciou: sabemos, camAnunciada: !!e.idCam, telasAnunciadas: ids.length,
+        videosRecebidos: p.videos.size, cam: cam.length > 0, telas: telasNovas.size }
+      const chave = JSON.stringify(resumo)
+      if (chave !== p.resumoVideo) { p.resumoVideo = chave; telemetria('video_classificado', resumo) }
       desenharTile(id)
       if (foco === id) focar(id)
     }
@@ -999,7 +1081,7 @@
       const el = document.createElement('audio')
       el.autoplay = true
       el.srcObject = new MediaStream([track])   // uma track por elemento: ver PLANO-POC.md
-      el.play?.().catch(e => log(`autoplay bloqueado (${e.name}) — clique na página`))
+      el.play?.().catch(e => { log(`autoplay bloqueado (${e.name}) — clique na página`); telemetria('autoplay_bloqueado', { par: id }) })
       p.audios.set(streamId, { el, tipo: 'voz', track })
       track.addEventListener('ended', () => { el.remove(); p.audios.delete(streamId); })
       classificar(id)
@@ -1075,6 +1157,8 @@
                   audios: new Map(), volumes: { voz: 1, tela: 1 }, estado: {},
                   amostras: [], relato: null }
       pares.set(id, p)
+      telemetria('par_criado', { par: id, polite, soRelay: $('sorelay').checked,
+        enviaCam: !!camStream, enviaTelas: telas.length, enviaMic: !!micStream })
       desenharTile(id)
 
       // Quem recebe a imagem ruim não sabe por que o emissor degradou; quem envia
@@ -1094,6 +1178,8 @@
       pc.ontrack = e => {
         const sid = e.streams[0]?.id || 'sem-stream'
         log(`track ${e.track.kind} de ${nome}`)
+        telemetria('track', { par: id, tipo: e.track.kind, temStream: !!e.streams[0],
+          eCam: sid === p.estado?.idCam, mudo: e.track.muted })
         if (e.track.kind === 'audio') return receberAudio(id, e.track, sid)
 
         p.videos.set(sid, e.track)
@@ -1104,17 +1190,24 @@
 
       const tipos = new Set()
       pc.onicecandidate = e => {
-        if (!e.candidate) return log(`candidatos de ${nome}: ${[...tipos].join(', ') || 'NENHUM'}`)
+        if (!e.candidate) {
+          telemetria('candidatos_locais', { par: id, tipos: [...tipos].join(',') || 'nenhum' })
+          return log(`candidatos de ${nome}: ${[...tipos].join(', ') || 'NENHUM'}`)
+        }
         if (!tipos.has(e.candidate.type)) {
           tipos.add(e.candidate.type)
           log(`candidato ${e.candidate.type}/${e.candidate.protocol} para ${nome}`)
         }
         sinalizar(id, { candidate: e.candidate })
       }
-      pc.onicecandidateerror = e => log(`ICE erro ${e.errorCode} em ${e.url} — ${e.errorText}`)
+      pc.onicecandidateerror = e => {
+        log(`ICE erro ${e.errorCode} em ${e.url} — ${e.errorText}`)
+        telemetria('ice_erro', { par: id, codigo: e.errorCode, url: e.url, texto: e.errorText })
+      }
 
       pc.oniceconnectionstatechange = () => {
         log(`${nome}: ${pc.iceConnectionState}`)
+        telemetria('ice', { par: id, estado: pc.iceConnectionState })
         if (pc.iceConnectionState === 'connected') { tipoDeCaminho(id, pc); acompanharVideo(id, pc) }
         if (pc.iceConnectionState === 'failed') {
           porQueFalhou(id, pc)
@@ -1124,15 +1217,32 @@
       }
       pc.onconnectionstatechange = () => {
         log(`${nome}: conexão ${pc.connectionState}`)
+        telemetria('conexao', { par: id, estado: pc.connectionState })
         if (pares.get(id)?.pc === pc) limparAusentes()
       }
 
+      // A primeira oferta é sempre do impolite. Se as duas pontas oferecem juntas
+      // e a polite tem mais mídia (câmera ligada, a outra não), o Chromium falha
+      // ao responder depois do rollback ("Failed to start SCTP transport") e a
+      // conexão nunca sai de 'new'. Era o caso de dois celulares. O evento volta
+      // a disparar quando a resposta deixa a conexão estável. Se a polite recriou
+      // a conexão sozinha (retomada com a antiga morta), ninguém mais oferece:
+      // depois de 3 s sem oferta, ela oferece como antes.
       pc.onnegotiationneeded = async () => {
+        if (polite && !pc.remoteDescription) {
+          if (!p.esperandoOferta) p.esperandoOferta = setTimeout(() => {
+            if (pares.get(id) === p && !pc.remoteDescription && pc.signalingState === 'stable') negociar()
+          }, 3000)
+          return
+        }
+        return negociar()
+      }
+      const negociar = async () => {
         try {
           p.fazendoOferta = true
           await definirLocal(pc)
           sinalizar(id, { description: pc.localDescription })
-        } catch (e) { log('negotiationneeded:', e.message) }
+        } catch (e) { log('negotiationneeded:', e.message); telemetria('negociacao_erro', { par: id, erro: e.message }) }
         finally { p.fazendoOferta = false }
       }
       return p
@@ -1149,6 +1259,8 @@
       // endereço do candidato relay é o do servidor que alocou.
       const quem = l?.candidateType === 'relay' ? ` via ${l.address}` : ''
       log(`caminho com ${pares.get(id)?.nome}: ${via}${quem} — ${l?.candidateType}/${r?.candidateType}`)
+      telemetria('caminho', { par: id, local: l?.candidateType, protocolo: l?.relayProtocol ?? l?.protocol,
+        remoto: r?.candidateType, relay: l?.candidateType === 'relay' ? l.url ?? null : null })
     }
 
     async function porQueFalhou(id, pc) {
@@ -1161,6 +1273,9 @@
         const l = cand.get(r.localCandidateId), rm = cand.get(r.remoteCandidateId)
         linhas.push(`  ${l?.candidateType}/${l?.protocol} → ${rm?.candidateType}: ${r.state}`)
       })
+      const remotos = new Set([...cand.values()].filter(c => c.type === 'remote-candidate').map(c => c.candidateType))
+      telemetria('ice_falhou', { par: id, pares: linhas.map(l => l.trim()).slice(0, 30),
+        candidatosRemotos: [...remotos].join(',') || 'nenhum' })
       log(`por que falhou com ${pares.get(id)?.nome}:\n${linhas.join('\n') || '  nenhum par formado'}`)
     }
 
@@ -1280,7 +1395,7 @@
     }
 
     // Só transições entram no log; o resto fica nas amostras.
-    function registrarMudancas(p, a) {
+    function registrarMudancas(id, p, a) {
       const caminho = a.transporte?.caminho
       if (caminho && caminho !== p.caminho) log(`caminho com ${p.nome}: ${caminho}`)
       p.caminho = caminho ?? p.caminho
@@ -1290,6 +1405,11 @@
             `${a.envio.res} ${a.envio.fps ?? '?'}fps, estimativa ${a.transporte?.bweKbps ?? '?'}kbps`)
       p.limite = limite ?? p.limite
       if (a.causa && a.causa !== p.causa) log(`vídeo de ${p.nome}: ${a.causa}`)
+      const resumo = JSON.stringify([a.envio?.limite, a.envio?.res, a.recebe?.res, !!a.recebe, !!a.envio, caminho])
+      if (resumo !== p.resumoEnvio) {
+        p.resumoEnvio = resumo
+        telemetria('video', { par: id, envio: a.envio, recebe: a.recebe, transporte: a.transporte, config: a.config })
+      }
       p.causa = a.causa
     }
 
@@ -1338,7 +1458,7 @@
       if (p.amostras.length > MAX_AMOSTRAS) p.amostras.shift()
       if (p.canal?.readyState === 'open')
         p.canal.send(JSON.stringify({ envio: a.envio, transporte: a.transporte, config: a.config }))
-      registrarMudancas(p, a)
+      registrarMudancas(id, p, a)
 
       const env = document.querySelector(`#t-${id} .env`)
       if (env) {
@@ -1416,6 +1536,7 @@
       // queda, ou achou a nossa morta). A nossa não tem mais par; recria e aceita.
       if (data.de && data.description?.type === 'offer' && (!p || (p.remota && p.remota !== data.de))) {
         log(`${nomes.get(id) ?? id} recriou a conexão — recriando a nossa`)
+        telemetria('par_recriado', { par: id })
         removerPar(id)
         p = criarPar(id, nomes.get(id) ?? '?')
         anunciar(id)
@@ -1431,7 +1552,10 @@
         if (data.description) {
           const colisao = data.description.type === 'offer' && (p.fazendoOferta || pc.signalingState !== 'stable')
           p.ignorandoOferta = !p.polite && colisao
-          if (p.ignorandoOferta) return log(`oferta ignorada de ${p.nome} (impolite)`)
+          if (p.ignorandoOferta) {
+            telemetria('oferta_ignorada', { par: id })
+            return log(`oferta ignorada de ${p.nome} (impolite)`)
+          }
           await pc.setRemoteDescription(data.description)
           if (data.description.type === 'offer') {
             await definirLocal(pc)
@@ -1440,7 +1564,7 @@
         } else if (data.candidate) {
           try { await pc.addIceCandidate(data.candidate) } catch (e) { if (!p.ignorandoOferta) throw e }
         }
-      } catch (e) { log('sinal:', e.message) }
+      } catch (e) { log('sinal:', e.message); telemetria('sinal_erro', { par: id, erro: e.message }) }
     }
 
     // ---------- sinalização ----------
@@ -1453,6 +1577,9 @@
     const BATIDA_MS = 20_000, SEM_RESPOSTA_MS = 45_000
     let sala = null                 // { cod, nome } enquanto está numa sala
     let ultimoSinal = 0, tentativas = 0, religar = null
+    // Para separar as causas de uma queda 1006: aba oculta com timers estrangulados
+    // (batida atrasada), rede fora, ou corte no meio com tudo em dia.
+    let abertaEm = 0, ultimaBatida = 0
     const naSala = new Set()        // quem o servidor diz estar na sala agora
 
     const nomes = new Map()         // id → nome, para recriar par sem o aviso de entrada
@@ -1478,6 +1605,10 @@
     }
 
     function sinalizacaoFechada(ev) {
+      const agora = Date.now(), seg = t => t ? Math.round((agora - t) / 1000) : null
+      telemetria('sinalizacao_fechou', { codigo: ev.code, motivo: ev.reason || null,
+        abertaHaS: seg(abertaEm), semMensagemHaS: seg(ultimoSinal), ultimaBatidaHaS: seg(ultimaBatida),
+        visivel: globalThis.document?.visibilityState ?? null, online: globalThis.navigator?.onLine ?? null })
       log(`${new Date().toISOString()} sinalização fechou: código=${ev.code}; ` +
           `motivo=${ev.reason || '(não informado)'}; fechamento completo=${ev.wasClean}`)
       for (const [, p] of pares)
@@ -1504,7 +1635,7 @@
       const s = ws = new WebSocket(`${proto}://${location.host}/ws?${q}`,
         guest ? ['disgalm'] : ['disgalm', `auth.${token}`])
       ultimoSinal = Date.now()
-      s.onopen = () => s.send(JSON.stringify({ t: 'join', room: sala.cod, name: sala.nome }))
+      s.onopen = () => { abertaEm = Date.now(); s.send(JSON.stringify({ t: 'join', room: sala.cod, name: sala.nome })) }
       // Socket substituído não fala mais: só o atual reage. Se o atual foi
       // substituído, outra aba com o mesmo sessionStorage (aba duplicada) tomou
       // o lugar; religar faria as duas se expulsarem em ciclo.
@@ -1537,6 +1668,7 @@
         return conectar()
       }
       ws.send('{"t":"ping"}')
+      ultimaBatida = Date.now()
       limparAusentes()
     }
 
@@ -1648,9 +1780,11 @@
         'Acesso negado. Entre com GALM ou peça um novo convite.' : 'Não foi possível obter o relay.')
       ice = await response.json()
       log('ICE:', ice.map(s => s.urls).flat().join(' '))
+      telemetria('ice_servidores', { urls: ice.map(s => s.urls).flat().join(' ') })
       if (!micStream) await pegarMic()
       if (!entrarNaSala.dispositivos) {
         entrarNaSala.dispositivos = true
+        await listarMics()
         await listarLoopback()
         await listarCams()
       }
@@ -1672,6 +1806,8 @@
     // o microfone é liberado até a próxima entrada.
     function sairDaSala() {
       if (!sala) return
+      telemetria('saiu_da_sala')
+      enviarTelemetria()
       const s = ws
       sala = null
       ws = null
@@ -1815,8 +1951,11 @@
 
     // ---------- controles ----------
 
-    addEventListener('unhandledrejection', e => log('ERRO não tratado:', e.reason?.message || e.reason))
-    addEventListener('error', e => log('ERRO:', e.message))
+    addEventListener('unhandledrejection', e => {
+      log('ERRO não tratado:', e.reason?.message || e.reason)
+      telemetria('erro', { erro: String(e.reason?.message || e.reason) })
+    })
+    addEventListener('error', e => { log('ERRO:', e.message); telemetria('erro', { erro: e.message }) })
 
     const lerLocal = chave => {
       try { return localStorage.getItem(chave) || '' }
@@ -1826,6 +1965,15 @@
       try { valor ? localStorage.setItem(chave, valor) : localStorage.removeItem(chave) }
       catch {}
     }
+    // Resolução, bitrate e limitação por participante são para depurar, não para
+    // quem só está na chamada: ficam escondidos até alguém ligar nos ajustes.
+    $('verstats').checked = lerLocal('disgalm.stats') === '1'
+    $('sala').classList.toggle('stats', $('verstats').checked)
+    $('verstats').onchange = () => {
+      gravarLocal('disgalm.stats', $('verstats').checked ? '1' : '')
+      $('sala').classList.toggle('stats', $('verstats').checked)
+    }
+
     const nomeSalvo = () => lerLocal('disgalm.nome')
     const salvarNome = nome => gravarLocal('disgalm.nome', nome)
 
@@ -1876,9 +2024,17 @@
     addEventListener('keydown', ev => { if (ev.key === 'Escape') alternarMenuTelas(false) })
     $('palco-telas').onclick = ev => { const b = ev.target.closest?.('[data-tela]'); if (b) verTela(b.dataset.tela) }
 
+    // O celular só abre uma câmera por vez: fecha a atual antes de abrir a outra.
+    $('b-virar').onclick = async () => {
+      if (!camStream) return
+      const lado = ladoCam === 'environment' ? 'user' : 'environment'
+      pararCam()
+      await alternarCam(lado).catch(e => { log(`câmera — ${e.name}: ${e.message}`); telemetria('camera_erro', { erro: e.name }) })
+    }
+
     $('b-cam').onclick = async () => {
       const ligada = !!camStream
-      await alternarCam().catch(e => log(`câmera — ${e.name}: ${e.message}`))
+      await alternarCam().catch(e => { log(`câmera — ${e.name}: ${e.message}`); telemetria('camera_erro', { erro: e.name }) })
       if (!!camStream !== ligada) bip(camStream ? SONS.camLigada : SONS.camDesligada, 'triangle')
     }
 
@@ -1886,7 +2042,7 @@
     $('camdev').onchange = async () => {
       if (!camStream) return
       pararCam()
-      await alternarCam().catch(e => log(`câmera — ${e.name}: ${e.message}`))
+      await alternarCam().catch(e => { log(`câmera — ${e.name}: ${e.message}`); telemetria('camera_erro', { erro: e.name }) })
     }
 
     // Barulhinhos de mute/surdo sintetizados na hora: dois tons curtos, descendo
@@ -2024,6 +2180,7 @@
       'headphones-off': '<path d="M3 14v-3a9 9 0 0 1 18 0v3"/><rect x="3" y="12" width="4" height="8" rx="2"/><rect x="17" y="12" width="4" height="8" rx="2"/><path d="M3 3l18 18" stroke-width="2.4"/>',
       camera: '<rect x="2" y="5" width="13" height="14" rx="3"/><path d="m15 9 7-4v14l-7-4"/>',
       'camera-off': '<rect x="2" y="5" width="13" height="14" rx="3"/><path d="m15 9 7-4v14l-7-4"/><path d="M3 3l18 18" stroke-width="2.4"/>',
+      flip: '<path d="M4 9a8 8 0 0 1 14.5-3.5L20 7M20 3v4h-4M20 15a8 8 0 0 1-14.5 3.5L4 17M4 21v-4h4"/>',
       screen: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M12 13V7m-3 3 3-3 3 3"/>',
       settings: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="currentColor" stroke="none"/><circle cx="16" cy="17" r="3" fill="currentColor" stroke="none"/>',
       phone: '<path d="M3 16v-4c4-5 14-5 18 0v4l-5-1v-4M8 11v4l-5 1"/>',
@@ -2041,7 +2198,7 @@
     const textoHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
     const corPessoa = nome => [...(nome || '?')].reduce((s,c) => s + c.charCodeAt(0) * 13, 0) % 360
     function controle(id, label) {
-      const icons = {'b-mic':'mic','b-surdo':'headphones','b-cam':'camera','b-tela':'screen','b-settings':'settings','b-sair':'phone','b-pip':'pip','b-full':'full','b-maximize':'maximize'}
+      const icons = {'b-mic':'mic','b-surdo':'headphones','b-cam':'camera','b-virar':'flip','b-tela':'screen','b-settings':'settings','b-sair':'phone','b-pip':'pip','b-full':'full','b-maximize':'maximize'}
       const el = $(id)
       const icone = el.classList.contains('cortado') ? `${icons[id]}-off` : icons[id]
       el.innerHTML = svgIcon(icone) + `<span class="sr">${textoHtml(label)}</span>`
@@ -2055,7 +2212,7 @@
     }
     addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('[data-icon]').forEach(el => el.innerHTML = svgIcon(el.dataset.icon))
-      for (const id of ['b-mic','b-surdo','b-cam','b-tela','b-settings','b-sair','b-pip','b-full']) controle(id, $(id).title)
+      for (const id of ['b-mic','b-surdo','b-cam','b-virar','b-tela','b-settings','b-sair','b-pip','b-full']) controle(id, $(id).title)
       setInterval(bater, BATIDA_MS)
       // Voltar da rede ou do sono não precisa esperar o próximo batimento.
       addEventListener('online', () => { if (sala && (!ws || ws.readyState > 1)) conectar() })
@@ -2110,6 +2267,10 @@
       $('ruido').value = disgalmRuido.modo()
       $('ruido').onchange = () => trocarFiltroMic($('ruido').value)
         .catch(e => { log(`microfone — ${e.name}: ${e.message}`); $('ui-notice').textContent = 'Não foi possível trocar o filtro do microfone.' })
+      $('micdev').onchange = () => trocarMicrofone($('micdev').value)
+        .catch(e => { log(`microfone — ${e.name}: ${e.message}`); $('ui-notice').textContent = motivoMic(e) || 'Não foi possível trocar o microfone.' })
+      // Fone conectado ou removido no meio da chamada aparece no seletor sem recarregar.
+      navigator.mediaDevices?.addEventListener('devicechange', () => listarMics().catch(() => {}))
       $('b-gravar').onclick = () => {
         $('b-gravar').disabled = true
         ;(teste ? pararTesteMic() : iniciarTesteMic())

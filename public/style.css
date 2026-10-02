@@ -929,6 +929,9 @@ button.channel:hover:not(:disabled) {
 .tile.eu .v-cam {
   transform: scaleX(-1);
 }
+.tile.eu.traseira .v-cam {
+  transform: none;
+}
 /* Câmera de quem também compartilha tela: miniatura sobre a tela. */
 .tile video.mini {
   position: absolute;
@@ -1014,6 +1017,10 @@ button.channel:hover:not(:disabled) {
 .tile .env.limitado {
   display: block;
   color: var(--warn);
+}
+#sala:not(.stats) .tile .env,
+#sala:not(.stats) #palco-stats {
+  display: none;
 }
 #sala.sem-foco #palco {
   display: none;

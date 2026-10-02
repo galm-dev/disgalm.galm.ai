@@ -54,18 +54,21 @@ não o publique na rede.
 
 ## Microfone
 
-Em **Ajustes**, a supressão de ruído do microfone tem três modos: RNNoise, que
-é o padrão, filtro do navegador ou desligada. A escolha fica salva no navegador
-e vale na hora, inclusive no meio da chamada, porque a track enviada é trocada
-sem renegociar. No modo RNNoise, o navegador cuida só do eco e do ganho, e a voz
-passa pelo `public/rnnoise-worklet.js` num AudioWorklet antes de ir aos pares.
-Isso acrescenta 10 ms de atraso. O binário está em `public/vendor/rnnoise/`,
-com a origem e as licenças. Se o RNNoise não carregar, a chamada usa o filtro do
-navegador e registra o motivo no diagnóstico.
+Em **Ajustes**, a supressão de ruído do microfone tem quatro modos: RNNoise,
+que é o padrão, DeepFilterNet, filtro do navegador ou desligada. A escolha
+fica salva no navegador e vale na hora, inclusive no meio da chamada, porque a
+track enviada é trocada sem renegociar. Nos dois modos neurais, o navegador
+cuida só do eco e do ganho, e a voz passa por um AudioWorklet antes de ir aos
+pares. O RNNoise (`public/rnnoise-worklet.js`) é leve e acrescenta 10 ms. O
+DeepFilterNet3 (`public/deepfilter-worklet.js`) tira bem mais ruído, inclusive
+teclado e cliques, mas acrescenta 40 ms e baixa um WASM de 12 MB na primeira
+vez. Os binários estão em `public/vendor/`, com a origem e as licenças. Se o
+filtro escolhido não carregar, a chamada usa o filtro do navegador e registra o
+motivo no diagnóstico.
 
 **Testar microfone** grava sem limite de tempo e só toca depois que a pessoa
-para de falar. Com RNNoise, grava duas faixas do mesmo trecho, antes e depois
-do filtro. As gravações ficam só na memória da aba e são descartadas na
+para de falar. Com um filtro neural, grava duas faixas do mesmo trecho, antes e
+depois do filtro. As gravações ficam só na memória da aba e são descartadas na
 próxima gravação. Fora de uma sala, o teste abre o microfone só durante a
 gravação.
 
@@ -78,6 +81,26 @@ qual é. Só uma tela leva o áudio do sistema; nas outras ele tocaria em dobro.
 Quem assiste escolhe no palco qual tela ver, por pessoa. Todas as telas vão a
 todos os pares e dividem o teto de bitrate da tela. Recapturar refaz só a
 primeira. Um cliente de versão anterior vê só a primeira ou as duas primeiras.
+
+## Diagnóstico
+
+As estatísticas de vídeo por participante (resolução, bitrate, limitação) só
+aparecem com **Ajustes → Mostrar estatísticas de vídeo nos participantes**.
+
+Cada navegador manda eventos das próprias conexões a `POST /telemetria`, a cada
+10 s e ao sair: servidores ICE, tipos de candidato, estados de ICE e conexão,
+caminho escolhido, pares de candidatos na falha, tracks recebidas e sua
+classificação, transições de qualidade, erros de câmera e de negociação. O
+Worker exige membro GALM ou convidado da sala e a origem própria. Ele limita o
+lote a 100 eventos e 64 KiB e acrescenta sala, papel e `sub`. Os logs do Worker
+(TURN da Cloudflare e entrada e saída na sala) seguem o mesmo caminho. Na
+entrada, cada par existente leva `mesmoIpPublico`: o Durable Object compara
+hashes com sal do `CF-Connecting-IP` e nunca loga o IP. Os eventos não levam
+nome, email, IP, SDP nem credencial; os pares aparecem pelo id de conexão.
+
+Tudo vai ao `console.log` do Worker. Com os secrets `BETTERSTACK_TOKEN` e
+`BETTERSTACK_HOST`, também vai ao Better Stack. O plano gratuito do Workers não
+tem Logpush, então o próprio Worker faz o envio.
 
 ## Operação
 

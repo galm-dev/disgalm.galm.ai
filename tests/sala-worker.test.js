@@ -197,3 +197,26 @@ test('membro presente gera convite de 24 horas para vários convidados; convidad
   s.ctx.storage.saved.set([...s.ctx.storage.saved.keys()][0], Math.floor(Date.now() / 1000) - 1)
   assert.equal((await check(token)).status, 401)
 })
+
+test('entrada registra se cada par divide o IP público, sem nome nem IP no log', async () => {
+  const { s } = sala()
+  const linhas = [], original = console.log
+  console.log = l => linhas.push(l)
+  try {
+    const entra = (nome, aba, ip) => s.fetch({ url: `https://x/ws?sala=galm&nome=${nome}&aba=${aba}`,
+      headers: new Headers({ 'x-disgalm-exp': String(Math.floor(Date.now() / 1000) + 600),
+        'x-disgalm-role': 'member', 'x-disgalm-sub': 'person-1', 'cf-connecting-ip': ip }) })
+    await entra('Fulana', 'aba-a', '203.0.113.7')
+    await entra('Beltrana', 'aba-b', '203.0.113.7')
+    await entra('Ciclana', 'aba-c', '198.51.100.9')
+  } finally { console.log = original }
+  const entradas = linhas.map(l => JSON.parse(l)).filter(l => l.evento === 'entrou')
+  const [a, b, c] = entradas.map(e => e.id)
+  assert.deepEqual(entradas[1].pares, [{ id: a, mesmoIpPublico: true }])
+  assert.deepEqual(entradas[2].pares, [{ id: a, mesmoIpPublico: false }, { id: b, mesmoIpPublico: false }])
+  assert.equal(entradas[0].sala, 'galm')
+  const texto = linhas.join('\n')
+  for (const proibido of ['Fulana', 'Beltrana', 'Ciclana', '203.0.113.7', '198.51.100.9'])
+    assert.ok(!texto.includes(proibido), proibido)
+  assert.ok(c)
+})
