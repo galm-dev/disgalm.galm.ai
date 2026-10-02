@@ -363,6 +363,15 @@
       micStream = null
     }
 
+    // O log só mostra o nome do erro; quem está na chamada precisa saber o que fazer.
+    function motivoMic(e) {
+      if (e?.name === 'NotAllowedError')
+        return 'O navegador bloqueou o microfone. Libere no ícone à esquerda do endereço (ou em Ajustes do Sistema → Privacidade e Segurança → Microfone) e recarregue a página.'
+      if (e?.name === 'NotFoundError') return 'Nenhum microfone encontrado.'
+      if (e?.name === 'NotReadableError') return 'O microfone está ocupado por outro app ou não respondeu.'
+      return ''
+    }
+
     async function pegarMic() {
       try {
         mic = await abrirMic()
@@ -374,6 +383,7 @@
         mic = null
         micStream = null
         log(`microfone indisponível (${e.name}) — entrando sem voz`)
+        if (motivoMic(e)) $('ui-notice').textContent = motivoMic(e)
         $('b-mic').disabled = true
         controle('b-mic', 'Microfone indisponível')
       }
@@ -1908,7 +1918,7 @@
       $('b-gravar').onclick = () => {
         $('b-gravar').disabled = true
         ;(teste ? pararTesteMic() : iniciarTesteMic())
-          .catch(e => { log(`teste de microfone — ${e.name}: ${e.message}`); $('mic-test-tempo').textContent = 'Não foi possível gravar.' })
+          .catch(e => { log(`teste de microfone — ${e.name}: ${e.message}`); $('mic-test-tempo').textContent = motivoMic(e) || 'Não foi possível gravar.' })
           .finally(() => { $('b-gravar').disabled = false })
       }
       $('b-invite').onclick = async () => {

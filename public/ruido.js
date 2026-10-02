@@ -5,6 +5,7 @@
 (() => {
   const CHAVE = 'disgalm.ruido'
   const MODOS = ['rnnoise', 'navegador', 'desligado']
+  const ERROS_DE_CAPTURA = ['NotAllowedError', 'NotFoundError', 'NotReadableError', 'OverconstrainedError', 'SecurityError', 'AbortError']
   let wasm = null
 
   const modo = () => {
@@ -101,7 +102,12 @@
   // chamada segue com o filtro do navegador e quem chamou registra o motivo.
   async function abrir(m = modo(), aoFalhar = () => {}) {
     if (m === 'rnnoise') {
-      try { return await comRnnoise() } catch (e) { aoFalhar(e); m = 'navegador' }
+      try { return await comRnnoise() } catch (e) {
+        // Permissão negada ou microfone ausente não melhora trocando de filtro.
+        if (ERROS_DE_CAPTURA.includes(e.name)) throw e
+        aoFalhar(e)
+        m = 'navegador'
+      }
     }
     return direto(await capturar(m === 'navegador'), m)
   }

@@ -1239,8 +1239,10 @@ button.channel:hover:not(:disabled) {
   align-items: center;
 }
 .mic-test-head span {
+  flex: 1;
   color: var(--danger);
-  font: 12px var(--mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 .mic-test p {
   margin: 6px 0 0;
