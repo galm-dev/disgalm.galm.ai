@@ -36,7 +36,10 @@ function criarAtualizacao({ saude, aoMudar, antesDeInstalar }) {
     suportado: suportado(),
     canal: lerCanal(),
     versao: app.getVersion(),
-    situacao: 'parado',      // parado | procurando | baixando | pronta | erro | em-dia
+    situacao: 'parado',      // parado | procurando | baixando | pronta | instalando | erro | em-dia
+    // Versão que acabou de ser instalada por update (badge "Atualizado para…").
+    recemAtualizado: saude?.estado?.tentativas === 1 && saude.estado.ultimaSaudavel &&
+      saude.estado.ultimaSaudavel !== app.getVersion() ? app.getVersion() : null,
     nova: null,
     progresso: 0,
     erro: null,
@@ -85,8 +88,11 @@ function criarAtualizacao({ saude, aoMudar, antesDeInstalar }) {
 
   function instalar() {
     antesDeInstalar?.()
+    // Avisa antes de sumir: no Windows o instalador roda calado por ~10 s.
+    estado.situacao = 'instalando'
+    mudou()
     // isSilent no Windows (sem assistente do NSIS), e reabre depois.
-    setImmediate(() => autoUpdater.quitAndInstall(true, true))
+    setTimeout(() => autoUpdater.quitAndInstall(true, true), 800)
   }
 
   // Troca de canal: grava, aplica e procura já, permitindo descer de versão

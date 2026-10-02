@@ -393,6 +393,9 @@ app.whenReady().then(async () => {
     antesDeInstalar: () => { saindo = true },
   })
   atualizacaoAtual = atualizacao
+  // Reaberto pelo instalador depois de um update: traz a janela para a frente
+  // (no Windows ela voltava atrás das outras, e parecia que nada tinha acontecido).
+  if (atualizacao?.estado.recemAtualizado) win.once('ready-to-show', () => { win.show(); win.focus() })
   // Versão nova que não abre direito: volta para a última saudável e bloqueia
   // esta. O app segue aberto enquanto baixa; instala assim que terminar.
   if (saude?.crashLoop && atualizacao) {

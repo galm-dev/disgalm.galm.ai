@@ -21,11 +21,24 @@ raiz.innerHTML = `<style>
 const badge = raiz.querySelector('.badge')
 const texto = raiz.querySelector('.texto')
 
+// "Atualizado para…" fica alguns segundos depois de reabrir numa versão nova.
+let mostrouAtualizado = false
 function desenhar(a) {
-  if (!a?.suportado || !['baixando', 'pronta'].includes(a.situacao)) { badge.style.display = 'none'; return }
+  const atualizado = a?.recemAtualizado && !mostrouAtualizado
+  if (!a?.suportado || (!['baixando', 'pronta', 'instalando'].includes(a.situacao) && !atualizado)) {
+    badge.style.display = 'none'
+    return
+  }
   badge.style.display = 'flex'
-  badge.classList.toggle('pronta', a.situacao === 'pronta')
-  texto.textContent = a.situacao === 'pronta' ? `Atualizar para ${a.nova} e reiniciar` : `Baixando ${a.nova}… ${a.progresso}%`
+  badge.classList.toggle('pronta', a.situacao === 'pronta' || (atualizado && a.situacao !== 'baixando'))
+  if (a.situacao === 'pronta') texto.textContent = `Atualizar para ${a.nova} e reiniciar`
+  else if (a.situacao === 'instalando') texto.textContent = 'Instalando a atualização… o Disgalm já volta'
+  else if (a.situacao === 'baixando') texto.textContent = `Baixando ${a.nova}… ${a.progresso}%`
+  else {
+    texto.textContent = `Atualizado para ${a.recemAtualizado}`
+    mostrouAtualizado = true
+    setTimeout(() => { badge.style.display = 'none' }, 10_000)
+  }
   badge.title = `Disgalm ${a.versao} · canal ${a.canal === 'nightly' ? 'Nightly' : 'Stable'}`
 }
 badge.onclick = () => { if (badge.classList.contains('pronta')) d.atualizacao.instalar() }
