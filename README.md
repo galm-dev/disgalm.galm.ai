@@ -96,6 +96,66 @@ remoção. O `index.html` fica com a captura, a sinalização, as pessoas (o map
 estado leva o catálogo de fontes em `fontes`; clientes anteriores ignoram o
 campo. Roteiro de regressão em `tests/transporte.md`.
 
+## SFU da Cloudflare (ensaio, fase 1)
+
+`public/transporte-cloudflare.js` implementa o mesmo contrato sobre o
+[Cloudflare Realtime SFU](https://developers.cloudflare.com/realtime/sfu/): uma
+conexão só por cliente, cada fonte publicada uma vez e assinatura em camada
+única do que está no catálogo da sala. O navegador nunca chama a API do SFU.
+Ele pede ao Worker (`POST /sfu?sala=…`) uma das operações `sessao`,
+`publicar`, `assinar`, `renegociar`, `fechar` e `encerrar`, e
+`worker/src/sfu.js` faz a chamada com o App Secret depois de conferir:
+
+- membro GALM pelo bearer ou convidado pelo cookie, como no `/ice`;
+- a conexão viva com aquele id na sala, pela chave que o welcome entregou a
+  ela (o Durable Object guarda só o hash), com o mesmo `sub` ou um convite que
+  ainda vale, dentro do prazo do token e da conexão;
+- que a sessão é de quem pede, que os mids a fechar são dessa sessão e que o
+  alvo da assinatura está no catálogo, publicado por quem está na sala.
+
+O cliente não manda nem recebe `sessionId` de outra pessoa nem `trackName`.
+Catálogo, sessões e versão da sala ficam no storage do Durable Object e
+sobrevivem à hibernação. Não há timer novo no objeto, e o ping continua com
+resposta automática.
+
+O welcome diz o modo: `modo: 'sfu'` com `sfu: { chave, versao, fontes }`, ou
+`modo: 'mesh'`. Quem abre a sala vazia decide o modo da chamada. O SFU só liga
+se a sala estiver em `SFU_SALAS`, os secrets do app existirem e o cliente
+mandar `cap=sfu1`. Cliente antigo fica na malha. Se a chamada já está em SFU,
+ele recebe `cheia` e não entra; se ele abriu a sala, a chamada inteira fica na
+malha. O limite continua 4.
+
+Telemetria do SFU, sem nome, email, token, chave nem IP: `sfu_sessao_criada`,
+`sfu_sessao_fechada`, `sfu_publicou`, `sfu_assinou`, `sfu_api_erro` e
+`sfu_recusado` do Worker; `sfu_conexao`, `sfu_erro` e `sfu_bytes` (bytes por
+fonte, envio e recebimento) do navegador.
+
+### O que criar para o ensaio
+
+1. No painel da Cloudflare, **Realtime → Serverless SFU**
+   (<https://dash.cloudflare.com/?to=/:account/realtime/sfu>), crie um app só
+   para o Disgalm, por exemplo `disgalm-ensaio`. Guarde o **App ID** e o
+   **App Secret**.
+2. Em `worker/`, grave os dois como secrets (o valor é pedido no terminal e
+   não fica no histórico):
+
+   ```sh
+   npx wrangler secret put SFU_APP_ID
+   npx wrangler secret put SFU_APP_SECRET
+   ```
+
+   Também podem ir em `local/turn.env` e subir com `./secrets.sh`.
+3. Escolha uma sala só para o ensaio, por exemplo `ensaio-sfu`, e ponha o nome
+   em `SFU_SALAS` no `worker/wrangler.toml`. Use minúsculas, como na URL, e
+   separe várias salas por vírgula: `SFU_SALAS = "ensaio-sfu"`. Depois,
+   publique o Worker.
+4. Para desligar, deixe `SFU_SALAS = ""` e publique. Todas as salas voltam à
+   malha na próxima chamada. Apagar os secrets tem o mesmo efeito.
+
+Ainda não existe controle de orçamento do SFU (ver o fim de `tests/sfu.md`).
+Não ponha salas de uso diário na lista. Roteiro do ensaio real em
+`tests/sfu.md`.
+
 ## Diagnóstico
 
 As estatísticas de vídeo por participante (resolução, bitrate, limitação) só
@@ -126,5 +186,6 @@ npx wrangler deploy
 ```
 
 O Worker usa os secrets existentes de TURN (`CF_TURN_KEY_ID` e
-`CF_TURN_API_TOKEN`, com coturn opcional). O login GALM não adiciona nenhum
+`CF_TURN_API_TOKEN`, com coturn opcional). O SFU de ensaio usa `SFU_APP_ID` e
+`SFU_APP_SECRET`, e a lista `SFU_SALAS` do `wrangler.toml`. O login GALM não adiciona nenhum
 secret no Disgalm. A configuração do client e dos grants fica no auth.
