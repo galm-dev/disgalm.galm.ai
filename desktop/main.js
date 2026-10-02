@@ -257,6 +257,15 @@ app.whenReady().then(() => {
     height: 800,
     title: 'Disgalm',
     autoHideMenuBar: true,
+    backgroundColor: '#07080b',
+    // Sem barra de título do sistema, como o Discord: a faixa de cima da UI
+    // (40 px, .app-top) arrasta a janela. No Mac os semáforos ficam dentro
+    // dela; no Windows e no Linux os botões do sistema são desenhados por cima
+    // do canto direito, nas cores da UI.
+    titleBarStyle: 'hidden',
+    ...(process.platform === 'darwin'
+      ? { trafficLightPosition: { x: 14, y: 13 } }
+      : { titleBarOverlay: { color: '#07080b', symbolColor: '#edeef2', height: 39 } }),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

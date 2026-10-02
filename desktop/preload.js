@@ -5,6 +5,12 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 const info = ipcRenderer.sendSync('audio-disponivel')
 
+// O CSS do app (sem barra de título) só vale com estas classes; na web elas
+// não existem.
+window.addEventListener('DOMContentLoaded', () => {
+  document.documentElement.classList.add('desktop-app', `desktop-${process.platform}`)
+})
+
 ipcRenderer.on('audio-porta', (e, msg) => {
   window.postMessage({ disgalmAudioPorta: msg }, location.origin, e.ports)
 })
