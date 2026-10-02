@@ -24,6 +24,12 @@ window.addEventListener('DOMContentLoaded', () => {
 const mudancas = new Set()
 ipcRenderer.on('atualizacao', (_e, a) => { for (const f of mudancas) f(a) })
 
+// Esc sai da tela cheia do palco: no Chrome quem faz isso é a interface do
+// navegador, que o app não tem.
+window.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.fullscreenElement) document.exitFullscreen().catch(() => {})
+}, true)
+
 const escolher = new Set()
 const atualizar = new Set()
 ipcRenderer.on('tela-escolher', (_e, m) => { for (const f of escolher) f(m) })

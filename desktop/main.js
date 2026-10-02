@@ -375,6 +375,15 @@ app.whenReady().then(async () => {
     e.preventDefault()
     win.hide()
   })
+  // Esc também sai da tela cheia da janela (o botão verde no Mac). A do palco
+  // (HTML) é tratada no preload.
+  win.webContents.on('before-input-event', (e, input) => {
+    if (input.type === 'keyDown' && input.key === 'Escape' && win.isFullScreen()) {
+      e.preventDefault()
+      win.setFullScreen(false)
+    }
+  })
+
   // Saúde da versão: conta só depois da janela carregada; renderer que cai é
   // recarregado até 3 vezes por minuto (como no t3code) e invalida a contagem.
   const quedas = []
