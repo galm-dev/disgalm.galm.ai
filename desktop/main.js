@@ -16,6 +16,11 @@ const { criarBandeja, lerUltima, gravarUltima, acharUltima } = require('./bandej
 const { criarSaude } = require('./saude.js')
 const { criarAtualizacao } = require('./atualizacao.js')
 
+// Uma instância só: abrir de novo (atalho, o app reaberto por um update) traz
+// a janela existente para a frente, em vez de entrar na sala duas vezes. Sai
+// antes de contar a abertura na saúde da versão.
+if (!process.argv.some(a => a.startsWith('--teste=')) && !app.requestSingleInstanceLock()) process.exit(0)
+
 // Conta esta abertura antes de tudo: é o que detecta crash loop (saude.js).
 const saude = process.argv.some(a => a.startsWith('--teste=')) ? null : criarSaude(app)
 
@@ -432,5 +437,11 @@ app.on('window-all-closed', () => app.quit())
 // Mac: clicar no ícone do Dock traz a janela escondida de volta.
 app.on('activate', () => bandeja?.mostrar())
 ipcMain.on('estado', (_e, novo) => bandeja?.estado(novo))
+app.on('second-instance', () => {
+  if (!janela || janela.isDestroyed()) return
+  if (janela.isMinimized()) janela.restore()
+  janela.show()
+  janela.focus()
+})
 ipcMain.handle('atualizacao-estado', () => atualizacaoAtual?.estado ?? null)
 ipcMain.on('atualizacao-instalar', () => atualizacaoAtual?.instalar())
