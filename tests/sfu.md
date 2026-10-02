@@ -25,6 +25,50 @@ continua em malha, com até 4 pessoas.
 
 Nada disso exercita o SFU de verdade, SDP real nem mídia.
 
+## Ensaio local com o app real (`tests/e2e/sfu.mjs`)
+
+Roda o roteiro em Chromium headless com mídia falsa, contra a Sala e o
+Orcamento de verdade num `wrangler dev` local (`tests/e2e/sfu/`) e o app SFU
+de verdade. A tela falsa é um canvas animado, e o som do sistema é 440 Hz só à
+esquerda e 660 Hz só à direita. O receptor mede o espectro de cada canal. O
+orçamento recebe um retrato zerado, porque não há analytics local.
+
+```sh
+umask 077
+{ grep -E '^SFU_APP_(ID|SECRET)=' ~/.config/disgalm/sfu.env; echo SFU_SALAS=ensaio-sfu-local; } \
+  > tests/e2e/sfu/.dev.vars          # ignorado pelo git; apagar ao fim
+node worker/node_modules/wrangler/bin/wrangler.js dev -c tests/e2e/sfu/wrangler.toml \
+  --ip 127.0.0.1 --port 8788 --persist-to /tmp/disgalm-sfu-persist &
+SFU_ENV=~/.config/disgalm/sfu.env PLAYWRIGHT_CORE=/caminho/com/node_modules \
+  node tests/e2e/sfu.mjs ensaio-sfu-local
+rm tests/e2e/sfu/.dev.vars; rm -rf /tmp/disgalm-sfu-persist
+```
+
+Rodado em 02/10/2026, entre 18h44 e 19h10 de Brasília, no Mac (Chromium 1243
+headless), em 11 rodadas. As três primeiras acharam os defeitos corrigidos em
+`84ec53d`. Resultado das rodadas finais:
+
+| Item do roteiro | Resultado |
+|---|---|
+| 1–2. 2 → 4 clientes, uma conexão cada, uma publicação por fonte | passou: A publica mic, tela (vídeo e som) e câmera uma vez só com 4 na sala |
+| 3. câmera e tela ao mesmo tempo | passou, sem mutação simultânea na sessão |
+| 4. publicar, parar e substituir a câmera 20 vezes | passou: 20 de 20 ciclos vistos pelo outro lado, transceivers ativos = publicadas + assinadas. Às vezes sobra um transceiver `inactive` sem mídia (seção que o SFU repete na oferta), que não cresce com os ciclos |
+| 5. recapturar a tela 20 vezes | passou: a tela segue viva, sem publicação nova |
+| 6. entrada tardia | passou: os dois que entram depois recebem tela, câmera, voz e som |
+| 7. estéreo com tons L/R | passou: separação de 51 a 86 dB nos dois canais, igual à malha. Antes de `84ec53d` chegava mono, na malha e no SFU |
+| 8–9. Windows e Linux com áudio do sistema | não dá para testar headless |
+| 10. relay forçado | não testado: o ensaio local não tem credencial TURN |
+| 11. UDP bloqueado | não dá para testar headless |
+| 12–13. saída e chamada nova | passou: nenhuma sessão ficou com track ativa na API do SFU |
+| 14. sala fora da lista | passou: malha, sem SFU |
+| 15–16. cliente antigo | não rodado no e2e (coberto em `tests/sfu-gateway.test.js`) |
+| O4 (local). orçamento acima de 90% | passou: a sala de ensaio abre na malha e os dois que entram veem o aviso |
+
+Intermitente: em 4 das 11 rodadas, a primeira conexão de um cliente com o SFU
+ficou em `connecting`. Desde `84ec53d` o cliente refaz a sessão depois de 10 s,
+e a rodada termina com tudo recebido, mas aparece um `sfu_erro` com
+`sem_conexao`. A causa não foi achada; vale olhar num ensaio com rede real.
+
 ## Antes do ensaio
 
 - App criado, os dois secrets gravados e uma sala só para o ensaio em

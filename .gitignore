@@ -6,3 +6,6 @@ worker-poc/.config/
 worker/node_modules/
 worker/.wrangler/
 worker/.config/
+
+# Secrets locais do wrangler dev
+.dev.vars

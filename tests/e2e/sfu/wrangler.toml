@@ -1,0 +1,26 @@
+# Ensaio local do SFU (tests/e2e/sfu.mjs). Os secrets do app vão num .dev.vars
+# ao lado deste arquivo, gerado na hora e apagado ao fim; nunca commitar.
+name = "disgalm-e2e-sfu"
+main = "sala.js"
+compatibility_date = "2025-06-01"
+
+[assets]
+directory = "../../../public"
+binding = "ASSETS"
+run_worker_first = true
+
+[[durable_objects.bindings]]
+name = "SALA"
+class_name = "Sala"
+
+[[durable_objects.bindings]]
+name = "ORCAMENTO"
+class_name = "Orcamento"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Sala"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Orcamento"]
