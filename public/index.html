@@ -76,7 +76,7 @@
         </span>
       </button>
     </aside>
-    <main class="room-main">
+    <main class="room-main" id="area-sala">
       <header class="room-head">
         <button id="b-sidebar" title="Ocultar barra lateral" aria-label="Ocultar barra lateral"><span data-icon="sidebar"></span></button>
         <h2 id="room-title">galm</h2>
@@ -2182,9 +2182,48 @@
       desenharTile(foco)
     }
 
+    // Na tela cheia o botão diz que sai, e os controles aparecem por 3 s: sem
+    // isso, só o Esc tirava dela (os controles só surgem com o mouse em cima).
+    // A tela cheia pega a área da sala inteira: palco ocupando tudo e a barra
+    // da chamada (microfone, áudio, telas, sair) flutuando embaixo. Barra e
+    // controles do palco aparecem ao mexer o mouse e somem depois de 3 s.
+    const areaSala = $('area-sala')
+    let capaTimer = null
+    function mostrarControles() {
+      if (!document.fullscreenElement) return
+      areaSala.classList.add('mostrar-controles')
+      $('palco').classList.add('mostrar-capa')
+      clearTimeout(capaTimer)
+      capaTimer = setTimeout(() => {
+        // Com o menu de telas aberto, a barra fica.
+        if (!$('menu-telas').hidden) return mostrarControles()
+        areaSala.classList.remove('mostrar-controles')
+        $('palco').classList.remove('mostrar-capa')
+      }, 3000)
+    }
+    // O Chromium manda mousemove quando o layout muda sob o cursor parado (a
+    // própria entrada na tela cheia): só vale se a posição mudou de verdade.
+    let ultimoXY = ''
+    areaSala.onmousemove = e => {
+      const xy = `${e.screenX},${e.screenY}`
+      if (xy === ultimoXY) return
+      ultimoXY = xy
+      mostrarControles()
+    }
+    areaSala.onkeydown = mostrarControles
+    document.onfullscreenchange = () => {
+      const cheia = !!document.fullscreenElement
+      controle('b-full', cheia ? 'Sair da tela cheia (Esc)' : 'Tela cheia')
+      if (cheia) mostrarControles()
+      else {
+        clearTimeout(capaTimer)
+        areaSala.classList.remove('mostrar-controles')
+        $('palco').classList.remove('mostrar-capa')
+      }
+    }
     $('b-full').onclick = () => document.fullscreenElement
       ? document.exitFullscreen()
-      : $('palco').requestFullscreen().catch(e => log('tela cheia:', e.message))
+      : areaSala.requestFullscreen().catch(e => log('tela cheia:', e.message))
 
     $('v-palco-mini').onclick = () => { camNoCentro = !camNoCentro; focar(foco) }
     $('b-pip').onclick = () => document.pictureInPictureElement
@@ -2250,6 +2289,7 @@
       people: '<circle cx="8" cy="8" r="3"/><path d="M2 21v-3a6 6 0 0 1 12 0v3M16 5a3 3 0 0 1 0 6m1 4a5 5 0 0 1 5 5"/>',
       maximize: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 8h18"/>',
       full: '<path d="M3 9V3h6m6 0h6v6M3 15v6h6m6 0h6v-6"/>',
+      'full-sair': '<path d="M9 3v6H3m18 0h-6V3M3 15h6v6m6 0v-6h6"/>',
       plus: '<path d="M12 5v14M5 12h14"/>',
       close: '<path d="M6 6l12 12M18 6 6 18"/>',
     }
@@ -2259,7 +2299,9 @@
     function controle(id, label) {
       const icons = {'b-mic':'mic','b-surdo':'headphones','b-cam':'camera','b-virar':'flip','b-tela':'screen','b-settings':'settings','b-sair':'phone','b-pip':'pip','b-full':'full','b-maximize':'maximize'}
       const el = $(id)
-      const icone = el.classList.contains('cortado') ? `${icons[id]}-off` : icons[id]
+      // Em tela cheia, o mesmo botão vira "sair", com setas para dentro.
+      const icone = id === 'b-full' && document.fullscreenElement ? 'full-sair'
+        : el.classList.contains('cortado') ? `${icons[id]}-off` : icons[id]
       el.innerHTML = svgIcon(icone) + `<span class="sr">${textoHtml(label)}</span>`
       el.title = label
       el.setAttribute('aria-label', label)
