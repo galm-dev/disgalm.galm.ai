@@ -52,10 +52,16 @@ nem assinatura; no Mac o bundle é reassinado ad hoc.
 
 - **Windows:** rode antes `npm run build:native`. Abra com `Disgalm.exe`. É o
   único com áudio do sistema sem o Discord.
-- **Mac:** `Disgalm.app`. O Electron não tem áudio do sistema no Mac, então a
-  tela vai sem som. O macOS pede a permissão de Gravação de Tela no primeiro
-  compartilhamento. Se o zip vier baixado, rode
-  `xattr -dr com.apple.quarantine Disgalm.app`.
+- **Mac:** para usar no próprio Mac, rode `./instalar-mac.sh`. Ele empacota,
+  assina com uma identidade estável (a "Apple Development" do Keychain ou um
+  certificado local criado na primeira vez), instala em
+  `~/Applications/Disgalm.app` e abre. A permissão de Gravação de Tela fica
+  presa à assinatura: com a assinatura ad hoc do `empacotar.mjs`, cada pacote
+  novo deixa a chave "ligada" valendo para um app que não existe mais. O
+  script só apaga a permissão (`tccutil reset`) quando a assinatura muda.
+  O Electron não tem áudio do sistema no Mac, então a tela vai sem som.
+  Abrir o app pelo terminal de outro app (T3 Code, por exemplo) faz o macOS
+  pedir a permissão em nome desse app; o script abre com `open`.
 - **Linux:** `./disgalm`. O áudio do sistema vem do monitor do PipeWire,
   como na web (`loopback.sh` e escolha em Ajustes).
 - Para abrir um convite ou uma sala, passe o link como argumento:

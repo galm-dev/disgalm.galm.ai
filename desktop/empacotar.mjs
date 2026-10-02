@@ -6,7 +6,8 @@
 //   npm install && node empacotar.mjs      → dist/Disgalm-<plataforma>-<arch>.{zip,tar.gz}
 //
 // No Windows, rode antes `npm run build:native`: o .node vai junto. No Mac, o
-// bundle é reassinado ad hoc (mexer no Electron.app quebra a assinatura dele).
+// bundle é reassinado (mexer no Electron.app quebra a assinatura dele); para
+// instalar no próprio Mac, use instalar-mac.sh.
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { join, resolve } from 'node:path'
@@ -61,8 +62,12 @@ rmSync(join(recursos, 'default_app.asar'), { force: true })
 copiarApp(join(recursos, 'app'))
 cpSync(PUBLIC, join(recursos, 'public'), { recursive: true })
 
+// DISGALM_ASSINATURA escolhe a identidade (instalar-mac.sh põe uma estável);
+// sem ela, assinatura ad hoc, que muda a cada pacote e faz o macOS esquecer a
+// permissão de Gravação de Tela.
 if (process.platform === 'darwin')
-  execFileSync('codesign', ['--force', '--deep', '--sign', '-', join(saida, 'Disgalm.app')], { stdio: 'inherit' })
+  execFileSync('codesign', ['--force', '--deep', '--sign', process.env.DISGALM_ASSINATURA || '-',
+    join(saida, 'Disgalm.app')], { stdio: 'inherit' })
 
 // Compacta com o que cada sistema já tem.
 const dist = join(AQUI, 'dist')
