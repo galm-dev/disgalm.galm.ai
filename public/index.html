@@ -1156,13 +1156,16 @@
 
     // ---------- pessoas ----------
     // A mídia com a pessoa começou do zero (conexão nova ou refeita): o que
-    // chegou antes não vale mais, e o estado volta a esperar o anúncio dela.
+    // chegou antes não vale mais. O estado anunciado é da pessoa e fica: a
+    // instância nova manda o anúncio antes da oferta que recria a conexão, e
+    // apagá-lo aqui a mostraria de microfone aberto até o próximo anúncio.
     function novaPessoa(id, nome) {
+      const estado = anunciados.get(id) ?? {}
       nomes.set(id, nome)
-      pessoas.set(id, { nome, foto: null,
+      pessoas.set(id, { nome, foto: fotoValida(estado.foto),
                         // tela e câmera são as duas vídeo: só o streamId anunciado separa.
                         videos: new Map(), telas: new Map(), cam: new MediaStream(),
-                        audios: new Map(), volumes: { voz: 1, tela: 1 }, estado: {} })
+                        audios: new Map(), volumes: { voz: 1, tela: 1 }, estado })
       desenharTile(id)
     }
 
@@ -1451,6 +1454,7 @@
       const p = pessoas.get(id)
       if (!p) return
       p.estado = data.estado
+      anunciados.set(id, data.estado)
       const nome = typeof data.estado.nome === 'string' ? data.estado.nome.trim().slice(0, 24).trim() : ''
       const foto = fotoValida(data.estado.foto)
       const mudou = (nome && nome !== p.nome) || foto !== (p.foto ?? null)
@@ -1477,6 +1481,7 @@
     const naSala = new Set()        // quem o servidor diz estar na sala agora
 
     const nomes = new Map()         // id → nome, para recriar par sem o aviso de entrada
+    const anunciados = new Map()    // id → último estado anunciado, que sobrevive à conexão refeita
     // O transporte acrescenta o id da conexão dele ao que é dele; o anúncio de
     // estado é da pessoa e vai sem.
     const sinalizar = (to, data) => ws?.readyState === 1 &&
@@ -1618,7 +1623,9 @@
       if (m.aviso) avisar(m.aviso)
       transporte.entrar(m.peers.map(par => ({ id: par.id, nome: par.name })), { retomada: retomada && !trocou })
       if (m.sfu) transporte.atualizarCatalogo(m.sfu)
-      if (retomada) anunciar()
+      // Quem já estava na sala anuncia ao receber o peer-join; o lado que entra
+      // anuncia aqui, senão os outros o veriam de microfone aberto.
+      anunciar()
       atualizarDiag()
     }
 

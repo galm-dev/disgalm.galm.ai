@@ -174,6 +174,21 @@ test('estado vale mesmo vindo de instância nova antes da oferta', async () => {
   assert.equal(f.run("pessoas.get('bbbb0002').estado.compartilhando"), true)
 })
 
+test('oferta de instância nova não apaga o estado que ela anunciou antes', async () => {
+  const f = fixture()
+  f.entrar('aaaa0001', [{ id: 'bbbb0002', name: 'B' }])
+  await f.run("receberSinal('bbbb0002', { de: 'velha', description: { type: 'answer', sdp: '' } })")
+  await f.run("receberSinal('bbbb0002', { de: 'nova', estado: { compartilhando: false, mudo: true } })")
+  await f.run("receberSinal('bbbb0002', { de: 'nova', description: { type: 'offer', sdp: '' } })")
+  assert.equal(f.run("pessoas.get('bbbb0002').estado.mudo"), true)
+})
+
+test('quem entra anuncia o próprio estado a quem já está na sala', () => {
+  const f = fixture()
+  f.entrar('aaaa0001', [{ id: 'bbbb0002', name: 'B' }])
+  assert.ok(f.sinais('bbbb0002').some(d => d.estado))
+})
+
 test('batimento pinga; 45 s de silêncio descartam o socket e religam na hora', () => {
   const f = fixture()
   f.entrar('aaaa0001')
