@@ -72,7 +72,8 @@ jobs:
         include:
           - os: macos-14
             alvo: --mac
-          - os: windows-latest
+          # 2022: o VS 2026 do windows-latest ainda confunde o node-gyp.
+          - os: windows-2022
             alvo: --win
           # 22.04: glibc mais velha, o AppImage roda em mais distros.
           - os: ubuntu-22.04
