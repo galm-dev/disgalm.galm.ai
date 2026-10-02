@@ -5,12 +5,13 @@
 // produção), mas os arquivos estáticos saem de ../public deste checkout: assim
 // a UI do app é a do branch, sem precisar publicar nada. /_desktop/* sai de
 // ./renderer e só existe no app.
-const { app, BrowserWindow, MessageChannelMain, desktopCapturer, dialog, ipcMain, net, protocol, session, utilityProcess,
-  webContents } = require('electron')
+const { app, BrowserWindow, MessageChannelMain, desktopCapturer, dialog, ipcMain, net, protocol, session, shell,
+  utilityProcess, webContents } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 const { raizesDe } = require('./alvo.js')
+const { criarRetorno, urlDeLoginValida } = require('./login.js')
 
 const ORIGEM = new URL(process.env.DISGALM_URL || 'https://disgalm.galm.ai').origin
 // Argumento livre na linha de comando: uma URL do Disgalm (link de convite,
@@ -218,6 +219,29 @@ ipcMain.on('teste-fim', (_e, codigo) => {
   app.exit(codigo || 0)
 })
 
+// ---------- login pelo navegador do sistema ----------
+
+// Login dentro do app obriga a digitar senha sem o gerenciador do navegador.
+// A página (auth.js) gera o PKCE e guarda o verificador; o app só abre o
+// /authorize no navegador e, quando a query volta pelo loopback, carrega
+// /auth/callback com ela na janela, onde o auth.js termina a troca.
+let janela = null
+const retorno = criarRetorno(query => {
+  if (!janela || janela.isDestroyed()) return
+  janela.loadURL(`${ORIGEM}/auth/callback?${query}`)
+  if (janela.isMinimized()) janela.restore()
+  janela.show()
+  app.focus({ steal: true })
+})
+app.on('will-quit', () => retorno.fechar())
+
+ipcMain.handle('login-preparar', () => retorno.preparar())
+ipcMain.handle('login-abrir', async (_e, href, state) => {
+  if (!urlDeLoginValida(href, state, ORIGEM)) throw new Error('login inválido')
+  retorno.esperar(state)
+  await shell.openExternal(href)
+})
+
 // ---------- janela ----------
 
 app.whenReady().then(() => {
@@ -228,7 +252,7 @@ app.whenReady().then(() => {
   session.defaultSession.setPermissionRequestHandler((_wc, permissao, ok) =>
     ok(['media', 'display-capture', 'clipboard-sanitized-write'].includes(permissao)))
 
-  const win = new BrowserWindow({
+  const win = janela = new BrowserWindow({
     width: 1280,
     height: 800,
     title: 'Disgalm',

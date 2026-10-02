@@ -24,6 +24,11 @@ contextBridge.exposeInMainWorld('disgalmDesktop', {
     ouvintes.add(f)
     return () => ouvintes.delete(f)
   },
+  // Login GALM no navegador do sistema, com volta para o app.
+  login: {
+    preparar: () => ipcRenderer.invoke('login-preparar'),
+    abrir: (url, state) => ipcRenderer.invoke('login-abrir', url, state),
+  },
   ...(info.teste
     ? {
         teste: {
