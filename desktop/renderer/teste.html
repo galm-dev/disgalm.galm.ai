@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>Disgalm desktop · teste do áudio sem Discord</title>
+<style>body { font: 14px system-ui; margin: 1em } video { width: 480px; background: #000 } pre { white-space: pre-wrap }</style>
+<h1>Teste do áudio sem Discord</h1>
+<p>Tela + áudio nativo passam por um par RTCPeerConnection local; grava a track
+antes (local) e depois do WebRTC (recebida).</p>
+<video id="v" autoplay muted playsinline></video>
+<audio id="a" autoplay muted></audio>
+<pre id="log"></pre>
+<script type="module" src="/_desktop/teste.js"></script>
