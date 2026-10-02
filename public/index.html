@@ -568,7 +568,7 @@
 
       for (const t of tela.getTracks()) {
         t.contentHint = t.kind === 'video' ? q.hint : 'music'
-        t.onended = () => pararTela(tela)
+        t.onended = () => pararTelaPeloNavegador(tela)
       }
       telas.push(tela)
       for (const [, p] of pares) for (const t of tela.getTracks()) p.pc.addTrack(t, tela)
@@ -603,11 +603,11 @@
 
       const vNovo = novo.getVideoTracks()[0]
       vNovo.contentHint = q.hint
-      vNovo.onended = () => pararTela(tela)
+      vNovo.onended = () => pararTelaPeloNavegador(tela)
       await trocar(tela.getVideoTracks()[0], vNovo)
 
       const aNovo = novo.getAudioTracks()[0]
-      if (aNovo) { aNovo.contentHint = 'music'; aNovo.onended = () => pararTela(tela); await trocar(tela.getAudioTracks()[0], aNovo) }
+      if (aNovo) { aNovo.contentHint = 'music'; aNovo.onended = () => pararTelaPeloNavegador(tela); await trocar(tela.getAudioTracks()[0], aNovo) }
 
       atualizarBotoesTela()
       desenharTile('local')
@@ -633,6 +633,10 @@
     }
 
     const pararTelas = () => { for (const t of [...telas]) pararTela(t) }
+    // "Parar de compartilhar" na barra do navegador encerra a track sem passar
+    // pelo menu; o som vem daqui. Vídeo e áudio terminam juntos, mas só o
+    // primeiro acha a tela, então toca uma vez.
+    const pararTelaPeloNavegador = tela => mexerNasTelas(() => pararTela(tela))
 
     // Sem dizer o que é, "Tela 2" não diz qual parar. displaySurface diz o tipo;
     // o rótulo da track só ajuda quando é um nome (título da janela), não um id
