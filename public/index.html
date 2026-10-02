@@ -150,7 +150,7 @@
           <div class="control-group">
             <button id="b-mic" title="Silenciar microfone">Microfone</button
             ><button id="b-surdo" title="Silenciar tudo">Áudio</button
-            ><button id="b-cam" title="Ligar câmera">Câmera</button>
+            ><button id="b-cam" class="cortado" title="Ligar câmera">Câmera</button>
           </div>
           <div class="control-group">
             <button id="b-tela" title="Compartilhar tela">Tela</button
@@ -347,8 +347,8 @@
       t.contentHint = 'motion'                  // rosto se move: quadros valem mais que nitidez
       t.onended = () => pararCam()
       for (const [, p] of pares) p.pc.addTrack(t, camStream)
+      $('b-cam').classList.replace('cortado', 'on')
       controle('b-cam', 'Desligar câmera')
-      $('b-cam').classList.add('on')
       await listarCams()                        // os rótulos só existem depois da permissão
       desenharTile('local')
       anunciar()
@@ -363,8 +363,8 @@
           if (sd.track && ts.includes(sd.track)) p.pc.removeTrack(sd)
       for (const t of ts) t.stop()
       camStream = null
+      $('b-cam').classList.replace('on', 'cortado')
       controle('b-cam', 'Ligar câmera')
-      $('b-cam').classList.remove('on')
       desenharTile('local')
       if (foco === 'local' && !telaStream) focar(proximoComVideo())
       anunciar()
@@ -1512,6 +1512,7 @@
       'mic-off': '<rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8"/><path d="M3 3l18 18" stroke-width="2.4"/>',
       'headphones-off': '<path d="M3 14v-3a9 9 0 0 1 18 0v3"/><rect x="3" y="12" width="4" height="8" rx="2"/><rect x="17" y="12" width="4" height="8" rx="2"/><path d="M3 3l18 18" stroke-width="2.4"/>',
       camera: '<rect x="2" y="5" width="13" height="14" rx="3"/><path d="m15 9 7-4v14l-7-4"/>',
+      'camera-off': '<rect x="2" y="5" width="13" height="14" rx="3"/><path d="m15 9 7-4v14l-7-4"/><path d="M3 3l18 18" stroke-width="2.4"/>',
       screen: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M12 13V7m-3 3 3-3 3 3"/>',
       settings: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="currentColor" stroke="none"/><circle cx="16" cy="17" r="3" fill="currentColor" stroke="none"/>',
       phone: '<path d="M3 16v-4c4-5 14-5 18 0v4l-5-1v-4M8 11v4l-5 1"/>',
