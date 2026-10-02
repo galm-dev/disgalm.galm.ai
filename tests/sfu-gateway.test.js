@@ -1,22 +1,10 @@
 import { test, beforeEach, afterEach } from 'node:test'
+import { carregarWorker } from './worker.js'
 import assert from 'node:assert/strict'
-import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { webcrypto } from 'node:crypto'
 
 globalThis.crypto ||= webcrypto
 
-// Mesmo carregamento de tests/sala-worker.test.js: o Worker importa
-// 'cloudflare:workers', que só existe no runtime.
-const pasta = mkdtempSync(join(tmpdir(), 'disgalm-sfu-'))
-writeFileSync(join(pasta, 'worker.mjs'), readFileSync(new URL('../worker/src/index.js', import.meta.url), 'utf8')
-  .replace("import { DurableObject } from 'cloudflare:workers'",
-           'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env } }')
-  .replace("from './auth.js'", "from './auth.mjs'")
-  .replace("from './sfu.js'", "from './sfu.mjs'"))
-writeFileSync(join(pasta, 'auth.mjs'), readFileSync(new URL('../worker/src/auth.js', import.meta.url)))
-writeFileSync(join(pasta, 'sfu.mjs'), readFileSync(new URL('../worker/src/sfu.js', import.meta.url)))
 
 class Socket {
   constructor() { this.msgs = []; this.att = null }
@@ -34,7 +22,7 @@ globalThis.Response = class {
   get ok() { return this.status >= 200 && this.status < 300 }
   static json(body, init) { const r = new this(JSON.stringify(body), init); r.json = async () => body; return r }
 }
-const { Sala, default: worker } = await import(join(pasta, 'worker.mjs'))
+const { Sala, default: worker } = await carregarWorker()
 
 const ENV = { SFU_APP_ID: 'app-ensaio', SFU_APP_SECRET: 'segredo-do-app', SFU_SALAS: 'ensaio, outra' }
 const agoraS = () => Math.floor(Date.now() / 1000)

@@ -1,21 +1,7 @@
 import { test } from 'node:test'
+import { carregarWorker } from './worker.js'
 import assert from 'node:assert/strict'
-import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 
-// O Worker importa 'cloudflare:workers', que só existe no runtime. Troca por
-// uma base mínima e carrega o resto do arquivo como está.
-const fonte = readFileSync(new URL('../worker/src/index.js', import.meta.url), 'utf8')
-  .replace("import { DurableObject } from 'cloudflare:workers'",
-           'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env } }')
-  .replace("from './auth.js'", "from './auth.mjs'")
-  .replace("from './sfu.js'", "from './sfu.mjs'")
-const pasta = mkdtempSync(join(tmpdir(), 'disgalm-'))
-const arquivo = join(pasta, 'worker.mjs')
-writeFileSync(arquivo, fonte)
-writeFileSync(join(pasta, 'auth.mjs'), readFileSync(new URL('../worker/src/auth.js', import.meta.url)))
-writeFileSync(join(pasta, 'sfu.mjs'), readFileSync(new URL('../worker/src/sfu.js', import.meta.url)))
 
 class Socket {
   constructor() { this.msgs = []; this.att = null }
@@ -31,7 +17,7 @@ globalThis.Response = class {
   constructor(corpo, init) { this.body = corpo; this.status = 200; Object.assign(this, init) }
   static json(body, init) { const response = new this(JSON.stringify(body), init); response.json = async () => body; return response }
 }
-const { Sala } = await import(arquivo)
+const { Sala } = await carregarWorker()
 
 function sala(sockets = []) {
   const saved = new Map()
@@ -132,6 +118,20 @@ test('fantasma sem batimento sai com volta=true; cliente antigo sem aba não é 
   assert.equal(vivo.fechado, undefined)
   assert.deepEqual(vivo.ultima('peer-left'), { t: 'peer-left', id: idF, volta: true })
   assert.deepEqual(novo.ultima('welcome').peers.map(p => p.name), ['Antigo', 'Vivo'])
+})
+
+test('sala cheia aceita o subprotocolo, avisa e fecha com 1013', async () => {
+  const { s } = sala()
+  for (const n of ['A', 'B', 'C', 'D']) await s.entra({ nome: n, aba: `aba-${n}` })
+  const r = await s.fetch({ url: 'https://x/ws?sala=galm&nome=E&aba=aba-e',
+    headers: new Headers({ 'x-disgalm-exp': String(Math.floor(Date.now() / 1000) + 600),
+      'x-disgalm-role': 'member', 'x-disgalm-sub': 'person-1' }) })
+  // Sem o subprotocolo de volta, o navegador recusa o upgrade e o 'cheia' se perde.
+  assert.equal(r.status, 101)
+  assert.equal(r.headers['sec-websocket-protocol'], 'disgalm')
+  const e = s.sockets.at(-1)
+  assert.deepEqual(e.ultima('cheia'), { t: 'cheia' })
+  assert.deepEqual(e.fechado, [1013, 'sala cheia'])
 })
 
 test('fantasma não ocupa vaga de sala cheia', async () => {

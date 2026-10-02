@@ -1,21 +1,10 @@
 import { test } from 'node:test'
+import { carregarWorker } from './worker.js'
 import assert from 'node:assert/strict'
-import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { webcrypto } from 'node:crypto'
 
 globalThis.crypto ||= webcrypto
-const dir = mkdtempSync(join(tmpdir(), 'disgalm-auth-'))
-const source = readFileSync(new URL('../worker/src/index.js', import.meta.url), 'utf8')
-  .replace("import { DurableObject } from 'cloudflare:workers'",
-    'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env } }')
-  .replace("from './auth.js'", "from './auth.mjs'")
-  .replace("from './sfu.js'", "from './sfu.mjs'")
-writeFileSync(join(dir, 'worker.mjs'), source)
-writeFileSync(join(dir, 'auth.mjs'), readFileSync(new URL('../worker/src/auth.js', import.meta.url)))
-writeFileSync(join(dir, 'sfu.mjs'), readFileSync(new URL('../worker/src/sfu.js', import.meta.url)))
-const { default: worker } = await import(join(dir, 'worker.mjs'))
+const { default: worker } = await carregarWorker()
 
 const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])
 const jwk = { ...await crypto.subtle.exportKey('jwk', pair.publicKey), kid: 'test-key', alg: 'ES256', use: 'sig' }

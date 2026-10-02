@@ -18,6 +18,14 @@ class_name = "Sala"
 tag = "v1"
 new_sqlite_classes = ["Sala"]
 
+# Consumo do TURN para o Better Stack (evento turn_uso). De hora em hora porque
+# a consulta agrupa por datetimeHour e a hora cheia anterior é o período; no
+# minuto 10, para a analytics já ter fechado essa hora. São 24 consultas por
+# dia, longe do limite do GraphQL (300 a cada 5 min), e um cron só dos cinco
+# que o plano gratuito permite.
+[triggers]
+crons = ["10 * * * *"]
+
 [observability]
 enabled = true
 

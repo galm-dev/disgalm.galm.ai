@@ -100,6 +100,71 @@ async function env2ice(env) {
   return lista.length ? lista : [{ urls: 'stun:stun.cloudflare.com:3478' }]
 }
 
+// Consumo do TURN da Cloudflare, para acompanhar a cota grátis de 1.000 GB/mês
+// (dividida com o SFU, que não usamos). Só a saída (egressBytes) é cobrada.
+// Fonte: GraphQL Analytics, dataset callsTurnUsageAdaptiveGroups, com um token
+// de API da conta com "Account Analytics: Read". O CF_TURN_API_TOKEN não serve:
+// é o token da chave TURN, que só gera credenciais.
+// https://developers.cloudflare.com/realtime/turn/analytics/
+const COTA_TURN_GB = 1000
+const GB = 1e9
+const USO_TURN = `query ($conta: string!, $de: Date!, $ate: Date!) {
+  viewer { accounts(filter: { accountTag: $conta }) {
+    callsTurnUsageAdaptiveGroups(limit: 10000, filter: { date_geq: $de, date_leq: $ate }) {
+      dimensions { datetimeHour }
+      sum { egressBytes ingressBytes }
+    }
+  } }
+}`
+
+// Uma consulta por execução traz o mês (UTC) em fatias de uma hora: a soma
+// delas é o acumulado, e a fatia da hora cheia anterior é o período. A hora
+// corrente ainda está enchendo, por isso entra só no acumulado. Na virada do
+// mês a hora anterior é do mês passado: a consulta começa nela.
+async function usoTurn(env, agora = new Date()) {
+  if (!env.CF_ACCOUNT_ID || !env.CF_ANALYTICS_TOKEN) return null
+  const dia = d => d.toISOString().slice(0, 10)
+  const inicioMes = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), 1))
+  const horaAtual = new Date(agora); horaAtual.setUTCMinutes(0, 0, 0)
+  const horaAnterior = new Date(horaAtual - 3600_000)
+  const falhou = campos => linhaWorker('turn_uso_falhou', campos)
+  let r
+  try {
+    r = await fetch('https://api.cloudflare.com/client/v4/graphql', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${env.CF_ANALYTICS_TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ query: USO_TURN,
+        variables: { conta: env.CF_ACCOUNT_ID, de: dia(new Date(Math.min(inicioMes, horaAnterior))), ate: dia(agora) } }),
+    })
+  } catch (e) { return falhou({ erro: e.message }) }
+  if (!r.ok) return falhou({ status: r.status })
+  const corpo = await r.json().catch(() => null)
+  if (corpo?.errors?.length) return falhou({ erro: corpo.errors.map(e => e.message).join('; ').slice(0, 500) })
+  const grupos = corpo?.data?.viewer?.accounts?.[0]?.callsTurnUsageAdaptiveGroups
+  if (!Array.isArray(grupos)) return falhou({ erro: 'resposta sem callsTurnUsageAdaptiveGroups' })
+
+  const soma = lista => lista.reduce((t, g) => ({
+    egress: t.egress + (g.sum?.egressBytes || 0), ingress: t.ingress + (g.sum?.ingressBytes || 0),
+  }), { egress: 0, ingress: 0 })
+  const hora = g => Date.parse(g.dimensions?.datetimeHour)
+  const mes = soma(grupos.filter(g => hora(g) >= +inicioMes))
+  const periodo = soma(grupos.filter(g => hora(g) === +horaAnterior))
+  return linhaWorker('turn_uso', {
+    periodo_inicio: horaAnterior.toISOString(), periodo_fim: horaAtual.toISOString(),
+    egress_bytes_periodo: periodo.egress, ingress_bytes_periodo: periodo.ingress,
+    mes: dia(inicioMes).slice(0, 7),
+    egress_bytes_mes: mes.egress, ingress_bytes_mes: mes.ingress,
+    egress_gb_mes: Math.round(mes.egress / GB * 1000) / 1000,
+    cota_gb: COTA_TURN_GB,
+    cota_pct: Math.round(mes.egress / (COTA_TURN_GB * GB) * 10000) / 100,
+  })
+}
+
+async function registrarUsoTurn(env, agora) {
+  const linha = await usoTurn(env, agora)
+  if (linha) await enviarLogs(env, [linha])
+}
+
 // Batimento do cliente. A resposta automática não acorda o objeto hibernado, e
 // o horário da última resposta, por socket, é o que separa vivo de fantasma.
 const PING = '{"t":"ping"}', PONG = '{"t":"pong"}'
@@ -329,11 +394,18 @@ export class Sala extends DurableObject {
       }
     }
 
+    // Todo cliente pede o subprotocolo 'disgalm'. Sem ele na resposta, o
+    // navegador recusa o upgrade, inclusive o de sala cheia: o 'cheia' nunca
+    // chega e o cliente religa para sempre, vendo só um 1006.
+    const aceitar = () => new Response(null, { status: 101, webSocket: cliente,
+      headers: { 'sec-websocket-protocol': 'disgalm' } })
+
     const jaEstavam = this.#peers(servidor)
     if (jaEstavam.length >= MAX) {
+      this.#registrar('cheia', { sala, papel: role, naSala: jaEstavam.length })
       this.#envia(servidor, { t: 'cheia' })
       servidor.close(1013, 'sala cheia')
-      return new Response(null, { status: 101, webSocket: cliente })
+      return aceitar()
     }
 
     // Retomar o id mantém as RTCPeerConnection dos outros: a mídia nunca
@@ -364,7 +436,7 @@ export class Sala extends DurableObject {
       this.#registrar('sfu_recusado', { sala, op: 'entrar', motivo: 'cliente sem SFU' })
       this.#envia(servidor, { t: 'cheia', motivo: 'versao' })
       servidor.close(1013, 'cliente sem SFU')
-      return new Response(null, { status: 101, webSocket: cliente, headers: { 'sec-websocket-protocol': 'disgalm' } })
+      return aceitar()
     }
     // A chave liga as chamadas HTTP do gateway a esta conexão; só o hash fica.
     const chave = modo === 'sfu' ? randomToken() : null
@@ -388,8 +460,7 @@ export class Sala extends DurableObject {
     for (const p of jaEstavam)
       this.#envia(p.ws, { t: retomada ? 'peer-back' : 'peer-join', id, name: nome })
 
-    return new Response(null, { status: 101, webSocket: cliente,
-      headers: { 'sec-websocket-protocol': 'disgalm' } })
+    return aceitar()
   }
 
   async webSocketMessage(ws, bruto) {
@@ -540,5 +611,10 @@ export default {
     }
 
     return env.ASSETS.fetch(req)
+  },
+
+  // Cron do wrangler.toml: registra o consumo do TURN no Better Stack.
+  async scheduled(controller, env, ctx) {
+    ctx.waitUntil(registrarUsoTurn(env, new Date(controller.scheduledTime)))
   },
 }
