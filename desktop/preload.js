@@ -9,7 +9,17 @@ const info = ipcRenderer.sendSync('audio-disponivel')
 // não existem.
 window.addEventListener('DOMContentLoaded', () => {
   document.documentElement.classList.add('desktop-app', `desktop-${process.platform}`)
+  // Seletor de tela com miniaturas (renderer/seletor.js), só no app.
+  const s = document.createElement('script')
+  s.type = 'module'
+  s.src = '/_desktop/seletor.js'
+  document.head.append(s)
 })
+
+const escolher = new Set()
+const atualizar = new Set()
+ipcRenderer.on('tela-escolher', (_e, m) => { for (const f of escolher) f(m) })
+ipcRenderer.on('tela-atualizar', (_e, m) => { for (const f of atualizar) f(m) })
 
 ipcRenderer.on('audio-porta', (e, msg) => {
   window.postMessage({ disgalmAudioPorta: msg }, location.origin, e.ports)
@@ -29,6 +39,12 @@ contextBridge.exposeInMainWorld('disgalmDesktop', {
   aoEventoAudio: f => {
     ouvintes.add(f)
     return () => ouvintes.delete(f)
+  },
+  // Seletor de tela do app: o principal manda as fontes e espera a escolha.
+  tela: {
+    aoEscolher: f => { escolher.add(f) },
+    aoAtualizar: f => { atualizar.add(f) },
+    escolher: (pedido, id) => ipcRenderer.send('tela-escolhida', pedido, id),
   },
   // Login GALM no navegador do sistema, com volta para o app.
   login: {

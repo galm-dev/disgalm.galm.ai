@@ -5,7 +5,7 @@
 // produção), mas os arquivos estáticos saem de ../public deste checkout: assim
 // a UI do app é a do branch, sem precisar publicar nada. /_desktop/* sai de
 // ./renderer e só existe no app.
-const { app, BrowserWindow, MessageChannelMain, desktopCapturer, dialog, ipcMain, net, protocol, session, shell,
+const { app, BrowserWindow, MessageChannelMain, desktopCapturer, ipcMain, net, protocol, session, shell,
   utilityProcess, webContents } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
@@ -94,32 +94,70 @@ function servirLocal() {
 // O getDisplayMedia do renderer cai aqui. Com uma tela só, compartilha direto;
 // com mais fontes, pergunta qual. audio: 'loopback' é o sistema inteiro, igual
 // ao Chrome no Windows — o caminho sem o Discord não pede áudio aqui.
+// Fontes com miniatura para o seletor do app (preload.js). A janela do próprio
+// Disgalm fica de fora: compartilhar a si mesmo faz o efeito de túnel.
+async function fontesComMiniatura(wc) {
+  const fontes = await desktopCapturer.getSources({
+    types: ['screen', 'window'], thumbnailSize: { width: 480, height: 270 }, fetchWindowIcons: true,
+  })
+  const propria = BrowserWindow.fromWebContents(wc)?.getMediaSourceId()
+  return fontes.filter(f => f.id !== propria).map(f => ({
+    id: f.id,
+    nome: f.name,
+    tipo: f.id.startsWith('screen:') ? 'tela' : 'janela',
+    miniatura: f.thumbnail.isEmpty() ? null : `data:image/jpeg;base64,${f.thumbnail.toJPEG(72).toString('base64')}`,
+    icone: f.appIcon && !f.appIcon.isEmpty() ? f.appIcon.toDataURL() : null,
+  }))
+}
+
+// Um pedido de getDisplayMedia por vez espera a escolha no seletor.
+const escolhas = new Map()
+let proximoPedido = 1
+ipcMain.on('tela-escolhida', (_e, pedido, id) => {
+  escolhas.get(pedido)?.(id)
+  escolhas.delete(pedido)
+})
+
+// O getDisplayMedia do renderer cai aqui. O app mostra o próprio seletor, com
+// miniaturas que se atualizam, como o do Discord. No Linux com Wayland o
+// portal do sistema já escolheu e só sobra uma fonte: vai direto.
 function tratarGetDisplayMedia() {
   session.defaultSession.setDisplayMediaRequestHandler(async (req, responder) => {
+    const wc = webContents.fromFrame(req.frame)
+    let relogio = null
     try {
-      const fontes = await desktopCapturer.getSources({ types: ['screen', 'window'] })
-      const telas = fontes.filter(f => f.id.startsWith('screen:'))
-      let escolhida = fontes[0]
+      let fontes = await fontesComMiniatura(wc)
+      let id = fontes[0]?.id
       // DISGALM_TELA_AUTO=1 pula a pergunta (testes automatizados).
-      if (TESTE || process.env.DISGALM_TELA_AUTO || fontes.length === 1) escolhida = telas[0] || fontes[0]
-      else if (fontes.length > 1) {
-        const opcoes = fontes.slice(0, 12)
-        const { response } = await dialog.showMessageBox(BrowserWindow.fromWebContents(webContents.fromFrame(req.frame)), {
-          type: 'question',
-          message: 'O que compartilhar?',
-          buttons: [...opcoes.map(f => (f.id.startsWith('screen:') ? `Tela: ${f.name}` : f.name)), 'Cancelar'],
-          cancelId: opcoes.length,
+      if (TESTE || process.env.DISGALM_TELA_AUTO || fontes.length <= 1)
+        id = (fontes.find(f => f.tipo === 'tela') || fontes[0])?.id
+      else {
+        const pedido = proximoPedido++
+        const escolha = new Promise(r => {
+          escolhas.set(pedido, r)
+          wc.once('destroyed', () => r(null))
         })
-        escolhida = opcoes[response]
+        wc.send('tela-escolher', { pedido, fontes })
+        // Miniaturas vivas enquanto o seletor está aberto; janelas novas entram.
+        relogio = setInterval(async () => {
+          try {
+            fontes = await fontesComMiniatura(wc)
+            if (!wc.isDestroyed()) wc.send('tela-atualizar', { pedido, fontes })
+          } catch {}
+        }, 2000)
+        id = await escolha
       }
-      if (!escolhida) return responder({})
+      const fonte = fontes.find(f => f.id === id)
+      if (!fonte) return responder({})
       // O Electron só tem áudio do sistema ('loopback') no Windows. No Linux a
       // UI cai no monitor do PipeWire (loopback.sh); no Mac a tela vai sem som.
       const audio = req.audioRequested && process.platform === 'win32' ? { audio: 'loopback' } : {}
-      responder({ video: escolhida, ...audio })
+      responder({ video: { id: fonte.id, name: fonte.nome }, ...audio })
     } catch (e) {
       console.error('getDisplayMedia:', e)
       responder({})
+    } finally {
+      clearInterval(relogio)
     }
   })
 }
