@@ -122,6 +122,7 @@ async function fontesComMiniatura(wc) {
 let pedidoDaBandeja = false
 let bandeja = null
 let saindo = false
+let atualizacaoAtual = null
 
 // Um pedido de getDisplayMedia por vez espera a escolha no seletor.
 const escolhas = new Map()
@@ -384,9 +385,14 @@ app.whenReady().then(async () => {
 
   const atualizacao = TESTE ? null : criarAtualizacao({
     saude,
-    aoMudar: () => bandeja?.redesenhar(),
+    // Bandeja e o badge no topo da janela (renderer/atualizacao-ui.js).
+    aoMudar: estado => {
+      bandeja?.redesenhar()
+      if (!win.isDestroyed()) win.webContents.send('atualizacao', estado)
+    },
     antesDeInstalar: () => { saindo = true },
   })
+  atualizacaoAtual = atualizacao
   // Versão nova que não abre direito: volta para a última saudável e bloqueia
   // esta. O app segue aberto enquanto baixa; instala assim que terminar.
   if (saude?.crashLoop && atualizacao) {
@@ -423,3 +429,5 @@ app.on('window-all-closed', () => app.quit())
 // Mac: clicar no ícone do Dock traz a janela escondida de volta.
 app.on('activate', () => bandeja?.mostrar())
 ipcMain.on('estado', (_e, novo) => bandeja?.estado(novo))
+ipcMain.handle('atualizacao-estado', () => atualizacaoAtual?.estado ?? null)
+ipcMain.on('atualizacao-instalar', () => atualizacaoAtual?.instalar())
