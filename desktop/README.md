@@ -42,6 +42,17 @@ npm start                                # ou: npx electron . "<link de convite>
 Na primeira vez, o Firewall do Windows pergunta sobre o Electron. Permitir
 libera conexões WebRTC de entrada; sem isso, ainda funciona por saída e TURN.
 
+## Bandeja
+
+Fechar a janela não fecha o app: ele segue na sala, com um ícone na bandeja
+(barra de menus no Mac). O ícone ganha uma bolinha vermelha quando o microfone
+está aberto e um selo verde quando há tela compartilhada. O menu tem
+"Compartilhar a última…", "Parar de compartilhar", "Silenciar/Ativar
+microfone", "Abrir Disgalm" e "Sair". A última fonte escolhida no seletor fica
+em `ultima-tela.json`, na pasta de dados do app. Telas são achadas pelo id,
+janelas pelo título. Se ela não existir mais, o seletor abre. No Linux com
+Wayland quem escolhe é o portal do KDE, então o menu abre o seletor dele.
+
 ## Pacote para testar (Windows, Mac, Linux)
 
 Sem ferramenta de distribuição: `node empacotar.mjs`, rodado em cada

@@ -395,6 +395,7 @@
       }
       const alvos = para ? [para] : [...pares.keys()]
       for (const id of alvos) sinalizar(id, { estado: est })
+      avisarBandeja()
     }
 
     // ---------- mídia local ----------
@@ -1796,6 +1797,7 @@
       $('connection-room').textContent = cod + ' / Disgalm'
       $('b-invite').hidden = guest
       if (!guest) lembrarSala(cod)
+      avisarBandeja()
       history.replaceState(null, '', `/?sala=${encodeURIComponent(cod)}`)
       desenharTile('local')
       renderSalas()
@@ -1828,6 +1830,7 @@
       $('sala').classList.toggle('desconectada', false)
       $('connection-label').textContent = 'Fora da sala'
       $('my-status').textContent = 'Fora da sala'
+      avisarBandeja()
       $('room-title').textContent = 'Escolha uma sala'
       $('connection-room').textContent = 'Disgalm'
       $('b-invite').hidden = true
@@ -2010,6 +2013,18 @@
     // Sem tela, o botão compartilha direto; com alguma, abre o menu para
     // adicionar outra ou escolher qual parar.
     $('b-tela').onclick = () => telas.length ? alternarMenuTelas() : novaTela()
+
+    // App desktop: a bandeja mostra se o microfone e a tela estão abertos, e o
+    // menu dela chama estes comandos (com a janela fechada, inclusive).
+    const avisarBandeja = () => desktop?.estado?.({ sala: sala?.cod || null, mic: !!sala && !estouMudo(), telas: telas.length })
+    if (desktop) globalThis.disgalmComando = async c => {
+      if (!sala) return 'fora da sala'
+      if (c === 'tela') await novaTela()
+      else if (c === 'parar') await mexerNasTelas(async () => pararTelas())
+      else if (c === 'mic') $('b-mic').click()
+      avisarBandeja()
+      return 'ok'
+    }
     $('menu-telas').onclick = ev => {
       const b = ev.target.closest?.('button')
       if (!b) return

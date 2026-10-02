@@ -42,6 +42,8 @@ contextBridge.exposeInMainWorld('disgalmDesktop', {
     ouvintes.add(f)
     return () => ouvintes.delete(f)
   },
+  // A página avisa sala, microfone e telas; a bandeja mostra.
+  estado: e => ipcRenderer.send('estado', { sala: e.sala ?? null, mic: !!e.mic, telas: Number(e.telas) || 0 }),
   // Seletor de tela do app: o principal manda as fontes e espera a escolha.
   tela: {
     aoEscolher: f => { escolher.add(f) },

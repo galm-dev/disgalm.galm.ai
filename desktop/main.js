@@ -12,6 +12,7 @@ const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 const { raizesDe } = require('./alvo.js')
 const { criarRetorno, urlDeLoginValida } = require('./login.js')
+const { criarBandeja, lerUltima, gravarUltima, acharUltima } = require('./bandeja.js')
 
 const ORIGEM = new URL(process.env.DISGALM_URL || 'https://disgalm.galm.ai').origin
 // Argumento livre na linha de comando: uma URL do Disgalm (link de convite,
@@ -110,6 +111,11 @@ async function fontesComMiniatura(wc) {
   }))
 }
 
+// O menu da bandeja marca que o próximo getDisplayMedia é dele.
+let pedidoDaBandeja = false
+let bandeja = null
+let saindo = false
+
 // Um pedido de getDisplayMedia por vez espera a escolha no seletor.
 const escolhas = new Map()
 let proximoPedido = 1
@@ -128,10 +134,17 @@ function tratarGetDisplayMedia() {
     try {
       let fontes = await fontesComMiniatura(wc)
       let id = fontes[0]?.id
+      // Pedido vindo do menu da bandeja: a última fonte, sem seletor. Se ela
+      // não existe mais (janela fechada, monitor desligado), mostra o seletor.
+      const daBandeja = pedidoDaBandeja
+      pedidoDaBandeja = false
+      const ultima = daBandeja ? acharUltima(fontes, lerUltima()) : null
       // DISGALM_TELA_AUTO=1 pula a pergunta (testes automatizados).
       if (TESTE || process.env.DISGALM_TELA_AUTO || fontes.length <= 1)
         id = (fontes.find(f => f.tipo === 'tela') || fontes[0])?.id
+      else if (ultima) id = ultima.id
       else {
+        if (daBandeja) bandeja?.mostrar()
         const pedido = proximoPedido++
         const escolha = new Promise(r => {
           escolhas.set(pedido, r)
@@ -149,6 +162,7 @@ function tratarGetDisplayMedia() {
       }
       const fonte = fontes.find(f => f.id === id)
       if (!fonte) return responder({})
+      if (fontes.length > 1) gravarUltima(fonte)
       // O Electron só tem áudio do sistema ('loopback') no Windows. No Linux a
       // UI cai no monitor do PipeWire (loopback.sh); no Mac a tela vai sem som.
       const audio = req.audioRequested && process.platform === 'win32' ? { audio: 'loopback' } : {}
@@ -335,12 +349,39 @@ app.whenReady().then(async () => {
       sandbox: true,
       // O AudioContext do áudio nativo nasce fora de um clique no teste.
       autoplayPolicy: 'no-user-gesture-required',
+      // A chamada continua com a janela fechada na bandeja; sem isto o
+      // Chromium desacelera timers e o worklet da página escondida.
+      backgroundThrottling: false,
     },
   })
+  // Fechar esconde: o app segue na sala, com o ícone na bandeja. Sair é pelo
+  // menu da bandeja (ou ⌘Q no Mac).
+  win.on('close', e => {
+    if (saindo || TESTE) return
+    e.preventDefault()
+    win.hide()
+  })
+  if (!TESTE) {
+    bandeja = await criarBandeja({
+      janela: () => (win.isDestroyed() ? null : win),
+      sair: () => { saindo = true; app.quit() },
+      comando: c => {
+        if (c === 'tela') pedidoDaBandeja = true
+        // userGesture: o getDisplayMedia exige um gesto do usuário, e o clique
+        // no menu da bandeja não chega à página como gesto.
+        win.webContents.executeJavaScript(`globalThis.disgalmComando?.(${JSON.stringify(c)})`, true)
+          .catch(e => console.error('bandeja:', e))
+      },
+    })
+  }
   // Login e links externos: o que é da origem fica na janela; auth.galm.ai
   // também, porque o login volta para cá por redirect.
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
   win.loadURL(TESTE ? `${ORIGEM}/_desktop/teste.html?${process.env.DISGALM_TESTE_QUERY || ''}` : urlInicial)
 })
 
+app.on('before-quit', () => { saindo = true })
 app.on('window-all-closed', () => app.quit())
+// Mac: clicar no ícone do Dock traz a janela escondida de volta.
+app.on('activate', () => bandeja?.mostrar())
+ipcMain.on('estado', (_e, novo) => bandeja?.estado(novo))
