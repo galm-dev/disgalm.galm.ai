@@ -35,7 +35,7 @@ if (process.platform === 'win32') {
   } catch (e) {
     erroNativo = e.message
   }
-} else erroNativo = 'só existe no Windows por enquanto'
+} else erroNativo = process.platform === 'linux' ? 'PipeWire indisponível (pw-dump, pactl)' : 'só existe no Windows e no Linux por enquanto'
 
 // ---------- arquivos locais por cima da origem de produção ----------
 
@@ -200,12 +200,35 @@ function abrirCaptura(webContents) {
 }
 
 function fecharCaptura(id) {
+  const linux = capturasLinux.get(id)
+  if (linux) { capturasLinux.delete(id); linux.fechar(); return }
   if (!capturas.delete(id)) return
   utilitario?.postMessage({ fechar: id })
 }
 
+// Linux: o mesmo recurso pelo PipeWire (pipewire.js); a track sai de uma
+// entrada de áudio que o app cria, e não de um MessagePort.
+const pipewire = process.platform === 'linux' ? require('./pipewire.js') : null
+let pipewireOk = false
+const capturasLinux = new Map()
+
 ipcMain.on('audio-disponivel', e => {
-  e.returnValue = { disponivel: !!nativo, motivo: erroNativo, excluir: EXCLUIR.join(', '), teste: TESTE || null }
+  const disponivel = !!nativo || pipewireOk
+  e.returnValue = { disponivel, motivo: disponivel ? null : erroNativo, excluir: EXCLUIR.join(', '),
+    modo: nativo ? 'wasapi' : pipewireOk ? 'pipewire' : null, teste: TESTE || null }
+})
+app.on('will-quit', () => { for (const c of capturasLinux.values()) c.fecharJa() })
+ipcMain.handle('audio-linux-abrir', async e => {
+  if (!pipewireOk) throw new Error(erroNativo)
+  // Uma por vez: a saída virtual tem nome fixo.
+  for (const [id, c] of capturasLinux) { capturasLinux.delete(id); await c.fechar() }
+  const id = proximoId++
+  const wc = e.sender
+  const aviso = valor => { if (!wc.isDestroyed()) wc.send('audio-evento', { id, tipo: 'aviso', valor }) }
+  const c = await pipewire.abrir({ pidApp: process.pid, aoAviso: aviso })
+  capturasLinux.set(id, c)
+  wc.once('destroyed', () => fecharCaptura(id))
+  return { id, rotulo: c.rotulo }
 })
 ipcMain.handle('audio-abrir', e => {
   if (!nativo) throw new Error(erroNativo)
@@ -282,7 +305,8 @@ ipcMain.handle('login-abrir', async (_e, href, state) => {
 
 // ---------- janela ----------
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  if (pipewire) pipewireOk = await pipewire.disponivel()
   servirLocal()
   tratarGetDisplayMedia()
   // Microfone, câmera e tela: a UI pede, o app concede. Notificações e o resto

@@ -33,8 +33,10 @@ ipcRenderer.on('audio-evento', (_e, ev) => {
 contextBridge.exposeInMainWorld('disgalmDesktop', {
   plataforma: process.platform,
   // Áudio do sistema sem o Discord (WASAPI process loopback, Windows).
-  audioSemDiscord: { disponivel: info.disponivel, motivo: info.motivo, excluir: info.excluir },
+  audioSemDiscord: { disponivel: info.disponivel, motivo: info.motivo, excluir: info.excluir, modo: info.modo },
   abrirAudio: () => ipcRenderer.invoke('audio-abrir'),
+  // Linux: devolve { id, rotulo } da entrada de áudio criada no PipeWire.
+  abrirAudioLinux: () => ipcRenderer.invoke('audio-linux-abrir'),
   fecharAudio: id => ipcRenderer.send('audio-fechar', id),
   aoEventoAudio: f => {
     ouvintes.add(f)

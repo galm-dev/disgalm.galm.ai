@@ -18,10 +18,50 @@ function esperarPorta() {
   })
 }
 
+// Linux: o app liga no PipeWire uma saída virtual com o som de todos menos o
+// Disgalm e o Discord, e expõe o monitor dela como entrada de áudio. A track
+// vem dessa entrada por getUserMedia, sem nenhum processamento de voz.
+async function abrirLinux(d, log) {
+  const largar = d.aoEventoAudio(ev => { if (ev.tipo === 'aviso') log(`áudio sem o Discord: ${ev.valor}`) })
+  let id = null
+  try {
+    const r = await d.abrirAudioLinux()
+    id = r.id
+    let dev = null
+    // A entrada aparece no Chromium um instante depois de criada.
+    for (let i = 0; i < 20 && !dev; i++) {
+      dev = (await navigator.mediaDevices.enumerateDevices())
+        .find(x => x.kind === 'audioinput' && x.label.includes(r.rotulo))
+      if (!dev) await new Promise(ok => setTimeout(ok, 250))
+    }
+    if (!dev) throw new Error(`entrada ${r.rotulo} não apareceu`)
+    const s = await navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: dev.deviceId },
+      echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 2 } })
+    const track = s.getAudioTracks()[0]
+    const pararTrack = track.stop.bind(track)
+    let fechada = false
+    track.stop = () => {
+      pararTrack()
+      if (fechada) return
+      fechada = true
+      largar()
+      d.fecharAudio(id)
+    }
+    track.disgalmNativo = true
+    log('áudio do sistema sem o Disgalm e sem o Discord (PipeWire)')
+    return track
+  } catch (e) {
+    largar()
+    if (id !== null) d.fecharAudio(id)
+    throw e
+  }
+}
+
 // Abre a captura e devolve a track. track.stop() fecha a captura também.
 export async function abrirAudioSemDiscord(log = () => {}) {
   const d = window.disgalmDesktop
   if (!d?.audioSemDiscord?.disponivel) throw new Error(d?.audioSemDiscord?.motivo || 'fora do app desktop')
+  if (d.audioSemDiscord.modo === 'pipewire') return abrirLinux(d, log)
 
   // Os primeiros eventos (qual processo ficou de fora) podem chegar antes do
   // id; ficam guardados até saber se são desta captura.

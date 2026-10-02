@@ -25,7 +25,7 @@ rmSync(saida, { recursive: true, force: true })
 mkdirSync(saida, { recursive: true })
 
 // Arquivos do app; o resto de desktop/ (testes, fontes C++, node_modules) fica.
-const APP = ['main.js', 'preload.js', 'captura.js', 'alvo.js', 'login.js', 'renderer']
+const APP = ['main.js', 'preload.js', 'captura.js', 'alvo.js', 'login.js', 'pipewire.js', 'renderer']
 function copiarApp(destino) {
   mkdirSync(destino, { recursive: true })
   for (const f of APP) cpSync(join(AQUI, f), join(destino, f), { recursive: true })
