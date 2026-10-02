@@ -22,7 +22,10 @@
 // do stream que o dono publicou, tirado do catálogo.
 (() => {
   const ESPERA_CANDIDATOS_MS = 2000
-  const TENTATIVAS_ASSINATURA = 3
+  const ESPERA_CONEXAO_MS = 10_000
+  // A fonte acabou de ser publicada e ainda não tem pacotes (empty_track_error,
+  // not_found_track_error) ou o publicador ainda conecta: espera 1, 2, 4, 8, 8 s.
+  const TENTATIVAS_ASSINATURA = 6
   const AMOSTRA_MS = 10_000
 
   const opusEstereo = sdp => globalThis.criarTransporteMesh?.opusEstereo?.(sdp) ?? sdp
@@ -93,6 +96,29 @@
       })
     }
 
+    // Depois da primeira troca, a próxima mutação espera a conexão: a API dá
+    // só 5 s para operações que precisam do transporte, e uma oferta do SFU
+    // aplicada no meio do ICE deixava a conexão presa em 'connecting'.
+    // https://developers.cloudflare.com/realtime/sfu/platform/limits/
+    function aguardarConexao(p) {
+      if (p.connectionState === 'connected') return
+      return new Promise((fim, falha) => {
+        // Sem conectar no prazo, a sessão é refeita já, sem esperar o 'failed'
+        // do navegador, que leva mais 15 s.
+        const prazo = setTimeout(() => {
+          pronto()
+          falha(new Error(`SFU: conexão ${p.connectionState} após ${ESPERA_CONEXAO_MS / 1000} s`))
+          if (p === pc) reconstruir('sem_conexao')
+        }, ESPERA_CONEXAO_MS)
+        function pronto() { clearTimeout(prazo); p.removeEventListener?.('connectionstatechange', mudou) }
+        function mudou() {
+          if (p.connectionState === 'connected') { pronto(); fim() }
+          else if (p.connectionState === 'failed' || p.connectionState === 'closed') { pronto(); falha(new Error(`SFU: conexão ${p.connectionState}`)) }
+        }
+        p.addEventListener?.('connectionstatechange', mudou)
+      })
+    }
+
     // A sessão nasce quando a primeira troca de SDP vai começar: sessão criada
     // e nunca conectada expira.
     async function garantirSessao() {
@@ -119,7 +145,14 @@
 
     // A conexão com o SFU morreu: fecha a sessão (o que dá para fechar), abre
     // outra e publica e assina tudo de novo. Reconexão longa é da fase 3.
+    // Limite para não refazer em ciclo: três vezes em dois minutos, depois só
+    // quando a sala mandar (entrada, catálogo novo).
+    const refeitas = []
     function reconstruir(motivo) {
+      const agora = Date.now()
+      while (refeitas.length && agora - refeitas[0] > 120_000) refeitas.shift()
+      if (refeitas.length >= 3) { telemetria('sfu_reconstruir', { motivo, desistiu: true }); return }
+      refeitas.push(agora)
       const velha = sessao
       telemetria('sfu_reconstruir', { motivo })
       fecharConexao()
@@ -154,6 +187,7 @@
       }
       // A resposta do SFU nem sempre traz stereo=1; sem ele o Chrome codifica mono.
       await p.setRemoteDescription({ type: 'answer', sdp: opusEstereo(r.sdp.sdp) })
+      await aguardarConexao(p)
       for (const { fonte, tr } of novos) {
         const res = r.fontes?.find(x => x.fonte === fonte.id)
         const ok = !!res && !res.erro
@@ -228,7 +262,7 @@
           // tenta de novo, poucas vezes, com espera crescente.
           const n = (falhas.get(chaveDe(f))?.n ?? 0) + 1
           falhas.set(chaveDe(f), { n, esperando: n < TENTATIVAS_ASSINATURA })
-          if (n < TENTATIVAS_ASSINATURA) refazer = Math.max(refazer, 1000 * 2 ** n)
+          if (n < TENTATIVAS_ASSINATURA) refazer = Math.max(refazer, Math.min(8000, 1000 * 2 ** (n - 1)))
         }
         telemetria('sfu_assinou', { dono: f.dono, fonte: f.fonte, tipo: f.tipo, ok: !!res?.mid && !res.erro, erro: res?.erro ?? null })
       }
@@ -239,6 +273,7 @@
         await p.setLocalDescription(resposta)
         await juntarCandidatos(p)
         await api('renegociar', { sessao, sdp: desc(p.localDescription) })
+        await aguardarConexao(p)
       }
       if (refazer) {
         const minha = tentativa
@@ -413,7 +448,10 @@
 
       // Para os testes e o diagnóstico: o que está publicado e assinado.
       estado: () => ({ sessao, versao, publicadas: [...pubs.keys()],
-        assinadas: [...subs.values()].map(s => ({ dono: s.dono, fonte: s.fonte, mid: s.mid })) }),
+        assinadas: [...subs.values()].map(s => ({ dono: s.dono, fonte: s.fonte, mid: s.mid })),
+        conexao: pc?.connectionState ?? null,
+        transceivers: pc ? pc.getTransceivers().filter(t => !t.stopped && t.currentDirection !== 'stopped').length : 0,
+        detalhe: () => pc?.getTransceivers().map(t => [t.mid, t.direction, t.currentDirection ?? null, t.receiver?.track?.kind ?? null]) ?? [] }),
       ocioso: () => fila,
     }
     return disgalmTransporte.validar(transporte)

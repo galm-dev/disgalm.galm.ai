@@ -96,7 +96,9 @@ export async function chamarApi(env, metodo, caminho, corpo) {
 async function fecharAForca(c, sid, mids, motivo) {
   if (!mids.length) return
   const r = await c.api('PUT', `/sessions/${sid}/tracks/close`, { tracks: mids.map(mid => ({ mid })), force: true })
-  if (!r.ok) c.registrar('sfu_api_erro', { op: 'fechar_forcado', motivo, status: r.status, codigo: r.json.errorCode ?? null })
+  // 410 session_error: a sessão já acabou do lado do SFU (o navegador fechou a
+  // conexão), e as tracks junto. Para limpeza, basta.
+  if (!r.ok && !(r.status === 410 && r.json.errorCode === 'session_error')) c.registrar('sfu_api_erro', { op: 'fechar_forcado', motivo, status: r.status, codigo: r.json.errorCode ?? null })
 }
 
 // ---------- operações ----------

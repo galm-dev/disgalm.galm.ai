@@ -112,17 +112,29 @@ function criarPC(registro) {
     getTransceivers() { return this.trs }
     async createOffer() { return { type: 'offer', sdp: 'a=rtpmap:111 opus/48000/2' } }
     async createAnswer() { return { type: 'answer', sdp: 'a=rtpmap:111 opus/48000/2' } }
+    addEventListener(nome, fn) { (this.ouvintes ??= []).push([nome, fn]) }
+    removeEventListener(nome, fn) { this.ouvintes = (this.ouvintes ?? []).filter(o => o[1] !== fn) }
+    // A primeira troca completa conecta, um tique depois, como o ICE.
+    conectar() {
+      if (this.connectionState !== 'new') return
+      this.connectionState = 'connecting'
+      setImmediate(() => {
+        this.connectionState = 'connected'
+        for (const [nome, fn] of this.ouvintes ?? []) if (nome === 'connectionstatechange') fn()
+        this.onconnectionstatechange?.()
+      })
+    }
     async setLocalDescription(d) {
       if (d.type === 'rollback') { this.signalingState = 'stable'; return }
       if (d.type === 'offer') {
         for (const t of this.trs) if (t.mid === null && !t.stopped) t.mid = String(this.proximoMid++)
         this.signalingState = 'have-local-offer'
-      } else this.signalingState = 'stable'
+      } else { this.signalingState = 'stable'; this.conectar() }
       this.localDescription = { type: d.type, sdp: d.sdp }
     }
     async setRemoteDescription(d) {
       this.remoteDescription = d
-      if (d.type === 'answer') { this.signalingState = 'stable'; this.connectionState = 'connected'; return }
+      if (d.type === 'answer') { this.signalingState = 'stable'; this.conectar(); return }
       this.signalingState = 'have-remote-offer'
       for (const [mid, kind] of mids(d.sdp)) {
         if (this.trs.some(t => t.mid === mid)) continue
@@ -399,7 +411,7 @@ test('sair fecha a conexão e avisa a saída de cada pessoa', async () => {
   b.t.sair()
   assert.equal(b.pc().connectionState, 'closed')
   assert.deepEqual(b.saidas.map(s => s[0]), ['aaaa0001'])
-  assert.deepEqual(estado(b), { sessao: null, versao: 0, publicadas: [], assinadas: [] })
+  assert.deepEqual(estado(b), { sessao: null, versao: 0, publicadas: [], assinadas: [], conexao: null, transceivers: 0 })
 })
 
 test('credencial TURN renovada: só quem chega ao SFU pelo relay refaz a sessão', async () => {

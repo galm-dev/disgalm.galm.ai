@@ -208,3 +208,20 @@ test('credencial TURN renovada: troca a configuração em todas, refaz o ICE só
   assert.equal(await f.t.atualizarIce([{ urls: 'stun:stun.cloudflare.com:3478' }]), 0)
   assert.equal(relay.reinicios, 1)
 })
+
+test('Opus estéreo em toda seção de áudio, inclusive a do som da tela e o OPUS do SFU', () => {
+  const { ctx } = fixture()
+  const sdp = ['v=0', 'm=audio 9 UDP/TLS/RTP/SAVPF 111', 'a=mid:0', 'a=rtpmap:111 opus/48000/2', 'a=fmtp:111 minptime=10;useinbandfec=1',
+    'm=video 9 UDP/TLS/RTP/SAVPF 96', 'a=mid:1', 'a=rtpmap:96 VP8/90000',
+    'm=audio 9 UDP/TLS/RTP/SAVPF 111', 'a=mid:2', 'a=rtpmap:111 opus/48000/2', 'a=fmtp:111 minptime=10;useinbandfec=1',
+    'm=audio 9 UDP/TLS/RTP/SAVPF 111', 'a=mid:3', 'a=rtpmap:111 OPUS/48000/2'].join('\r\n')
+  const saida = ctx.criarTransporteMesh.opusEstereo(sdp).split('\r\n')
+  const fmtp = saida.filter(l => l.startsWith('a=fmtp:111'))
+  assert.equal(fmtp.length, 3)
+  assert.ok(fmtp.every(l => l.includes('stereo=1;sprop-stereo=1;maxaveragebitrate=128000')))
+  // A seção sem fmtp ganhou o dela, logo depois do rtpmap e antes de qualquer outra seção.
+  assert.equal(saida[saida.indexOf('a=rtpmap:111 OPUS/48000/2') + 1].startsWith('a=fmtp:111 '), true)
+  assert.ok(!saida.filter((l, i) => i < saida.indexOf('a=mid:1')).join().includes('a=mid:3'))
+  // Idempotente.
+  assert.equal(ctx.criarTransporteMesh.opusEstereo(saida.join('\r\n')), saida.join('\r\n'))
+})

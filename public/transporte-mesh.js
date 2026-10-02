@@ -7,19 +7,28 @@
 
   const OPUS = 'stereo=1;sprop-stereo=1;maxaveragebitrate=128000;useinbandfec=1'
 
+  // Em toda seção de áudio, não só na primeira: o som da tela vem numa seção
+  // depois da do microfone, e só a primeira levava stereo=1 (o som da tela
+  // chegava mono, na malha e no SFU). O SFU escreve OPUS em maiúsculas.
   function opusEstereo(sdp) {
-    const linhas = sdp.split(/\r\n|\n/)
-    const pts = linhas.flatMap(l => l.match(/^a=rtpmap:(\d+) opus\/48000\/2$/)?.[1] ?? [])
-    for (const pt of pts) {
-      const i = linhas.findIndex(l => l.startsWith(`a=fmtp:${pt} `))
-      if (i >= 0) {
-        if (!linhas[i].includes('stereo=1')) linhas[i] += ';' + OPUS
-      } else {
-        const j = linhas.findIndex(l => l.startsWith(`a=rtpmap:${pt} `))
-        linhas.splice(j + 1, 0, `a=fmtp:${pt} ${OPUS}`)
+    const secoes = sdp.split(/\r\n|\n/).reduce((acc, l) => {
+      if (l.startsWith('m=') || !acc.length) acc.push([])
+      acc.at(-1).push(l)
+      return acc
+    }, [])
+    for (const linhas of secoes) {
+      const pts = linhas.flatMap(l => l.match(/^a=rtpmap:(\d+) opus\/48000\/2$/i)?.[1] ?? [])
+      for (const pt of pts) {
+        const i = linhas.findIndex(l => l.startsWith(`a=fmtp:${pt} `))
+        if (i >= 0) {
+          if (!linhas[i].includes('stereo=1')) linhas[i] += ';' + OPUS
+        } else {
+          const j = linhas.findIndex(l => l.startsWith(`a=rtpmap:${pt} `))
+          linhas.splice(j + 1, 0, `a=fmtp:${pt} ${OPUS}`)
+        }
       }
     }
-    return linhas.join('\r\n')
+    return secoes.flat().join('\r\n')
   }
 
   async function definirLocal(pc) {

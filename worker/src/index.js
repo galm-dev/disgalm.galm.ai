@@ -378,6 +378,8 @@ export class Sala extends DurableObject {
         if (!r.ok) { querSfu = false; aviso = 'sfu_cota' }
       }
       sfu = novoEstado(querSfu ? 'sfu' : 'mesh', crypto.randomUUID().slice(0, 8))
+      // O motivo vale para a chamada inteira: quem entra depois também é avisado.
+      if (aviso) sfu.aviso = aviso
       await this.ctx.storage.put('sfu', sfu)
       if (anterior?.modo === 'sfu') {
         const tarefa = encerrarChamada(this.#contextoSfu({ id }, sala), anterior).catch(e => console.log('sfu:', e.message))
@@ -419,7 +421,7 @@ export class Sala extends DurableObject {
       t: 'welcome', id, retomada,
       peers: jaEstavam.map(p => ({ id: p.a.id, name: p.a.nome })),
       // Clientes antigos ignoram os campos abaixo e seguem na malha.
-      protocolo: 1, modo, ...(aviso && { aviso }),
+      protocolo: 1, modo, ...(sfu?.aviso && { aviso: sfu.aviso }),
       ...(chave && { sfu: { chave, versao: sfu.versao, fontes: catalogo(sfu) } }),
     })
     for (const p of jaEstavam)

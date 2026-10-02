@@ -415,9 +415,12 @@ test('Worker: /sfu só em sala da lista, mesma origem, com chave e credencial', 
 
 test('orçamento negando na abertura: a sala de ensaio fica na malha e avisa', async () => {
   orcamento = criarOrcamento(Orcamento, { snapshot: retrato({ turn_bytes: 900e9 }) })
-  const a = await montar().entra()
+  const s = montar()
+  const a = await s.entra()
   const w = a.ultima('welcome')
   assert.deepEqual([w.modo, w.aviso, w.sfu], ['mesh', 'sfu_cota', undefined])
+  // Quem chega depois na mesma chamada também sabe por quê.
+  assert.equal((await s.entra()).ultima('welcome').aviso, 'sfu_cota')
   orcamento = criarOrcamento(Orcamento, { snapshot: null })
   assert.equal((await montar().entra()).ultima('welcome').aviso, 'sfu_cota')
 })
