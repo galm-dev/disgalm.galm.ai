@@ -1834,11 +1834,22 @@
       } finally { $('entrar').disabled = false; $('entrar').textContent = 'Entrar como convidado →' }
     }
 
-    $('b-tela').onclick = () => compartilhar().catch(e => log(`tela — ${e.name}: ${e.message}`))
-    $('b-tela2').onclick = () => compartilharSegunda().catch(e => log(`segunda tela — ${e.name}: ${e.message}`))
+    // Compara a stream, não só se existe: parar a primeira tela promove a segunda.
+    async function alternarTelaComSom(pegar, iniciar, rotulo) {
+      const antes = pegar()
+      await iniciar().catch(e => log(`${rotulo} — ${e.name}: ${e.message}`))
+      if (pegar() === antes) return
+      bip(antes ? SONS.telaParada : SONS.telaLigada)
+    }
+    $('b-tela').onclick = () => alternarTelaComSom(() => telaStream, compartilhar, 'tela')
+    $('b-tela2').onclick = () => alternarTelaComSom(() => tela2Stream, compartilharSegunda, 'segunda tela')
     $('palco-telas').onclick = ev => { const b = ev.target.closest?.('[data-tela]'); if (b) verTela(+b.dataset.tela) }
 
-    $('b-cam').onclick = () => alternarCam().catch(e => log(`câmera — ${e.name}: ${e.message}`))
+    $('b-cam').onclick = async () => {
+      const ligada = !!camStream
+      await alternarCam().catch(e => log(`câmera — ${e.name}: ${e.message}`))
+      if (!!camStream !== ligada) bip(camStream ? SONS.camLigada : SONS.camDesligada, 'triangle')
+    }
 
     // Trocar de câmera com ela ligada: derruba e reabre no dispositivo novo.
     $('camdev').onchange = async () => {
@@ -1848,16 +1859,18 @@
     }
 
     // Barulhinhos de mute/surdo sintetizados na hora: dois tons curtos, descendo
-    // ao cortar e subindo ao abrir. Surdo fica mais grave para se distinguir.
+    // ao cortar e subindo ao abrir. Surdo fica mais grave para se distinguir;
+    // câmera fica mais aguda e em onda triangular, um pouco mais brilhante;
+    // tela é um arpejo de três notas.
     let ctxSom = null
-    function bip(notas) {
+    function bip(notas, tipo = 'sine') {
       ctxSom ??= new AudioContext()
       ctxSom.resume()
       const t0 = ctxSom.currentTime
       notas.forEach((freq, i) => {
         const osc = ctxSom.createOscillator(), g = ctxSom.createGain()
         const t = t0 + i * 0.08
-        osc.type = 'sine'
+        osc.type = tipo
         osc.frequency.value = freq
         g.gain.setValueAtTime(0, t)
         g.gain.linearRampToValueAtTime(0.12, t + 0.01)
@@ -1870,6 +1883,8 @@
     const SONS = {
       mudo: [660, 440], aberto: [440, 660],
       surdo: [440, 294], ouvindo: [294, 440],
+      camDesligada: [880, 587], camLigada: [587, 880],
+      telaParada: [784, 659, 523], telaLigada: [523, 659, 784],
     }
 
     // Ensurdecer também muta: ouvir nada e continuar falando não é um estado válido.
