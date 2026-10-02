@@ -57,6 +57,18 @@ Com `DISGALM_TESTE_INCLUIR=1`, o teste grava também `incluido.wav`, que tem
 só a árvore excluída. Serve para provar que o Discord de verdade estava
 tocando quando o som dele não é um tom.
 
+Resultado na VM `sirius-b` (Windows 11 26200), track depois do WebRTC, nível
+do que sobra tirando os tons:
+
+| Cenário | 440 Hz | 1000 Hz | Resto |
+|---|---|---|---|
+| Substituto excluído | −89 a −104 dBFS | −12,3 | ~−45 (ruído do Opus) |
+| Controle, sem excluir | −12,2 | −12,2 | — |
+| Discord real tocando vídeo, excluído | — | −12,3 | −54 |
+| Discord real tocando vídeo, sem excluir | — | −12,4 | −19 |
+
+Só o Discord, gravado à parte (`incluido.wav`), estava em −17,8 dBFS.
+
 ## Como o Discord é achado
 
 A exclusão vale para a árvore de **um** PID. O Discord roda em vários
