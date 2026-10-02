@@ -46,7 +46,12 @@ test('TURN e WebSocket exigem token correto e origem da própria página', async
     assert.equal((await ice({ authorization: `Bearer ${await token({ aud: 'other' })}` })).status, 401)
     assert.equal((await ice({ authorization: `Bearer ${await token({ amr: ['google'] })}` })).status, 401)
     assert.equal((await ice({ authorization: `Bearer ${await token({ exp: now() - 1 })}` })).status, 401)
-    assert.equal((await ice({ authorization: `Bearer ${valid.slice(0, -2)}aa` })).status, 401)
+    // Adultera um caractere do meio da assinatura. Trocar os dois últimos por
+    // "aa" falhava ~1 vez em 256: em base64url o último caractere carrega só
+    // 2 bits, e às vezes a assinatura "adulterada" era a mesma.
+    const i = valid.length - 20
+    const adulterado = valid.slice(0, i) + (valid[i] === 'A' ? 'B' : 'A') + valid.slice(i + 1)
+    assert.equal((await ice({ authorization: `Bearer ${adulterado}` })).status, 401)
 
     const ws = (origin, protocol) => worker.fetch(new Request('https://disgalm.galm.ai/ws?sala=galm', {
       headers: { Upgrade: 'websocket', ...(origin && { Origin: origin }),
