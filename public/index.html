@@ -1847,21 +1847,41 @@
       await alternarCam().catch(e => log(`câmera — ${e.name}: ${e.message}`))
     }
 
-    $('b-mic').onclick = () => {
+    // Ensurdecer também muta: ouvir nada e continuar falando não é um estado válido.
+    // O botão do mic guarda a intenção mesmo sem track (pegarMic lê a classe).
+    let mudoAntesDeSurdo = false
+    function definirMudo(mudo) {
       const t = micStream?.getAudioTracks()[0]
-      if (!t) return
-      t.enabled = !t.enabled
-      $('b-mic').classList.toggle('cortado', !t.enabled)
-      controle('b-mic', t.enabled ? 'Silenciar microfone' : 'Ativar microfone')
+      if (t) t.enabled = !mudo
+      $('b-mic').classList.toggle('cortado', mudo)
+      if (!$('b-mic').disabled) controle('b-mic', mudo ? 'Ativar microfone' : 'Silenciar microfone')
+    }
+    function definirSurdo(valor) {
+      surdo = valor
+      $('b-surdo').classList.toggle('cortado', surdo)
+      controle('b-surdo', surdo ? 'Ativar áudio da sala' : 'Silenciar áudio da sala')
+      for (const id of pares.keys()) aplicarVolumes(id)
+    }
+
+    $('b-mic').onclick = () => {
+      if (!micStream?.getAudioTracks()[0]) return
+      const mudo = !estouMudo()
+      // Abrir o mic ensurdecido tira dos dois, como no Discord.
+      if (!mudo && surdo) definirSurdo(false)
+      definirMudo(mudo)
       desenharTile('local')
       anunciar()
     }
 
     $('b-surdo').onclick = () => {
-      surdo = !surdo
-      $('b-surdo').classList.toggle('cortado', surdo)
-      controle('b-surdo', surdo ? 'Ativar áudio da sala' : 'Silenciar áudio da sala')
-      for (const id of pares.keys()) aplicarVolumes(id)
+      if (!surdo) {
+        mudoAntesDeSurdo = $('b-mic').classList.contains('cortado')
+        definirSurdo(true)
+        definirMudo(true)
+      } else {
+        definirSurdo(false)
+        definirMudo(mudoAntesDeSurdo)
+      }
       desenharTile('local')
       anunciar()
     }
