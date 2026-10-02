@@ -35,6 +35,8 @@ module.exports = {
     category: 'public.app-category.social-networking',
     // Assinatura com identidade estável (CSC_LINK): a permissão de Gravação de
     // Tela e o Squirrel.Mac dependem do mesmo requisito designado entre versões.
+    // CSC_NAME escolhe a identidade (no CI, "Disgalm Release (GALM)").
+    identity: process.env.CSC_NAME || undefined,
     hardenedRuntime: true,
     entitlements: 'build/entitlements.mac.plist',
     entitlementsInherit: 'build/entitlements.mac.plist',

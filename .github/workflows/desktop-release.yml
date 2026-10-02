@@ -4,8 +4,9 @@
 # SOs com electron-builder e publica uma release no GitHub com os feeds do
 # electron-updater (latest*.yml para stable, nightly*.yml para nightly).
 #
-# Mac: assinatura obrigatória (CSC_LINK, CSC_KEY_PASSWORD), senão a permissão
-# de Gravação de Tela e o update do Squirrel.Mac quebram entre versões.
+# Mac: assinatura obrigatória com o certificado próprio do Disgalm (secrets
+# CSC_LINK, CSC_KEY_PASSWORD; variável CSC_NAME), senão a permissão de Gravação
+# de Tela e o update do Squirrel.Mac quebram entre versões.
 # Windows: sem assinatura por enquanto (AZURE_* entram quando houver conta).
 name: Desktop release
 
@@ -114,6 +115,12 @@ jobs:
             echo "::error::Sem CSC_LINK/CSC_KEY_PASSWORD: o app do Mac não pode sair sem assinatura estável."
             exit 1
           fi
+      - name: Confia no certificado de assinatura (Mac)
+        if: runner.os == 'macOS'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: .github/scripts/mac-confiar-certificado.sh
       - name: Empacota
         working-directory: desktop
         shell: bash
@@ -121,6 +128,7 @@ jobs:
           DISGALM_CANAL: ${{ needs.preparar.outputs.canal }}
           CSC_LINK: ${{ runner.os == 'macOS' && secrets.CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.CSC_KEY_PASSWORD || '' }}
+          CSC_NAME: ${{ runner.os == 'macOS' && vars.CSC_NAME || '' }}
           CSC_IDENTITY_AUTO_DISCOVERY: ${{ runner.os == 'macOS' && 'true' || 'false' }}
         run: npx electron-builder --config electron-builder.config.cjs ${{ matrix.alvo }} --publish never
       - name: Confere a assinatura do Mac

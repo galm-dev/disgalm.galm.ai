@@ -52,3 +52,44 @@ jobs:
           npm ci --no-fund --no-audit
           npm run build:native
           node -e "const n = require('./native/build/Release/loopback.node'); if (typeof n.Captura !== 'function' || typeof n.sessoesDeAudio !== 'function') throw new Error('exports'); console.log('ok', Object.keys(n))"
+
+  # Confere, nos PRs que mexem no desktop, que o app do Mac sai assinado com o
+  # certificado do Disgalm (o mesmo do release). PR de fork não tem os secrets.
+  assinatura-mac:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: desktop/ mudou e há secrets?
+        id: mudou
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+        run: |
+          if [ -z "$CSC_LINK" ]; then echo sim=false >> "$GITHUB_OUTPUT"; exit 0; fi
+          if [ "${{ github.event_name }}" = "pull_request" ]; then base="origin/${{ github.base_ref }}"; git fetch -q --depth=50 origin "${{ github.base_ref }}"; else base="HEAD~1"; fi
+          if git diff --quiet "$base" HEAD -- desktop/ .github/; then echo sim=false >> "$GITHUB_OUTPUT"; else echo sim=true >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/setup-node@v4
+        if: steps.mudou.outputs.sim == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - name: Confia no certificado
+        if: steps.mudou.outputs.sim == 'true'
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: .github/scripts/mac-confiar-certificado.sh
+      - name: Empacota e assina (zip arm64)
+        if: steps.mudou.outputs.sim == 'true'
+        working-directory: desktop
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+          CSC_NAME: ${{ vars.CSC_NAME }}
+        run: |
+          npm ci --no-fund --no-audit
+          npx electron-builder --config electron-builder.config.cjs --mac zip --arm64 --publish never
+          codesign --verify --deep --strict dist/mac-arm64/Disgalm.app
+          codesign -d -r- dist/mac-arm64/Disgalm.app 2>&1 | grep designated
