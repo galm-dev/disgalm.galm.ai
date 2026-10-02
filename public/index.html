@@ -2008,7 +2008,11 @@
     $('loopdev').onchange = () => log('áudio do sistema:', $('loopdev').selectedOptions[0]?.textContent)
     if (desktop?.audioSemDiscord?.disponivel) {
       $('semdiscord-op').hidden = false
-      $('semdiscord').onchange = () => log('áudio do sistema sem o Discord:', $('semdiscord').checked ? 'sim' : 'não')
+      $('semdiscord').checked = lerLocal('disgalm.semdiscord') !== 'nao'
+      $('semdiscord').onchange = () => {
+        gravarLocal('disgalm.semdiscord', $('semdiscord').checked ? '' : 'nao')
+        log('áudio do sistema sem o Discord:', $('semdiscord').checked ? 'sim' : 'não')
+      }
     }
 
     // Ícones e estados dos controles da chamada.
