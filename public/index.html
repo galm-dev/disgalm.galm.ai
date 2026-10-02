@@ -1847,6 +1847,31 @@
       await alternarCam().catch(e => log(`câmera — ${e.name}: ${e.message}`))
     }
 
+    // Barulhinhos de mute/surdo sintetizados na hora: dois tons curtos, descendo
+    // ao cortar e subindo ao abrir. Surdo fica mais grave para se distinguir.
+    let ctxSom = null
+    function bip(notas) {
+      ctxSom ??= new AudioContext()
+      ctxSom.resume()
+      const t0 = ctxSom.currentTime
+      notas.forEach((freq, i) => {
+        const osc = ctxSom.createOscillator(), g = ctxSom.createGain()
+        const t = t0 + i * 0.08
+        osc.type = 'sine'
+        osc.frequency.value = freq
+        g.gain.setValueAtTime(0, t)
+        g.gain.linearRampToValueAtTime(0.12, t + 0.01)
+        g.gain.exponentialRampToValueAtTime(0.001, t + 0.12)
+        osc.connect(g).connect(ctxSom.destination)
+        osc.start(t)
+        osc.stop(t + 0.13)
+      })
+    }
+    const SONS = {
+      mudo: [660, 440], aberto: [440, 660],
+      surdo: [440, 294], ouvindo: [294, 440],
+    }
+
     // Ensurdecer também muta: ouvir nada e continuar falando não é um estado válido.
     // O botão do mic guarda a intenção mesmo sem track (pegarMic lê a classe).
     let mudoAntesDeSurdo = false
@@ -1869,6 +1894,7 @@
       // Abrir o mic ensurdecido tira dos dois, como no Discord.
       if (!mudo && surdo) definirSurdo(false)
       definirMudo(mudo)
+      bip(mudo ? SONS.mudo : SONS.aberto)
       desenharTile('local')
       anunciar()
     }
@@ -1878,9 +1904,11 @@
         mudoAntesDeSurdo = $('b-mic').classList.contains('cortado')
         definirSurdo(true)
         definirMudo(true)
+        bip(SONS.surdo)
       } else {
         definirSurdo(false)
         definirMudo(mudoAntesDeSurdo)
+        bip(SONS.ouvindo)
       }
       desenharTile('local')
       anunciar()
