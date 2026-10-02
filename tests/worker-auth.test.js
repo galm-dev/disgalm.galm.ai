@@ -62,7 +62,9 @@ test('TURN e WebSocket exigem token correto e origem da própria página', async
     assert.equal((await ws('https://disgalm.galm.ai', null)).status, 401)
     assert.equal((await ws('https://disgalm.galm.ai', `disgalm, auth.${valid}`)).status, 200)
     assert.equal(delegated.length, 1)
-    assert.equal(delegated[0].headers.get('x-disgalm-exp'), String(now() + 600))
+    // O exp do próprio token: now() + 600 aqui erra 1 s se o segundo virou no meio.
+    const expValido = JSON.parse(Buffer.from(valid.split('.')[1], 'base64url')).exp
+    assert.equal(delegated[0].headers.get('x-disgalm-exp'), String(expValido))
   } finally { globalThis.fetch = originalFetch }
 })
 
