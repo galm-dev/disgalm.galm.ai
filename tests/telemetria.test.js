@@ -168,3 +168,32 @@ test('relatório junta pares, quem saiu e eventos com hora', async () => {
   assert.equal(r.saidos[0].nome, 'B')
   assert.match(r.eventos.at(-1), /^\d\d:\d\d:\d\d\.\d{3} evento qualquer$/)
 })
+
+test('bytes do relay local saem como diferença desde o último envio, somando reinícios de ICE', async () => {
+  const f = fixture()
+  const caminho = (par, local, bytesSent, bytesReceived) => [
+    { id: 'transport', type: 'transport', selectedCandidatePairId: par },
+    { id: par, localCandidateId: local, remoteCandidateId: 'r', bytesSent, bytesReceived },
+    { id: 'l', candidateType: 'relay', protocol: 'udp', relayProtocol: 'udp', url: 'turn:turn.example:3478?transport=udp' },
+    { id: 'h', candidateType: 'host', protocol: 'udp' },
+    { id: 'r', candidateType: 'relay', protocol: 'udp' },
+  ]
+  const eventos = () => JSON.parse(f.run("JSON.stringify(filaTelemetria.filter(e => e.evento === 'relay_bytes'))"))
+
+  // Relay só do outro lado: o tráfego entra no evento dele, não neste.
+  await f.tick(caminho('direto', 'h', 500, 500))
+  f.run("informarRelay('peer', p)")
+  assert.equal(eventos().length, 0)
+
+  await f.tick(caminho('a', 'l', 1000, 5000))
+  await f.tick(caminho('a', 'l', 3000, 9000))
+  f.run("informarRelay('peer', p)")
+  await f.tick(caminho('b', 'l', 200, 100))
+  f.run("informarRelay('peer', p); informarRelay('peer', p)")
+
+  const ev = eventos()
+  assert.deepEqual(ev.map(e => [e.enviados, e.recebidos]), [[3000, 9000], [200, 100]])
+  assert.equal(ev[0].par, 'peer')
+  assert.equal(ev[0].protocolo, 'udp')
+  assert.equal(ev[0].relay, 'turn:turn.example:3478?transport=udp')
+})

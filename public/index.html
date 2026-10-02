@@ -323,7 +323,10 @@
       }).catch(() => {})
     }
     setInterval(() => enviarTelemetria(), 10_000)
-    addEventListener('pagehide', () => enviarTelemetria(true))
+    addEventListener('pagehide', () => {
+      for (const [id, p] of pares) informarRelay(id, p)
+      enviarTelemetria(true)
+    })
 
     // Presets de qualidade da própria tela. O bitrate ANDA JUNTO com resolução e
     // fps de propósito: 4K60 num teto de 2,5 Mbps fica pior que 1080p30, porque o
@@ -1414,6 +1417,34 @@
       p.causa = a.causa
     }
 
+    // Bytes que passaram pela nossa alocação no TURN, para medir a cota da
+    // Cloudflare. Os contadores do candidate-pair são acumulados, então basta o
+    // último valor de cada par de candidatos; uma reinicialização de ICE abre
+    // outro. Só conta o relay local: o relay do outro lado aparece no evento dele.
+    function registrarRelay(p, st, cp) {
+      const l = cp && st.get(cp.localCandidateId)
+      if (l?.candidateType !== 'relay') return
+      p.relay ??= new Map()
+      p.relay.set(cp.id, { enviados: cp.bytesSent ?? 0, recebidos: cp.bytesReceived ?? 0,
+        informados: p.relay.get(cp.id)?.informados ?? [0, 0],
+        protocolo: l.relayProtocol ?? l.protocol, relay: l.url ?? null })
+    }
+
+    // Manda o que passou pelo relay desde o último envio, quando o par sai e
+    // quando a página fecha. O tráfego depois da última amostra (até 2 s) fica de
+    // fora, assim como cabeçalhos e checagens de ICE, que o contador não inclui.
+    function informarRelay(id, p) {
+      let enviados = 0, recebidos = 0, ultimo
+      for (const c of p.relay?.values() ?? []) {
+        enviados += c.enviados - c.informados[0]
+        recebidos += c.recebidos - c.informados[1]
+        c.informados = [c.enviados, c.recebidos]
+        ultimo = c
+      }
+      if (!enviados && !recebidos) return
+      telemetria('relay_bytes', { par: id, enviados, recebidos, protocolo: ultimo.protocolo, relay: ultimo.relay })
+    }
+
     async function atualizarVideo(id, pc, anteriores) {
       const st = await pc.getStats()
       const p = pares.get(id)
@@ -1446,6 +1477,7 @@
       }
 
       const cp = st.get(st.get((enviado || recebido)?.transportId ?? transporte?.id)?.selectedCandidatePairId)
+      registrarRelay(p, st, cp)
       const a = {
         t: Date.now(),
         envio: resumoEnvio(st, enviado, retorno, taxa),
@@ -1701,6 +1733,7 @@
       // Quem sai leva as amostras junto; o relatório ainda precisa delas.
       saidos.push({ ...estadoPar([id, p]), saiuEm: new Date().toISOString() })
       if (saidos.length > 8) saidos.shift()
+      informarRelay(id, p)
       clearInterval(p.timer)
       p.pc.close()
       for (const [, a] of p.audios) a.el.remove()
@@ -1808,6 +1841,7 @@
     // o microfone é liberado até a próxima entrada.
     function sairDaSala() {
       if (!sala) return
+      for (const [id, p] of pares) informarRelay(id, p)
       telemetria('saiu_da_sala')
       enviarTelemetria()
       const s = ws
