@@ -78,7 +78,13 @@ function servirLocal() {
         bypassCustomProtocolHandlers: true,
       })
     }
-    return net.fetch(req, { bypassCustomProtocolHandlers: true, credentials: 'include' })
+    // Cookies (sessão GALM, convite) só para a própria origem: forçar
+    // credenciais em terceiros quebra CORS com '*' (fontes do Google).
+    const credentials = url.origin === ORIGEM ? 'include' : undefined
+    return net.fetch(req, { bypassCustomProtocolHandlers: true, credentials }).catch(e => {
+      console.error('falhou', req.method, req.url, e.message)
+      throw e
+    })
   })
 }
 
@@ -106,7 +112,10 @@ function tratarGetDisplayMedia() {
         escolhida = opcoes[response]
       }
       if (!escolhida) return responder({})
-      responder({ video: escolhida, ...(req.audioRequested ? { audio: 'loopback' } : {}) })
+      // O Electron só tem áudio do sistema ('loopback') no Windows. No Linux a
+      // UI cai no monitor do PipeWire (loopback.sh); no Mac a tela vai sem som.
+      const audio = req.audioRequested && process.platform === 'win32' ? { audio: 'loopback' } : {}
+      responder({ video: escolhida, ...audio })
     } catch (e) {
       console.error('getDisplayMedia:', e)
       responder({})
