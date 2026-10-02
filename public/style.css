@@ -1440,3 +1440,30 @@ button.channel:hover:not(:disabled) {
   #capa .base { flex-wrap: wrap; justify-content: flex-end; }
   #palco-stats:empty { display: none; }
 }
+/* Quem compartilha duas telas: quem assiste escolhe qual fica no palco. */
+#capa .telas {
+  display: inline-flex;
+  margin-left: auto;
+  pointer-events: auto;
+  background: rgba(12, 13, 18, 0.82);
+  border: 1px solid var(--line-2);
+  border-radius: 999px;
+  padding: 2px;
+}
+#capa .telas[hidden] {
+  display: none;
+}
+#capa .telas button {
+  width: auto;
+  height: 26px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12px;
+  color: var(--fg-2);
+}
+#capa .telas button[aria-pressed="true"] {
+  background: var(--fg);
+  color: var(--bg);
+}
