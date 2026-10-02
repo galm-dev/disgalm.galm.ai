@@ -21,6 +21,12 @@ new_sqlite_classes = ["Sala"]
 [observability]
 enabled = true
 
+[vars]
+# Fase 1 do SFU, só ensaio: salas onde o Cloudflare Realtime SFU liga, separadas
+# por vírgula (nome da sala em minúsculas, como na URL). Vazio: todas em malha.
+# Também exige os secrets SFU_APP_ID e SFU_APP_SECRET; ver README.
+SFU_SALAS = ""
+
 # TURN_HOST, TURN_PORT, TURN_USER e TURN_PASS entram como secrets, nunca aqui:
 #   ./wrangler.sh secret put TURN_HOST
 # Sem eles o /ice devolve só um STUN público e o relay não existe.

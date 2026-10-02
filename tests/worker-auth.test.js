@@ -11,8 +11,10 @@ const source = readFileSync(new URL('../worker/src/index.js', import.meta.url), 
   .replace("import { DurableObject } from 'cloudflare:workers'",
     'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env } }')
   .replace("from './auth.js'", "from './auth.mjs'")
+  .replace("from './sfu.js'", "from './sfu.mjs'")
 writeFileSync(join(dir, 'worker.mjs'), source)
 writeFileSync(join(dir, 'auth.mjs'), readFileSync(new URL('../worker/src/auth.js', import.meta.url)))
+writeFileSync(join(dir, 'sfu.mjs'), readFileSync(new URL('../worker/src/sfu.js', import.meta.url)))
 const { default: worker } = await import(join(dir, 'worker.mjs'))
 
 const pair = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify'])

@@ -5,6 +5,8 @@
 // e o recado nunca passaria. idFromName(sala) é o que os faz cair no mesmo lugar.
 import { DurableObject } from 'cloudflare:workers'
 import { bearer, session, sessionPaths, verifyAccess, websocketToken } from './auth.js'
+import { CAPACIDADE, catalogo, chamarApi, encerrarChamada, limparPessoa, novoEstado, operar, rotaSfu,
+  salaEmEnsaio } from './sfu.js'
 
 const MAX = 4  // ver a conta de banda em PLANO-POC.md
 const INVITE_SECONDS = 24 * 60 * 60
@@ -139,6 +141,74 @@ export class Sala extends DurableObject {
     try { ws.send(JSON.stringify(obj)) } catch {}
   }
 
+  // ---------- SFU (fase 1, ensaio) ----------
+  // O catálogo e as sessões ficam no storage (ver sfu.js), não em memória: a
+  // sala hiberna entre uma operação e outra.
+
+  async #estadoSfu() {
+    const est = await this.ctx.storage.get('sfu')
+    return est ? structuredClone(est) : null
+  }
+
+  #contextoSfu(autor, sala) {
+    return {
+      autor,
+      presentes: new Set(this.#peers().filter(p => p.a.modo === 'sfu').map(p => p.a.id)),
+      carregar: () => this.#estadoSfu(),
+      salvar: est => this.ctx.storage.put('sfu', est),
+      api: (metodo, caminho, corpo) => chamarApi(this.env, metodo, caminho, corpo),
+      registrar: (evento, campos) => this.#registrar(evento, { sala, ...campos }),
+      difundir: est => {
+        const msg = { t: 'sfu', versao: est.versao, fontes: catalogo(est) }
+        for (const p of this.#peers()) if (p.a.modo === 'sfu') this.#envia(p.ws, msg)
+      },
+      agora: () => Date.now(),
+    }
+  }
+
+  // Pessoa que saiu de vez perde as fontes no catálogo. A API é chamada fora do
+  // caminho de quem disparou a saída.
+  #saiuDoSfu(a, motivo) {
+    if (a?.modo !== 'sfu') return
+    const tarefa = limparPessoa(this.#contextoSfu({ id: a.id }, a.sala), a.id, motivo).catch(e => console.log('sfu:', e.message))
+    if (this.ctx.waitUntil) this.ctx.waitUntil(tarefa)
+    return tarefa
+  }
+
+  // Quem pede é a conexão viva com aquele id, nesta sala, com a mesma chave que
+  // recebeu no welcome, ainda dentro do prazo e com a mesma credencial: membro
+  // pelo sub, convidado pelo convite, que ainda precisa valer.
+  async #autorSfu(req, id) {
+    if (!/^[0-9a-f]{8}$/.test(id || '')) return null
+    const chave = req.headers.get('x-disgalm-sfu') || ''
+    const p = this.#peers().find(p => p.a.id === id)
+    const agora = Math.floor(Date.now() / 1000)
+    const exp = Number(req.headers.get('x-disgalm-exp'))
+    if (!p || p.a.modo !== 'sfu' || !p.a.chaveSfu || p.a.exp <= agora || !(exp > agora)) return null
+    if (p.a.chaveSfu !== await tokenHash(chave)) return null
+    const role = req.headers.get('x-disgalm-role')
+    if (role !== p.a.role) return null
+    if (role === 'member' && (!p.a.sub || req.headers.get('x-disgalm-sub') !== p.a.sub)) return null
+    if (role === 'guest' && !await this.#guestExpiry(req.headers.get('x-disgalm-guest-token'))) return null
+    return { id, exp: Math.min(exp, p.a.exp), sala: p.a.sala }
+  }
+
+  async #sfu(req) {
+    let corpo = null
+    try { corpo = await req.json() } catch {}
+    const op = typeof corpo?.op === 'string' ? corpo.op.slice(0, 20) : null
+    const autor = op && await this.#autorSfu(req, corpo.id)
+    if (!autor) {
+      this.#registrar('sfu_recusado', { sala: new URL(req.url).searchParams.get('sala'), op,
+        motivo: op ? 'fora da sala' : 'pedido inválido' })
+      return Response.json({ erro: op ? 'fora da sala' : 'pedido inválido' }, { status: op ? 403 : 400, headers: noStore })
+    }
+    const r = await operar(this.#contextoSfu(autor, autor.sala), op, corpo)
+    if (r.status >= 400 && r.status !== 502)
+      this.#registrar('sfu_recusado', { sala: autor.sala, id: autor.id, op, motivo: r.corpo.erro, status: r.status })
+    return Response.json(r.corpo, { status: r.status, headers: noStore })
+  }
+
   // Tira o socket da sala sem passar por webSocketClose: sem anexo, ele some
   // de #peers na hora, e o aviso de saída fica a critério de quem chamou.
   #descarta(p, motivo) {
@@ -164,6 +234,7 @@ export class Sala extends DurableObject {
       if (p.a.exp > agora) continue
       this.#descarta(p, 'acesso expirado')
       this.#avisaSaida(p.a.id, p.ws, false)
+      await this.#saiuDoSfu(p.a, 'expirou')
     }
     await this.#alarme()
   }
@@ -205,6 +276,7 @@ export class Sala extends DurableObject {
     const path = new URL(req.url).pathname
     if (path === '/invite' && req.method === 'POST') return this.#invite(req)
     if (path === '/guest/check' && req.method === 'POST') return this.#checkGuest(req)
+    if (path === '/sfu' && req.method === 'POST') return this.#sfu(req)
     if (path !== '/ws') return new Response('não encontrado', { status: 404 })
     const role = req.headers.get('x-disgalm-role')
     let exp = Number(req.headers.get('x-disgalm-exp'))
@@ -233,6 +305,7 @@ export class Sala extends DurableObject {
       if (p.a.exp <= Math.floor(agora / 1000)) {
         this.#descarta(p, 'acesso expirado')
         this.#avisaSaida(p.a.id, servidor, false)
+        this.#saiuDoSfu(p.a, 'expirou')
         continue
       }
       const ultimo = Math.max(p.a.desde || 0, this.ctx.getWebSocketAutoResponseTimestamp(p.ws)?.getTime() || 0)
@@ -240,6 +313,7 @@ export class Sala extends DurableObject {
         this.#registrar('fantasma', { sala: p.a.sala, id: p.a.id, semBatimentoS: Math.round((agora - ultimo) / 1000) })
         this.#descarta(p, 'sem batimento')
         this.#avisaSaida(p.a.id, servidor, true)
+        this.#saiuDoSfu(p.a, 'fantasma')
       }
     }
 
@@ -249,7 +323,10 @@ export class Sala extends DurableObject {
       if (!aba || p.a.aba !== aba) continue
       this.#descarta(p, 'substituída')
       this.#registrar('substituida', { sala: p.a.sala, id: p.a.id, retomada: p.a.id === retomar })
-      if (p.a.id !== retomar) this.#avisaSaida(p.a.id, servidor, false)
+      if (p.a.id !== retomar) {
+        this.#avisaSaida(p.a.id, servidor, false)
+        this.#saiuDoSfu(p.a, 'substituida')
+      }
     }
 
     const jaEstavam = this.#peers(servidor)
@@ -264,18 +341,49 @@ export class Sala extends DurableObject {
     // o id, então ele também volta.
     const retomada = !!retomar && !jaEstavam.some(p => p.a.id === retomar)
     const id = retomada ? retomar : crypto.randomUUID().slice(0, 8)
+
+    // Modo da chamada: decide quem abre a sala vazia e vale até ela esvaziar.
+    // SFU só em sala da lista de ensaio e com cliente que sabe usar; o resto,
+    // inclusive cliente antigo, fica na malha. Retomada numa sala que parece
+    // vazia (o objeto reiniciou) continua a chamada que havia.
+    const capaz = (q.get('cap') || '').split(',').includes(CAPACIDADE)
+    let sfu = await this.#estadoSfu()
+    if (!jaEstavam.length && !(retomada && sfu)) {
+      const anterior = sfu
+      sfu = novoEstado(salaEmEnsaio(this.env, sala) && capaz ? 'sfu' : 'mesh', crypto.randomUUID().slice(0, 8))
+      await this.ctx.storage.put('sfu', sfu)
+      if (anterior?.modo === 'sfu') {
+        const tarefa = encerrarChamada(this.#contextoSfu({ id }, sala), anterior).catch(e => console.log('sfu:', e.message))
+        if (this.ctx.waitUntil) this.ctx.waitUntil(tarefa)
+      }
+    }
+    const modo = sfu?.modo === 'sfu' ? 'sfu' : 'mesh'
+    // Cliente sem SFU numa chamada em SFU não veria ninguém. 'cheia' é o único
+    // aviso que o cliente antigo entende sem religar em ciclo.
+    if (modo === 'sfu' && !capaz) {
+      this.#registrar('sfu_recusado', { sala, op: 'entrar', motivo: 'cliente sem SFU' })
+      this.#envia(servidor, { t: 'cheia', motivo: 'versao' })
+      servidor.close(1013, 'cliente sem SFU')
+      return new Response(null, { status: 101, webSocket: cliente, headers: { 'sec-websocket-protocol': 'disgalm' } })
+    }
+    // A chave liga as chamadas HTTP do gateway a esta conexão; só o hash fica.
+    const chave = modo === 'sfu' ? randomToken() : null
     // Só a comparação sai daqui: dois celulares atrás do mesmo NAT dependem de
     // hairpin ou de relay para se falarem. O IP fica em hash e nunca é logado.
     const ipHash = await this.#ipHash(req)
     const sub = role === 'member' ? req.headers.get('x-disgalm-sub') : null
-    servidor.serializeAttachment({ id, nome, aba, desde: agora, bate: q.has('aba'), exp, role, sub, ipHash, sala })
+    servidor.serializeAttachment({ id, nome, aba, desde: agora, bate: q.has('aba'), exp, role, sub, ipHash, sala,
+      modo, ...(chave && { chaveSfu: await tokenHash(chave) }) })
     await this.#alarme()
-    this.#registrar(retomada ? 'voltou' : 'entrou', { sala, id, papel: role, sub, naSala: jaEstavam.length + 1,
+    this.#registrar(retomada ? 'voltou' : 'entrou', { sala, id, papel: role, sub, naSala: jaEstavam.length + 1, modo,
       pares: jaEstavam.map(p => ({ id: p.a.id, mesmoIpPublico: !!ipHash && p.a.ipHash === ipHash })) })
 
     this.#envia(servidor, {
       t: 'welcome', id, retomada,
       peers: jaEstavam.map(p => ({ id: p.a.id, name: p.a.nome })),
+      // Clientes antigos ignoram os campos abaixo e seguem na malha.
+      protocolo: 1, modo,
+      ...(chave && { sfu: { chave, versao: sfu.versao, fontes: catalogo(sfu) } }),
     })
     for (const p of jaEstavam)
       this.#envia(p.ws, { t: retomada ? 'peer-back' : 'peer-join', id, name: nome })
@@ -312,6 +420,7 @@ export class Sala extends DurableObject {
     ws.serializeAttachment(null)
     this.#registrar('saiu', { sala: a.sala, id: a.id, motivo: String(motivo), volta })
     this.#avisaSaida(a.id, ws, volta)
+    if (!volta) await this.#saiuDoSfu(a, 'saiu')
     await this.#alarme()
   }
 }
@@ -356,12 +465,20 @@ export default {
     // Membro pelo bearer; convidado pelo cookie, válido para esta sala.
     const quem = async () => {
       const claims = await verifyAccess(bearer(req))
-      if (claims) return { papel: 'member', sub: claims.sub }
+      if (claims) return { papel: 'member', sub: claims.sub, exp: claims.exp }
       const token = guestCookie(req)
       if (!validRoom(room) || !token) return null
       const check = await roomObject(env, room).fetch(internal(`${url.origin}/guest/check`, 'POST',
         { 'x-disgalm-guest-token': token }))
-      return check.ok ? { papel: 'guest', sub: null } : null
+      if (!check.ok) return null
+      const { exp } = await check.json()
+      return { papel: 'guest', sub: null, exp, convite: token }
+    }
+
+    if (url.pathname === '/sfu') {
+      if (!validRoom(room)) return new Response('sala inválida', { status: 400 })
+      return rotaSfu(req, env, { sala: room, mesmaOrigem: sameOrigin, identificar: quem,
+        objeto: roomObject(env, room), origem: url.origin })
     }
 
     if (url.pathname === '/ice') {

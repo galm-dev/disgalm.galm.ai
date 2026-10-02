@@ -10,10 +10,12 @@ const fonte = readFileSync(new URL('../worker/src/index.js', import.meta.url), '
   .replace("import { DurableObject } from 'cloudflare:workers'",
            'class DurableObject { constructor(ctx, env) { this.ctx = ctx; this.env = env } }')
   .replace("from './auth.js'", "from './auth.mjs'")
+  .replace("from './sfu.js'", "from './sfu.mjs'")
 const pasta = mkdtempSync(join(tmpdir(), 'disgalm-'))
 const arquivo = join(pasta, 'worker.mjs')
 writeFileSync(arquivo, fonte)
 writeFileSync(join(pasta, 'auth.mjs'), readFileSync(new URL('../worker/src/auth.js', import.meta.url)))
+writeFileSync(join(pasta, 'sfu.mjs'), readFileSync(new URL('../worker/src/sfu.js', import.meta.url)))
 
 class Socket {
   constructor() { this.msgs = []; this.att = null }
@@ -194,7 +196,7 @@ test('membro presente gera convite de 24 horas para vários convidados; convidad
   assert.equal(b.att.role, 'guest')
   assert.equal((await invite('')).status, 403)
   assert.equal(member.att.role, 'member')
-  s.ctx.storage.saved.set([...s.ctx.storage.saved.keys()][0], Math.floor(Date.now() / 1000) - 1)
+  s.ctx.storage.saved.set([...s.ctx.storage.saved.keys()].find(k => k.startsWith('invite:')), Math.floor(Date.now() / 1000) - 1)
   assert.equal((await check(token)).status, 401)
 })
 
