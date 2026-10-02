@@ -911,6 +911,9 @@ button.channel:hover:not(:disabled) {
 .tile.eu .v-cam {
   transform: scaleX(-1);
 }
+.tile.eu.traseira .v-cam {
+  transform: none;
+}
 /* Câmera de quem também compartilha tela: miniatura sobre a tela. */
 .tile video.mini {
   position: absolute;

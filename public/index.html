@@ -144,7 +144,8 @@
           <div class="control-group">
             <button id="b-mic" title="Silenciar microfone">Microfone</button
             ><button id="b-surdo" title="Silenciar tudo">Áudio</button
-            ><button id="b-cam" class="cortado" title="Ligar câmera">Câmera</button>
+            ><button id="b-cam" class="cortado" title="Ligar câmera">Câmera</button
+            ><button id="b-virar" title="Virar câmera" hidden>Virar câmera</button>
           </div>
           <div class="control-group">
             <button id="b-tela" title="Compartilhar tela">Tela</button
@@ -506,12 +507,17 @@
       $('camdev').hidden = devs.length < 2      // seletor só aparece se houver escolha
     }
 
-    async function alternarCam() {
+    // Câmera do celular: 'user' é a frontal e 'environment' a traseira. O botão de
+    // virar só aparece quando o navegador informa o lado, o que no desktop não ocorre.
+    let ladoCam = 'user'
+
+    async function alternarCam(lado) {
       if (camStream) return pararCam()
-      const dev = $('camdev').value
+      // Virar escolhe pelo lado; sem isso vale o dispositivo escolhido nos ajustes.
+      const dev = lado ? '' : $('camdev').value
       camStream = await navigator.mediaDevices.getUserMedia({
         video: {
-          ...(dev ? { deviceId: { exact: dev } } : {}),
+          ...(dev ? { deviceId: { exact: dev } } : { facingMode: lado || ladoCam }),
           width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 },
         },
       })
@@ -522,6 +528,10 @@
       $('b-cam').classList.replace('cortado', 'on')
       controle('b-cam', 'Desligar câmera')
       await listarCams()                        // os rótulos só existem depois da permissão
+      const cfg = t.getSettings()
+      if (cfg.deviceId) $('camdev').value = cfg.deviceId
+      ladoCam = cfg.facingMode || ladoCam
+      $('b-virar').hidden = !cfg.facingMode || $('camdev').options.length < 2
       desenharTile('local')
       anunciar()
       aplicarQualidade()
@@ -537,6 +547,7 @@
       camStream = null
       $('b-cam').classList.replace('on', 'cortado')
       controle('b-cam', 'Ligar câmera')
+      $('b-virar').hidden = true
       desenharTile('local')
       if (foco === 'local' && !telas.length) focar(proximoComVideo())
       anunciar()
@@ -817,6 +828,7 @@
       if (temCam) el.querySelector('.v-cam').srcObject = d.cam
       el.classList.toggle('focado', foco === id)
       el.classList.toggle('eu', !!d.local)
+      el.classList.toggle('traseira', !!d.local && ladoCam === 'environment')
 
       for (const inp of el.querySelectorAll('.vols input')) {
         const p = pares.get(id)
@@ -1853,6 +1865,14 @@
     addEventListener('keydown', ev => { if (ev.key === 'Escape') alternarMenuTelas(false) })
     $('palco-telas').onclick = ev => { const b = ev.target.closest?.('[data-tela]'); if (b) verTela(b.dataset.tela) }
 
+    // O celular só abre uma câmera por vez: fecha a atual antes de abrir a outra.
+    $('b-virar').onclick = async () => {
+      if (!camStream) return
+      const lado = ladoCam === 'environment' ? 'user' : 'environment'
+      pararCam()
+      await alternarCam(lado).catch(e => log(`câmera — ${e.name}: ${e.message}`))
+    }
+
     $('b-cam').onclick = async () => {
       const ligada = !!camStream
       await alternarCam().catch(e => log(`câmera — ${e.name}: ${e.message}`))
@@ -1993,6 +2013,7 @@
       'headphones-off': '<path d="M3 14v-3a9 9 0 0 1 18 0v3"/><rect x="3" y="12" width="4" height="8" rx="2"/><rect x="17" y="12" width="4" height="8" rx="2"/><path d="M3 3l18 18" stroke-width="2.4"/>',
       camera: '<rect x="2" y="5" width="13" height="14" rx="3"/><path d="m15 9 7-4v14l-7-4"/>',
       'camera-off': '<rect x="2" y="5" width="13" height="14" rx="3"/><path d="m15 9 7-4v14l-7-4"/><path d="M3 3l18 18" stroke-width="2.4"/>',
+      flip: '<path d="M4 9a8 8 0 0 1 14.5-3.5L20 7M20 3v4h-4M20 15a8 8 0 0 1-14.5 3.5L4 17M4 21v-4h4"/>',
       screen: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4M12 13V7m-3 3 3-3 3 3"/>',
       settings: '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="3" fill="currentColor" stroke="none"/><circle cx="16" cy="17" r="3" fill="currentColor" stroke="none"/>',
       phone: '<path d="M3 16v-4c4-5 14-5 18 0v4l-5-1v-4M8 11v4l-5 1"/>',
@@ -2010,7 +2031,7 @@
     const textoHtml = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
     const corPessoa = nome => [...(nome || '?')].reduce((s,c) => s + c.charCodeAt(0) * 13, 0) % 360
     function controle(id, label) {
-      const icons = {'b-mic':'mic','b-surdo':'headphones','b-cam':'camera','b-tela':'screen','b-settings':'settings','b-sair':'phone','b-pip':'pip','b-full':'full','b-maximize':'maximize'}
+      const icons = {'b-mic':'mic','b-surdo':'headphones','b-cam':'camera','b-virar':'flip','b-tela':'screen','b-settings':'settings','b-sair':'phone','b-pip':'pip','b-full':'full','b-maximize':'maximize'}
       const el = $(id)
       const icone = el.classList.contains('cortado') ? `${icons[id]}-off` : icons[id]
       el.innerHTML = svgIcon(icone) + `<span class="sr">${textoHtml(label)}</span>`
@@ -2024,7 +2045,7 @@
     }
     addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('[data-icon]').forEach(el => el.innerHTML = svgIcon(el.dataset.icon))
-      for (const id of ['b-mic','b-surdo','b-cam','b-tela','b-settings','b-sair','b-pip','b-full']) controle(id, $(id).title)
+      for (const id of ['b-mic','b-surdo','b-cam','b-virar','b-tela','b-settings','b-sair','b-pip','b-full']) controle(id, $(id).title)
       setInterval(bater, BATIDA_MS)
       // Voltar da rede ou do sono não precisa esperar o próximo batimento.
       addEventListener('online', () => { if (sala && (!ws || ws.readyState > 1)) conectar() })
