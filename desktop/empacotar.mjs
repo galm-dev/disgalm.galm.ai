@@ -70,8 +70,8 @@ let pacote
 if (process.platform === 'win32') {
   pacote = join(dist, `${nome}.zip`)
   rmSync(pacote, { force: true })
-  execFileSync('powershell', ['-NoProfile', '-Command',
-    `Compress-Archive -Path '${saida}' -DestinationPath '${pacote}'`], { stdio: 'inherit' })
+  // O tar do Windows escreve zip; o Compress-Archive falha com datas antigas.
+  execFileSync('tar', ['-a', '-cf', pacote, '-C', dist, nome])
 } else if (process.platform === 'darwin') {
   pacote = join(dist, `${nome}.zip`)
   rmSync(pacote, { force: true })
