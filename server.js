@@ -137,6 +137,9 @@ const salas = new Map()   // codigo -> Map(id -> {socket, nome})
 const onde = new Map()    // socket -> {codigo, id}
 
 function receber(socket, msg) {
+  // Batimento do cliente. Aqui não há retomada de id: quem reconecta entra
+  // como pessoa nova e o cliente refaz as conexões.
+  if (msg.t === 'ping') return enviar(socket, { t: 'pong' })
   if (msg.t === 'join') {
     const codigo = String(msg.room || '').trim().toLowerCase()
     if (!codigo) return

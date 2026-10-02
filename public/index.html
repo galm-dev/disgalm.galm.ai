@@ -97,8 +97,8 @@
         </button>
       </header>
       <div id="connection-alert" role="alert" hidden>
-        <div><strong>Conexão com a sala perdida</strong><br />Entre novamente para restabelecer a chamada.</div>
-        <button id="b-rejoin">Entrar novamente</button>
+        <div><strong>Conexão com a sala perdida</strong><br />Reconectando sozinho. Voz e vídeo seguem enquanto isso.</div>
+        <button id="b-rejoin">Reconectar agora</button>
       </div>
       <div class="room-content">
         <div id="palco">
@@ -760,14 +760,22 @@
 
     // ---------- WebRTC ----------
 
-    function criarPar(id, nome, polite) {
+    // Papel no perfect negotiation vem da ordem dos ids, não de quem chegou
+    // primeiro: depois de uma queda os dois lados podem recriar a conexão ao
+    // mesmo tempo, e só uma regra simétrica garante um polite e um impolite.
+    function criarPar(id, nome) {
+      const polite = meuId < id
       // 'relay' descarta candidatos host e srflx: se conectar assim, foi TURN de
       // verdade. Sem isso, o par quase sempre fecha direto e o TURN nunca é exercido.
       const pc = new RTCPeerConnection({
         iceServers: ice,
         iceTransportPolicy: $('sorelay').checked ? 'relay' : 'all',
       })
+      nomes.set(id, nome)
+      // Cada conexão tem id próprio, que vai em toda mensagem: é assim que se
+      // percebe que o outro lado recriou a dele e a nossa ficou órfã.
       const p = { pc, polite, fazendoOferta: false, ignorandoOferta: false, nome,
+                  conexao: Math.random().toString(36).slice(2, 10), remota: null,
                   // tela e câmera são as duas vídeo: só o streamId anunciado separa.
                   videos: new Map(), tela: new MediaStream(), cam: new MediaStream(),
                   audios: new Map(), volumes: { voz: 1, tela: 1 }, estado: {},
@@ -814,9 +822,16 @@
       pc.oniceconnectionstatechange = () => {
         log(`${nome}: ${pc.iceConnectionState}`)
         if (pc.iceConnectionState === 'connected') { tipoDeCaminho(id, pc); acompanharVideo(id, pc) }
-        if (pc.iceConnectionState === 'failed') porQueFalhou(id, pc)
+        if (pc.iceConnectionState === 'failed') {
+          porQueFalhou(id, pc)
+          // Rede trocada no meio da chamada: novos candidatos, mesma conexão.
+          if (ws?.readyState === 1) pc.restartIce()
+        }
       }
-      pc.onconnectionstatechange = () => log(`${nome}: conexão ${pc.connectionState}`)
+      pc.onconnectionstatechange = () => {
+        log(`${nome}: conexão ${pc.connectionState}`)
+        if (pares.get(id)?.pc === pc) limparAusentes()
+      }
 
       pc.onnegotiationneeded = async () => {
         try {
@@ -1071,6 +1086,7 @@
         navegador: navigator.userAgent,
         eu: { id: meuId, nome: $('nome').value, sala: $('sala-cod').value },
         sinalizacao: ['conectando', 'aberta', 'fechando', 'fechada'][ws?.readyState] ?? 'nunca abriu',
+        naSala: [...naSala], tentativasDeReconexao: tentativas,
         qualidade, orcamentoKbps: +($('orc')?.value || 0),
         compartilhando: !!telaStream, camera: !!camStream,
         pares: [...pares].map(estadoPar), saidos, eventos,
@@ -1087,16 +1103,31 @@
     }
 
     async function receberSinal(id, data) {
-      const p = pares.get(id)
+      let p = pares.get(id)
+      // Estado é da pessoa, não da conexão: vale venha de qual instância vier.
+      if (data.estado) {
+        if (!p) return
+        p.estado = data.estado
+        classificar(id)
+        classificarVideo(id)
+        return
+      }
+      // Oferta de outra instância: o outro lado recriou a conexão (voltou de uma
+      // queda, ou achou a nossa morta). A nossa não tem mais par; recria e aceita.
+      if (data.de && data.description?.type === 'offer' && (!p || (p.remota && p.remota !== data.de))) {
+        log(`${nomes.get(id) ?? id} recriou a conexão — recriando a nossa`)
+        removerPar(id)
+        p = criarPar(id, nomes.get(id) ?? '?')
+        anunciar(id)
+        redividir()
+      }
       if (!p) return
+      if (data.de) {
+        if (p.remota && p.remota !== data.de) return      // resto da instância velha
+        p.remota = data.de
+      }
       const { pc } = p
       try {
-        if (data.estado) {
-          p.estado = data.estado
-          classificar(id)
-          classificarVideo(id)
-          return
-        }
         if (data.description) {
           const colisao = data.description.type === 'offer' && (p.fazendoOferta || pc.signalingState !== 'stable')
           p.ignorandoOferta = !p.polite && colisao
@@ -1114,7 +1145,30 @@
 
     // ---------- sinalização ----------
 
-    const sinalizar = (to, data) => ws?.readyState === 1 && ws.send(JSON.stringify({ t: 'signal', to, data }))
+    // A mídia vai direto entre os pares; o WebSocket só carrega negociação. Em
+    // chamada longa ele cai (o Durable Object reinicia, o PC dorme, a rede
+    // troca) e a voz continua, então a queda só aparece quando alguém tenta
+    // compartilhar a tela e a oferta some. Daí o batimento, a reconexão
+    // automática e a retomada do mesmo id, que preserva as conexões dos outros.
+    const BATIDA_MS = 20_000, SEM_RESPOSTA_MS = 45_000
+    let sala = null                 // { cod, nome } depois de entrar
+    let ultimoSinal = 0, tentativas = 0, religar = null
+    const naSala = new Set()        // quem o servidor diz estar na sala agora
+
+    const nomes = new Map()         // id → nome, para recriar par sem o aviso de entrada
+    const sinalizar = (to, data) => ws?.readyState === 1 &&
+      ws.send(JSON.stringify({ t: 'signal', to, data: { ...data, de: pares.get(to)?.conexao } }))
+    const morto = pc => pc.connectionState === 'failed' || pc.connectionState === 'closed'
+
+    // Identifica a aba, não a carga da página: sobrevive ao F5. É assim que o
+    // servidor reconhece o id antigo desta aba como fantasma e avisa a saída.
+    function idDaAba() {
+      try {
+        let aba = sessionStorage.getItem('disgalm.aba')
+        if (!aba) sessionStorage.setItem('disgalm.aba', aba = crypto.randomUUID())
+        return aba
+      } catch { return idDaAba.reserva ??= crypto.randomUUID() }
+    }
 
     function atualizarSinalizacao(conectado) {
       $('sala').classList.toggle('desconectada', !conectado)
@@ -1131,6 +1185,152 @@
       atualizarSinalizacao(false)
     }
 
+    // Sala e nome vão na URL porque o Worker precisa deles ANTES do upgrade,
+    // para escolher o Durable Object. O server.js local ignora a query e usa a
+    // mensagem 'join'; o Worker ignora o 'join'. Um cliente serve aos dois.
+    function conectar() {
+      clearTimeout(religar)
+      if (!sala) return
+      const q = new URLSearchParams({ sala: sala.cod, nome: sala.nome, aba: idDaAba() })
+      if (meuId) q.set('id', meuId)
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+      const s = ws = new WebSocket(`${proto}://${location.host}/ws?${q}`)
+      ultimoSinal = Date.now()
+      s.onopen = () => s.send(JSON.stringify({ t: 'join', room: sala.cod, name: sala.nome }))
+      // Socket substituído não fala mais: só o atual reage. Se o atual foi
+      // substituído, outra aba com o mesmo sessionStorage (aba duplicada) tomou
+      // o lugar; religar faria as duas se expulsarem em ciclo.
+      s.onclose = ev => {
+        if (ws !== s) return
+        sinalizacaoFechada(ev)
+        if (ev.reason === 'substituída') return log('outra aba assumiu esta sessão; sem reconexão automática')
+        agendarReconexao()
+      }
+      s.onmessage = ev => { if (ws === s) tratarMensagem(JSON.parse(ev.data)) }
+    }
+
+    function agendarReconexao() {
+      if (!sala) return
+      const espera = Math.min(15_000, 1000 * 2 ** tentativas++)
+      log(`reconectando em ${espera / 1000}s (tentativa ${tentativas})`)
+      religar = setTimeout(conectar, espera)
+    }
+
+    // Conexão meio aberta não dispara onclose: o navegador só desiste quando o
+    // TCP desiste, minutos depois. Sem nenhuma mensagem em 45 s, descarta e religa.
+    function bater() {
+      if (!sala || ws?.readyState !== 1) return
+      const mudo = Date.now() - ultimoSinal
+      if (mudo > SEM_RESPOSTA_MS) {
+        const velho = ws
+        ws = null
+        try { velho.close(4000, 'sem batimento') } catch {}
+        sinalizacaoFechada({ code: 'sem batimento', reason: `${Math.round(mudo / 1000)}s sem resposta`, wasClean: false })
+        return conectar()
+      }
+      ws.send('{"t":"ping"}')
+      limparAusentes()
+    }
+
+    // Par que o servidor não lista e cuja conexão morreu é fantasma: a pessoa
+    // recarregou ou saiu enquanto a sinalização estava fora e o aviso se perdeu.
+    // Par fora da lista com mídia viva fica: ele pode estar reconectando.
+    function limparAusentes() {
+      for (const [id, p] of pares)
+        if (!naSala.has(id) && (morto(p.pc) || p.pc.connectionState === 'disconnected')) {
+          log(`${p.nome} não está na sala e a conexão está ${p.pc.connectionState} — removendo`)
+          removerPar(id)
+        }
+    }
+
+    // Uma oferta mandada pelo socket que caiu, ou para o socket morto do outro,
+    // nunca chegou. localDescription já carrega os candidatos coletados.
+    function ressincronizar(id) {
+      const p = pares.get(id)
+      if (p.pc.signalingState === 'have-local-offer') {
+        log(`reenviando oferta pendente para ${p.nome}`)
+        sinalizar(id, { description: p.pc.localDescription })
+      }
+      if (p.pc.iceConnectionState === 'failed') p.pc.restartIce()
+    }
+
+    function removerPar(id) {
+      const p = pares.get(id)
+      if (!p) return
+      // Quem sai leva as amostras junto; o relatório ainda precisa delas.
+      saidos.push({ ...estadoPar([id, p]), saiuEm: new Date().toISOString() })
+      if (saidos.length > 8) saidos.shift()
+      clearInterval(p.timer)
+      p.pc.close()
+      for (const [, a] of p.audios) a.el.remove()
+      pares.delete(id)
+      document.getElementById('t-' + id)?.remove()
+      if (foco === id) focar(proximoComVideo())
+      redividir()
+    }
+
+    function bemVindo(m) {
+      tentativas = 0
+      const retomada = !!meuId && m.id === meuId
+      if (meuId) log(retomada ? `sinalização retomada como ${m.id}`
+                              : `sinalização voltou com id novo ${m.id} — refazendo as conexões`)
+      // Id novo: para os outros somos outra pessoa e os pares antigos nunca mais
+      // recebem sinal. Retomada: os pares continuam, só a negociação é conferida.
+      if (!retomada) for (const id of [...pares.keys()]) removerPar(id)
+      meuId = m.id
+      naSala.clear()
+      atualizarSinalizacao(true)
+      for (const par of m.peers) {
+        naSala.add(par.id)
+        const p = pares.get(par.id)
+        if (p && !morto(p.pc)) ressincronizar(par.id)
+        else { removerPar(par.id); criarPar(par.id, par.name) }
+      }
+      if (retomada) anunciar()
+      atualizarDiag()
+    }
+
+    // O outro reconectou com o mesmo id. O que mandamos para o socket velho
+    // dele pode ter se perdido.
+    function voltou(m) {
+      naSala.add(m.id)
+      const p = pares.get(m.id)
+      log(`${m.name} voltou à sinalização`)
+      if (p && !morto(p.pc)) ressincronizar(m.id)
+      else {
+        removerPar(m.id)
+        criarPar(m.id, m.name)
+        redividir()
+      }
+      anunciar(m.id)
+    }
+
+    function tratarMensagem(m) {
+      ultimoSinal = Date.now()
+      if (m.t === 'pong') return
+      if (m.t === 'cheia') { sala = null; return alert('sala cheia (limite de 4)') }
+      if (m.t === 'welcome') return bemVindo(m)
+      if (m.t === 'peer-back') return voltou(m)
+      if (m.t === 'peer-join') {
+        naSala.add(m.id)
+        removerPar(m.id)
+        criarPar(m.id, m.name)
+        anunciar(m.id)
+        redividir()
+      }
+      if (m.t === 'signal') receberSinal(m.from, m.data)
+      // Queda de sinalização (volta=true) não derruba mídia viva: a pessoa deve
+      // retomar o id em segundos. limparAusentes remove se a mídia morrer.
+      if (m.t === 'peer-left') {
+        naSala.delete(m.id)
+        const p = pares.get(m.id)
+        if (m.volta && p?.pc.connectionState === 'connected')
+          return log(`${p.nome} caiu da sinalização; a mídia segue enquanto ela volta`)
+        removerPar(m.id)
+        log('saiu:', m.id)
+      }
+    }
+
     async function entrarNaSala() {
       ice = await (await fetch('/ice')).json()
       log('ICE:', ice.map(s => s.urls).flat().join(' '))
@@ -1141,48 +1341,18 @@
       $('sala').classList.add('ativa')
       desenharTile('local')
 
-      // Sala e nome vão na URL porque o Worker precisa deles ANTES do upgrade,
-      // para escolher o Durable Object. O server.js local ignora a query e usa a
-      // mensagem 'join'; o Worker ignora o 'join'. Um cliente serve aos dois.
       const cod = $('sala-cod').value.trim().toLowerCase()
       const meuNome = $('nome').value.trim() || 'anon'
       for (const id of ['room-title', 'channel-name']) $(id).textContent = cod
       $('connection-room').textContent = cod + ' / Disgalm'
       $('my-name').textContent = meuNome
       $('my-avatar').textContent = inicial(meuNome)
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-      ws = new WebSocket(`${proto}://${location.host}/ws?sala=${encodeURIComponent(cod)}&nome=${encodeURIComponent(meuNome)}`)
-      ws.onopen = () => ws.send(JSON.stringify({ t: 'join', room: cod, name: meuNome }))
-      ws.onclose = sinalizacaoFechada
-      ws.onmessage = async ev => {
-        const m = JSON.parse(ev.data)
-        if (m.t === 'cheia') return alert('sala cheia (limite de 4)')
-        if (m.t === 'welcome') {
-          meuId = m.id
-          atualizarSinalizacao(true)
-          for (const par of m.peers) criarPar(par.id, par.name, true)   // quem chega é polite
-          atualizarDiag()
-        }
-        if (m.t === 'peer-join') {
-          criarPar(m.id, m.name, false)                                 // quem já estava oferta
-          anunciar(m.id)
-          redividir()
-        }
-        if (m.t === 'signal') receberSinal(m.from, m.data)
-        if (m.t === 'peer-left') {
-          const p = pares.get(m.id)
-          // Quem sai leva as amostras junto; o relatório ainda precisa delas.
-          if (p) saidos.push({ ...estadoPar([m.id, p]), saiuEm: new Date().toISOString() })
-          if (saidos.length > 8) saidos.shift()
-          p?.pc.close()
-          for (const [, a] of p?.audios || []) a.el.remove()
-          pares.delete(m.id)
-          document.getElementById('t-' + m.id)?.remove()
-          if (foco === m.id) focar(proximoComVideo())
-          redividir()
-          log('saiu:', m.id)
-        }
-      }
+      sala = { cod, nome: meuNome }
+      conectar()
+      setInterval(bater, BATIDA_MS)
+      // Voltar da rede ou do sono não precisa esperar o próximo batimento.
+      addEventListener('online', () => { if (!ws || ws.readyState > 1) conectar() })
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') bater() })
     }
 
     const atualizarDiag = () => {
@@ -1275,11 +1445,7 @@
       : $('v-palco').requestPictureInPicture().catch(e => log('PiP:', e.message))
 
     $('b-sair').onclick = () => location.reload()
-    $('b-rejoin').onclick = () => {
-      const url = new URL(location.href)
-      url.searchParams.set('sala', $('sala-cod').value.trim().toLowerCase())
-      location.assign(url.href)
-    }
+    $('b-rejoin').onclick = () => { tentativas = 0; conectar() }
 
     function lerManual() {
       const [w, h] = $('res').value.split('x').map(Number)

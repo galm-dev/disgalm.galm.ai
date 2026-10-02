@@ -49,11 +49,21 @@ async function env2ice(env) {
   return lista.length ? lista : [{ urls: 'stun:stun.cloudflare.com:3478' }]
 }
 
+// Batimento do cliente. A resposta automática não acorda o objeto hibernado, e
+// o horário da última resposta, por socket, é o que separa vivo de fantasma.
+const PING = '{"t":"ping"}', PONG = '{"t":"pong"}'
+const FANTASMA_MS = 60_000   // cliente pinga a cada 20 s: três batidas perdidas
+
 export class Sala extends DurableObject {
   // NÃO há estado em memória aqui, de propósito. Com hibernação o objeto é
   // descarregado e qualquer Map viraria vazio ao acordar — a sala esqueceria
   // quem está nela, e só numa call longa. Tudo é derivado de getWebSockets()
   // e do que foi anexado a cada socket, que sobrevivem.
+  constructor(ctx, env) {
+    super(ctx, env)
+    ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair(PING, PONG))
+  }
+
   #peers(exceto) {
     return this.ctx.getWebSockets()
       .filter(ws => ws !== exceto)
@@ -65,13 +75,49 @@ export class Sala extends DurableObject {
     try { ws.send(JSON.stringify(obj)) } catch {}
   }
 
+  // Tira o socket da sala sem passar por webSocketClose: sem anexo, ele some
+  // de #peers na hora, e o aviso de saída fica a critério de quem chamou.
+  #descarta(p, motivo) {
+    p.ws.serializeAttachment(null)
+    try { p.ws.close(1000, motivo) } catch {}
+  }
+
+  // volta=true: a pessoa caiu e deve retomar o id. Os outros mantêm a mídia
+  // viva em vez de desmontar a conexão, que é o que deixava a sala pela metade.
+  #avisaSaida(id, exceto, volta) {
+    for (const p of this.#peers(exceto)) this.#envia(p.ws, { t: 'peer-left', id, volta })
+  }
+
   async fetch(req) {
-    const nome = (new URL(req.url).searchParams.get('nome') || 'anon').slice(0, 24)
+    const q = new URL(req.url).searchParams
+    const nome = (q.get('nome') || 'anon').slice(0, 24)
+    const aba = (q.get('aba') || '').slice(0, 64)
+    const retomar = /^[0-9a-f]{8}$/.test(q.get('id') || '') ? q.get('id') : null
     const [cliente, servidor] = Object.values(new WebSocketPair())
 
     // acceptWebSocket, não servidor.accept(): é o que permite hibernar.
     // Medido em worker-poc: 0,02 GB-s contra 48,63 GB-s pelo outro caminho.
     this.ctx.acceptWebSocket(servidor)
+
+    // Fantasmas: conexão meio aberta que o runtime ainda lista. Só vale para
+    // quem pinga (bate=true); cliente antigo sem batimento não é julgado.
+    const agora = Date.now()
+    for (const p of this.#peers(servidor)) {
+      const ultimo = Math.max(p.a.desde || 0, this.ctx.getWebSocketAutoResponseTimestamp(p.ws)?.getTime() || 0)
+      if (p.a.bate && agora - ultimo > FANTASMA_MS) {
+        console.log(`fantasma ${p.a.nome}/${p.a.id}: sem batimento há ${Math.round((agora - ultimo) / 1000)}s`)
+        this.#descarta(p, 'sem batimento')
+        this.#avisaSaida(p.a.id, servidor, true)
+      }
+    }
+
+    // Mesma aba de novo. Com o id antigo, é reconexão e o socket velho só é
+    // substituído. Sem ele, a página foi recarregada e a pessoa antiga saiu.
+    for (const p of this.#peers(servidor)) {
+      if (!aba || p.a.aba !== aba) continue
+      this.#descarta(p, 'substituída')
+      if (p.a.id !== retomar) this.#avisaSaida(p.a.id, servidor, false)
+    }
 
     const jaEstavam = this.#peers(servidor)
     if (jaEstavam.length >= MAX) {
@@ -80,14 +126,20 @@ export class Sala extends DurableObject {
       return new Response(null, { status: 101, webSocket: cliente })
     }
 
-    const id = crypto.randomUUID().slice(0, 8)
-    servidor.serializeAttachment({ id, nome })   // sobrevive à hibernação
+    // Retomar o id mantém as RTCPeerConnection dos outros: a mídia nunca
+    // dependeu do WebSocket. Depois de um reinício do objeto ninguém mais tem
+    // o id, então ele também volta.
+    const retomada = !!retomar && !jaEstavam.some(p => p.a.id === retomar)
+    const id = retomada ? retomar : crypto.randomUUID().slice(0, 8)
+    servidor.serializeAttachment({ id, nome, aba, desde: agora, bate: q.has('aba') })
+    console.log(`${retomada ? 'voltou' : 'entrou'} ${nome}/${id} (${jaEstavam.length + 1})`)
 
     this.#envia(servidor, {
-      t: 'welcome', id,
+      t: 'welcome', id, retomada,
       peers: jaEstavam.map(p => ({ id: p.a.id, name: p.a.nome })),
     })
-    for (const p of jaEstavam) this.#envia(p.ws, { t: 'peer-join', id, name: nome })
+    for (const p of jaEstavam)
+      this.#envia(p.ws, { t: retomada ? 'peer-back' : 'peer-join', id, name: nome })
 
     return new Response(null, { status: 101, webSocket: cliente })
   }
@@ -103,13 +155,17 @@ export class Sala extends DurableObject {
         return this.#envia(p.ws, { t: 'signal', from: eu.id, data: m.data })
   }
 
-  async webSocketClose(ws) { this.#saiu(ws) }
-  async webSocketError(ws) { this.#saiu(ws) }
+  // 1000 e 1001 são saída de verdade: botão Sair, aba fechada, F5. O resto
+  // (1006 de rede caída, 4000 do batimento do cliente, erro) é queda.
+  async webSocketClose(ws, code) { this.#saiu(ws, code !== 1000 && code !== 1001, code) }
+  async webSocketError(ws) { this.#saiu(ws, true, 'erro') }
 
-  #saiu(ws) {
+  #saiu(ws, volta, motivo) {
     const a = ws.deserializeAttachment()
     if (!a) return
-    for (const p of this.#peers(ws)) this.#envia(p.ws, { t: 'peer-left', id: a.id })
+    ws.serializeAttachment(null)
+    console.log(`saiu ${a.nome}/${a.id} (${motivo}${volta ? ', pode voltar' : ''})`)
+    this.#avisaSaida(a.id, ws, volta)
   }
 }
 
