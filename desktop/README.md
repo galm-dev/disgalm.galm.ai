@@ -67,7 +67,7 @@ O modelo é o do t3code (`docs/estudo-t3code-distribuicao.md`).
 
 - **Para lançar uma stable:** suba `version` em `desktop/package.json`, espere um
   nightly com esse código e rode o workflow com `canal=stable`.
-- **Pacotes:** Mac em DMG e ZIP (arm64 e x64; o ZIP é o que atualiza),
+- **Pacotes:** Mac em DMG e ZIP, só Apple Silicon (o ZIP é o que atualiza),
   Windows em NSIS x64 e Linux em AppImage x64, mais o `SHA256SUMS`.
 - **Assinatura:** no Mac é obrigatória (secrets `CSC_LINK` em base64 do `.p12` e
   `CSC_KEY_PASSWORD`). Sem ela o job falha: a permissão de Gravação de Tela e o

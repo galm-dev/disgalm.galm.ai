@@ -31,7 +31,9 @@ module.exports = {
   }],
 
   mac: {
-    target: [{ target: 'dmg', arch: ['arm64', 'x64'] }, { target: 'zip', arch: ['arm64', 'x64'] }],
+    // Só Apple Silicon: ninguém do grupo usa Mac Intel, e cada arquitetura a
+    // mais custa uns 2 min de CI.
+    target: [{ target: 'dmg', arch: ['arm64'] }, { target: 'zip', arch: ['arm64'] }],
     category: 'public.app-category.social-networking',
     // Assinatura com identidade estável (CSC_LINK): a permissão de Gravação de
     // Tela e o Squirrel.Mac dependem do mesmo requisito designado entre versões.
