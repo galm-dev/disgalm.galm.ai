@@ -1,17 +1,28 @@
 {
   "name": "disgalm-desktop",
-  "version": "0.1.0",
+  "version": "0.5.0",
   "private": true,
-  "description": "Casca Electron do Disgalm: áudio do sistema sem o Discord (Windows).",
+  "description": "Disgalm desktop: compartilhamento de tela com o áudio do sistema sem o Discord.",
   "main": "main.js",
   "scripts": {
     "build:native": "cd native && node-gyp rebuild",
     "start": "electron .",
-    "teste": "electron . --teste=teste/saida"
+    "teste": "electron . --teste=teste/saida",
+    "dist": "electron-builder --config electron-builder.config.cjs --publish never"
   },
   "devDependencies": {
-    "electron": "^44.5.1",
+    "electron": "44.5.1",
+    "electron-builder": "26.15.6",
     "node-addon-api": "^8.0.0",
     "node-gyp": "^11.0.0"
-  }
+  },
+  "dependencies": {
+    "electron-updater": "6.8.9"
+  },
+  "productName": "Disgalm",
+  "author": {
+    "name": "GALM",
+    "email": "team@galm.ai"
+  },
+  "homepage": "https://disgalm.galm.ai"
 }

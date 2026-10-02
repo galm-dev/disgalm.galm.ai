@@ -1,0 +1,54 @@
+# Testes em todo PR e push no master. O módulo nativo de áudio do Windows é
+# compilado e carregado num runner Windows quando desktop/ muda.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test tests/*.test.js
+
+  nativo-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: desktop/ mudou?
+        id: mudou
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then base="origin/${{ github.base_ref }}"; git fetch -q --depth=50 origin "${{ github.base_ref }}"; else base="HEAD~1"; fi
+          if git diff --quiet "$base" HEAD -- desktop/ .github/; then echo sim=false >> "$GITHUB_OUTPUT"; else echo sim=true >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/setup-node@v4
+        if: steps.mudou.outputs.sim == 'true'
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop/package-lock.json
+      - uses: actions/setup-python@v5
+        if: steps.mudou.outputs.sim == 'true'
+        with:
+          python-version: '3.12'
+      - name: Compila e carrega o loopback.node
+        if: steps.mudou.outputs.sim == 'true'
+        working-directory: desktop
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+        run: |
+          npm ci --no-fund --no-audit
+          npm run build:native
+          node -e "const n = require('./native/build/Release/loopback.node'); if (typeof n.Captura !== 'function' || typeof n.sessoesDeAudio !== 'function') throw new Error('exports'); console.log('ok', Object.keys(n))"
