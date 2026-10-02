@@ -12,8 +12,10 @@
 // Limites: https://developers.cloudflare.com/realtime/sfu/platform/limits/
 //
 // Fase 1 é ensaio: o SFU só liga nas salas de SFU_SALAS, com SFU_APP_ID e
-// SFU_APP_SECRET configurados. O orçamento (DO por conta, reserva, bloqueio em
-// 90%/98%) ainda não existe; ver tests/sfu.md antes de liberar fora da lista.
+// SFU_APP_SECRET configurados. Publicar e assinar passam antes pelo orçamento
+// da conta (orcamento.js): acima de 90% do uso protegido, ou sem medição
+// válida, são negados. Cada assinatura reserva o teto do tipo da fonte até ser
+// fechada.
 
 const API = 'https://rtc.live.cloudflare.com/v1'
 
@@ -49,6 +51,8 @@ function lerFonte(id) {
 
 const sdpValido = (sdp, tipo) => sdp && typeof sdp === 'object' && sdp.type === tipo &&
   typeof sdp.sdp === 'string' && sdp.sdp.length > 0 && sdp.sdp.length <= LIMITES.sdp
+
+import { TAXAS } from './orcamento.js'
 
 const resposta = (status, corpo) => ({ status, corpo })
 const erro = (status, motivo, extra) => resposta(status, { erro: motivo, ...extra })
@@ -99,7 +103,7 @@ async function fecharAForca(c, sid, mids, motivo) {
 //
 // c = { autor: { id, exp }, presentes: Set de ids na sala em modo SFU,
 //       carregar(), salvar(est), api(metodo, caminho, corpo), registrar(evento, campos),
-//       difundir(est), agora() }
+//       difundir(est), agora(), orcamento: { autorizar(pedido), liberar(pedido) } }
 
 export async function operar(c, op, corpo) {
   if (!OPS.includes(op)) return erro(400, 'operação desconhecida')
@@ -138,6 +142,12 @@ async function soltar(c, sid) {
   return { est, s }
 }
 
+async function desistir(c, sid, r) {
+  const { est, s } = await soltar(c, sid)
+  if (s) await c.salvar(est)
+  return r
+}
+
 function erroApi(c, op, r) {
   c.registrar('sfu_api_erro', { id: c.autor.id, op, status: r.status, codigo: r.json.errorCode ?? null })
   return erro(502, 'SFU recusou', { codigo: r.json.errorCode ?? null })
@@ -160,6 +170,10 @@ async function criarSessao(c, est) {
   return resposta(200, { sessao: sid })
 }
 
+// Negado pelo orçamento: 503 com o motivo, para o cliente avisar sem insistir.
+const negadoPorCota = r => erro(503, 'cota', { motivo: r.motivo, uso_protegido_pct: r.uso_protegido_pct ?? null })
+const refAssinatura = (sid, dono, fonte) => `sfu:${sid}:${dono}/${fonte}`
+
 async function publicar(c, est, sid, corpo) {
   if (!sdpValido(corpo.sdp, 'offer')) return erro(400, 'oferta inválida')
   const pedidas = corpo.fontes
@@ -180,7 +194,12 @@ async function publicar(c, est, sid, corpo) {
       sessao: sid, mid: f.mid, trackName: `${c.autor.id}_${f.fonte.replace('/', '_')}` })
   }
 
+  // Publicar não gera saída da Cloudflare (entrada é de graça), mas é o que
+  // abre caminho para as assinaturas: acima do limite, nada de fonte nova.
+  // A sessão fica segura antes da consulta, que é uma chamada externa.
   await segurar(c, est, sid, 'publicar')
+  const cota = await c.orcamento.autorizar({ recurso: 'sfu', op: 'publicar' })
+  if (!cota.ok) return desistir(c, sid, negadoPorCota(cota))
   const r = await c.api('POST', `/sessions/${sid}/tracks/new`, {
     sessionDescription: corpo.sdp,
     tracks: novas.map(n => ({ location: 'local', mid: n.mid, trackName: n.trackName })),
@@ -228,23 +247,29 @@ async function assinar(c, est, sid, corpo) {
   }
 
   await segurar(c, est, sid, 'assinar')
+  // Cada assinatura reserva o teto do tipo dela até ser fechada.
+  const cota = await c.orcamento.autorizar({ recurso: 'sfu', op: 'assinar', reservas: pedidos.map(({ pub }) =>
+    ({ ref: refAssinatura(sid, pub.dono, pub.fonte), tipo: 'sfu', bps: TAXAS[pub.tipo] ?? TAXAS['tela-video'] })) })
+  if (!cota.ok) return desistir(c, sid, negadoPorCota(cota))
   const r = await c.api('POST', `/sessions/${sid}/tracks/new`, {
     tracks: pedidos.map(({ pub }) => ({ location: 'remote', sessionId: pub.sessao, trackName: pub.trackName })),
   })
   const { est: depois, s: s2 } = await soltar(c, sid)
-  if (!s2) return erro(410, 'sessão encerrada')
+  if (!s2) { await c.orcamento.liberar({ refs: cota.refs ?? [] }); return erro(410, 'sessão encerrada') }
   const itens = Array.isArray(r.json.tracks) ? r.json.tracks : []
-  const resultado = []
+  const resultado = [], falhas = []
   for (const { pub } of pedidos) {
     const item = itens.find(t => t.sessionId === pub.sessao && t.trackName === pub.trackName)
     const falha = !item ? (r.json.errorCode || 'sem resultado') : item.errorCode || (!RE_MID.test(item.mid || '') && 'sem mid')
     if (!falha) s2.mids[item.mid] = { tipo: 'sub', fonte: pub.fonte, dono: pub.dono }
+    else falhas.push(refAssinatura(sid, pub.dono, pub.fonte))
     resultado.push({ dono: pub.dono, fonte: pub.fonte, ...(falha ? { erro: String(falha) } : { mid: item.mid }) })
     c.registrar('sfu_assinou', { id: c.autor.id, dono: pub.dono, fonte: pub.fonte, ok: !falha, codigo: falha || null })
   }
   const renegociar = !!r.json.requiresImmediateRenegotiation && sdpValido(r.json.sessionDescription, 'offer')
   if (renegociar) s2.pend = { ate: c.agora() + PRAZO_MS }
   await c.salvar(depois)
+  if (falhas.length) await c.orcamento.liberar({ refs: falhas })
   if (!r.ok && !itens.length) return erroApi(c, 'assinar', r)
   return resposta(200, { sdp: renegociar ? r.json.sessionDescription : null, renegociar, alvos: resultado })
 }
@@ -291,14 +316,17 @@ async function fechar(c, est, sid, corpo) {
   const { est: depois, s: s2 } = await soltar(c, sid)
   if (!s2) return erro(410, 'sessão encerrada')
   const itens = Array.isArray(r.json.tracks) ? r.json.tracks : []
+  const liberadas = []
   const resultado = mids.map(mid => {
     const item = itens.find(t => t.mid === mid)
     // close_track_error: já não existe. Para limpeza, isso basta.
     const fechado = item && (!item.errorCode || item.errorCode === 'close_track_error')
+    if (fechado && s2.mids[mid]?.tipo === 'sub') liberadas.push(refAssinatura(sid, s2.mids[mid].dono, s2.mids[mid].fonte))
     if (fechado) delete s2.mids[mid]
     return { mid, ...(!fechado && { erro: String(item?.errorCode || r.json.errorCode || 'sem resultado') }) }
   })
   await c.salvar(depois)
+  if (liberadas.length) await c.orcamento.liberar({ refs: liberadas })
   if (!r.ok && !itens.length) return erroApi(c, 'fechar', r)
   return resposta(200, { sdp: r.json.sessionDescription ?? null, mids: resultado })
 }
@@ -311,6 +339,7 @@ async function encerrar(c, est, sid) {
   c.difundir(est)
   c.registrar('sfu_sessao_fechada', { id: c.autor.id, sessao: sid.slice(0, 8), motivo: 'encerrar', mids: mids.length })
   await fecharAForca(c, sid, mids, 'encerrar')
+  await c.orcamento.liberar({ prefixo: `sfu:${sid}:` })
   return resposta(200, {})
 }
 
@@ -337,6 +366,7 @@ export async function limparPessoa(c, id, motivo) {
   for (const [sid, mids] of fechar) {
     c.registrar('sfu_sessao_fechada', { id, sessao: sid.slice(0, 8), motivo, mids: mids.length })
     await fecharAForca(c, sid, mids, motivo)
+    await c.orcamento.liberar({ prefixo: `sfu:${sid}:` })
   }
 }
 
@@ -346,6 +376,7 @@ export async function encerrarChamada(c, est) {
     const mids = Object.keys(s.mids)
     c.registrar('sfu_sessao_fechada', { id: s.dono, sessao: sid.slice(0, 8), motivo: 'chamada_nova', mids: mids.length })
     await fecharAForca(c, sid, mids, 'chamada_nova')
+    await c.orcamento.liberar({ prefixo: `sfu:${sid}:` })
   }
 }
 

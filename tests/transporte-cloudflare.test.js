@@ -1,16 +1,14 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync, writeFileSync, mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runInNewContext } from 'node:vm'
 import { lerPublico } from './cliente.js'
+import { carregarWorker } from './worker.js'
 
 // O adaptador do navegador contra o gateway de verdade (worker/src/sfu.js),
 // com a API do SFU simulada. Cada cliente roda num contexto próprio, como uma
 // aba; os pedidos passam por JSON, como pela rede.
-const pasta = mkdtempSync(join(tmpdir(), 'disgalm-sfu-cliente-'))
-writeFileSync(join(pasta, 'sfu.mjs'), readFileSync(new URL('../worker/src/sfu.js', import.meta.url)))
+const { pasta } = await carregarWorker()
 const { operar, novoEstado, catalogo } = await import(join(pasta, 'sfu.mjs'))
 
 const estado = c => JSON.parse(JSON.stringify(c.t.estado()))
@@ -79,6 +77,7 @@ function criarSala() {
     registrar: (evento, campos) => sala.eventos.push({ evento, ...campos }),
     difundir: e => { for (const c of sala.clientes.values()) c.t.atualizarCatalogo(pelaRede({ versao: e.versao, fontes: catalogo(e) })) },
     agora: () => Date.now(),
+    orcamento: { autorizar: async p => ({ ok: true, refs: (p.reservas ?? []).map(r => r.ref) }), liberar: async () => 0 },
   })
   sala.ocioso = async () => {
     for (let i = 0; i < 5; i++) await Promise.all([...sala.clientes.values()].map(c => c.t.ocioso()))

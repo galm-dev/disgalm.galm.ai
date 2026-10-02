@@ -1,5 +1,5 @@
 import { test, beforeEach, afterEach } from 'node:test'
-import { carregarWorker } from './worker.js'
+import { carregarWorker, criarOrcamento, retrato } from './worker.js'
 import assert from 'node:assert/strict'
 import { webcrypto } from 'node:crypto'
 
@@ -16,21 +16,24 @@ class Socket {
 }
 globalThis.WebSocketPair = class { constructor() { this[0] = new Socket(); this[1] = new Socket() } }
 globalThis.WebSocketRequestResponsePair = class { constructor(req, res) { Object.assign(this, { req, res }) } }
-const RespostaOriginal = globalThis.Response
 globalThis.Response = class {
   constructor(corpo, init) { this.body = corpo; this.status = 200; Object.assign(this, init) }
   get ok() { return this.status >= 200 && this.status < 300 }
   static json(body, init) { const r = new this(JSON.stringify(body), init); r.json = async () => body; return r }
 }
-const { Sala, default: worker } = await carregarWorker()
+const { Sala, Orcamento, default: worker } = await carregarWorker()
 
-const ENV = { SFU_APP_ID: 'app-ensaio', SFU_APP_SECRET: 'segredo-do-app', SFU_SALAS: 'ensaio, outra' }
+// Orçamento de verdade, com um retrato recém-coletado e zerado: libera tudo.
+let orcamento = criarOrcamento(Orcamento)
+const ENV = { SFU_APP_ID: 'app-ensaio', SFU_APP_SECRET: 'segredo-do-app', SFU_SALAS: 'ensaio, outra',
+  get ORCAMENTO() { return orcamento.binding } }
 const agoraS = () => Math.floor(Date.now() / 1000)
 
 // API simulada do SFU: registra cada chamada e responde como a documentação
 // (https://developers.cloudflare.com/realtime/sfu/api/).
 let api, logs, logOriginal
 beforeEach(() => {
+  orcamento = criarOrcamento(Orcamento)
   logs = []
   logOriginal = console.log
   console.log = l => logs.push(String(l))
@@ -131,10 +134,22 @@ test('modo de ensaio: SFU só em sala da lista, com cliente capaz e app configur
 test('o modo vale para a chamada toda: quem abre decide, cliente antigo não entra em chamada SFU', async () => {
   const s = montar()
   await s.entra()
+  // Cliente antigo com aba: vê um "participante" com o recado e para de religar
+  // pelo motivo 'substituída', que ele já conhece.
   const antigo = await s.entra({ cap: '' })
-  assert.deepEqual(antigo.ultima('cheia'), { t: 'cheia', motivo: 'versao' })
-  assert.deepEqual(antigo.fechado, [1013, 'cliente sem SFU'])
+  assert.deepEqual(antigo.ultima('welcome').peers, [{ id: '00000000', name: 'Recarregue o Disgalm' }])
+  assert.equal(antigo.ultima('cheia'), undefined)
+  assert.deepEqual(antigo.fechado, [4001, 'substituída'])
   assert.equal(antigo.resposta.headers['sec-websocket-protocol'], 'disgalm')
+  assert.equal(antigo.att, null)
+  // Mais antigo ainda, sem aba: 'cheia', que também para o ciclo.
+  const r = await s.fetch({ url: 'https://x/ws?sala=ensaio&nome=V', headers: new Headers({
+    'x-disgalm-exp': String(agoraS() + 600), 'x-disgalm-role': 'member', 'x-disgalm-sub': 'v' }) })
+  const velho = s.sockets.at(-1)
+  assert.equal(r.status, 101)
+  assert.deepEqual(velho.ultima('cheia'), { t: 'cheia', motivo: 'versao' })
+  assert.deepEqual(velho.fechado, [1013, 'cliente sem SFU'])
+  assert.equal(r.headers['sec-websocket-protocol'], 'disgalm')
 
   // Antigo abrindo a sala: malha para todos, inclusive quem sabe SFU.
   const m = montar()
@@ -394,5 +409,60 @@ test('Worker: /sfu só em sala da lista, mesma origem, com chave e credencial', 
   assert.equal(repassado.headers.get('x-disgalm-guest-token'), convite)
   assert.equal(repassado.headers.get('x-disgalm-sfu'), 'a'.repeat(64))
   assert.ok(Number(repassado.headers.get('x-disgalm-exp')) > agoraS())
-  globalThis.Response = RespostaOriginal
+})
+
+// ---------- orçamento ----------
+
+test('orçamento negando na abertura: a sala de ensaio fica na malha e avisa', async () => {
+  orcamento = criarOrcamento(Orcamento, { snapshot: retrato({ turn_bytes: 900e9 }) })
+  const a = await montar().entra()
+  const w = a.ultima('welcome')
+  assert.deepEqual([w.modo, w.aviso, w.sfu], ['mesh', 'sfu_cota', undefined])
+  orcamento = criarOrcamento(Orcamento, { snapshot: null })
+  assert.equal((await montar().entra()).ultima('welcome').aviso, 'sfu_cota')
+})
+
+test('publicar e assinar acima de 90% são negados sem chamar a API, e a sessão não fica presa', async () => {
+  const s = montar()
+  const a = await s.entra({ sub: 'pessoa-a' })
+  const b = await s.entra({ sub: 'pessoa-b' })
+  await publicarMic(s, a)
+  const { corpo: { sessao } } = await s.pede(b, 'sessao')
+  // A cota estoura no meio da chamada.
+  orcamento.storage.saved.set('snapshot', retrato({ turn_bytes: 900e9 }))
+  const antes = api.chamadas.length
+  const pub = await s.pede(a, 'publicar', { sessao: Object.keys((await s.storage.get('sfu')).sessoes)[0], sdp: oferta,
+    fontes: [{ fonte: 'camera-2', mid: '1', stream: 'c', geracao: 1 }] })
+  assert.deepEqual([pub.status, pub.corpo.erro, pub.corpo.motivo], [503, 'cota', 'limite'])
+  const sub = await s.pede(b, 'assinar', { sessao, alvos: [{ dono: a.id, fonte: 'mic-1' }] })
+  assert.deepEqual([sub.status, sub.corpo.motivo], [503, 'limite'])
+  assert.equal(api.chamadas.length, antes)
+  const est = await s.storage.get('sfu')
+  assert.ok(Object.values(est.sessoes).every(x => x.ocupada === null && x.pend === null))
+  // Fechar e encerrar continuam valendo: cortar gasto nunca é negado.
+  assert.equal((await s.pede(b, 'encerrar', { sessao })).status, 200)
+})
+
+test('assinatura reserva o teto do tipo e libera ao fechar e ao sair', async () => {
+  const s = montar()
+  const a = await s.entra({ sub: 'pessoa-a' })
+  const b = await s.entra({ sub: 'pessoa-b' })
+  await publicarMic(s, a)
+  const { corpo: { sessao } } = await s.pede(b, 'sessao')
+  await s.pede(b, 'assinar', { sessao, alvos: [{ dono: a.id, fonte: 'mic-1' }] })
+  await s.pede(b, 'renegociar', { sessao, sdp: resposta })
+  const abertas = () => Object.values(orcamento.storage.saved.get('reservas') ?? {}).filter(r => r.fim === null)
+  assert.equal(abertas().length, 1)
+  assert.ok(abertas()[0].ref.startsWith(`sfu:${sessao}:${a.id}/mic-1#`))
+  assert.equal(abertas()[0].bps, 0.5e6 / 8)
+  await s.pede(b, 'fechar', { sessao, mids: ['10'] })
+  assert.equal(abertas().length, 0)
+  await s.pede(b, 'assinar', { sessao, alvos: [{ dono: a.id, fonte: 'mic-1' }] })
+  await s.pede(b, 'renegociar', { sessao, sdp: resposta })
+  assert.equal(abertas().length, 1)
+  await s.webSocketClose(b, 1000)
+  await s.esperar()
+  assert.equal(abertas().length, 0)
+  // As duas reservas fechadas continuam no mês: são a estimativa do SFU.
+  assert.equal(Object.keys(orcamento.storage.saved.get('reservas')).length, 2)
 })

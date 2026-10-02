@@ -10,12 +10,14 @@ const grupo = (hora, egressBytes, ingressBytes) =>
   ({ dimensions: { datetimeHour: hora }, sum: { egressBytes, ingressBytes } })
 
 // Roda o cron com fetch simulado e devolve as chamadas e as linhas de log.
-async function cron(agora, respostaGraphql, envTeste = env) {
+async function cron(agora, respostaGraphql, envTeste = env,
+  respostaSfu = () => Response.json({ data: { viewer: { accounts: [{ callsUsageAdaptiveGroups: [] }] } } })) {
   const chamadas = []
   const originalFetch = globalThis.fetch, originalLog = console.log
   globalThis.fetch = async (url, init) => {
     chamadas.push({ url, init })
-    if (url === 'https://api.cloudflare.com/client/v4/graphql') return respostaGraphql()
+    if (url === 'https://api.cloudflare.com/client/v4/graphql')
+      return JSON.parse(init.body).query.includes('callsUsageAdaptiveGroups') ? respostaSfu() : respostaGraphql()
     return new Response(null, { status: 202 })
   }
   console.log = () => {}
@@ -28,7 +30,7 @@ async function cron(agora, respostaGraphql, envTeste = env) {
     globalThis.fetch = originalFetch
     console.log = originalLog
   }
-  const graphql = chamadas.filter(c => c.url.includes('graphql'))
+  const graphql = chamadas.filter(c => c.url.includes('graphql') && !JSON.parse(c.init.body).query.includes('callsUsageAdaptiveGroups'))
   const logs = chamadas.filter(c => c.url === 'https://logs.example').flatMap(c => JSON.parse(c.init.body))
   return { graphql, logs, chamadas }
 }

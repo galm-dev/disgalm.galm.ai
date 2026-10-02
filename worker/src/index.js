@@ -5,6 +5,11 @@
 // e o recado nunca passaria. idFromName(sala) é o que os faz cair no mesmo lugar.
 import { DurableObject } from 'cloudflare:workers'
 import { bearer, session, sessionPaths, verifyAccess, websocketToken } from './auth.js'
+import { enviarLogs, linhaWorker } from './logs.js'
+import { TAG_MALHA, TAG_SFU, TAXA_TURN, TTL_TURN_S, autorizarCom, coletarUso, liberarCom, orcamentoDa }
+  from './orcamento.js'
+
+export { Orcamento } from './orcamento.js'
 import { CAPACIDADE, catalogo, chamarApi, encerrarChamada, limparPessoa, novoEstado, operar, rotaSfu,
   salaEmEnsaio } from './sfu.js'
 
@@ -23,27 +28,6 @@ const guestCookie = req => /^([0-9a-f]{64})$/.exec((req.headers.get('cookie') ||
 const roomObject = (env, room) => env.SALA.get(env.SALA.idFromName(room))
 const internal = (url, method, headers = {}, body) => new Request(url, { method, headers, body })
 
-// Logs estruturados. Sempre no console do Worker; com BETTERSTACK_TOKEN e
-// BETTERSTACK_HOST (secrets), também no Better Stack, num POST por lote. O plano
-// gratuito do Workers não tem Logpush, por isso o envio sai daqui mesmo.
-// Regra da Galm: nunca nome, email, token, credencial TURN nem IP cru; id de
-// conexão e sub (UUID) podem ir.
-async function enviarLogs(env, linhas) {
-  if (!linhas.length) return
-  for (const l of linhas) console.log(JSON.stringify(l))
-  if (!env?.BETTERSTACK_TOKEN || !env?.BETTERSTACK_HOST) return
-  try {
-    const r = await fetch(`https://${env.BETTERSTACK_HOST.replace(/^https?:\/\//, '')}`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${env.BETTERSTACK_TOKEN}`, 'content-type': 'application/json' },
-      body: JSON.stringify(linhas),
-    })
-    if (!r.ok) console.log('Better Stack: HTTP', r.status)
-  } catch (e) { console.log('Better Stack falhou:', e.message) }
-}
-const linhaWorker = (evento, campos) =>
-  ({ dt: new Date().toISOString(), message: evento, origem: 'worker', evento, ...campos })
-
 // Eventos que o navegador manda sobre as próprias conexões. Limites para que um
 // cliente não encha a cota: lote pequeno, corpo pequeno, só campos simples.
 const MAX_EVENTOS = 100, MAX_CORPO = 64 * 1024
@@ -61,15 +45,22 @@ function limparEvento(e) {
 // O TURN da Cloudflare não tem usuário e senha fixos: credenciais são geradas
 // por API, com validade. O par (key id, api token) fica em secrets e NUNCA
 // chega ao navegador — só o usuário/senha efêmeros descem para o cliente.
-async function turnCloudflare(env) {
-  if (!env.CF_TURN_KEY_ID || !env.CF_TURN_API_TOKEN) return []
+//
+// A validade é curta (TTL_TURN_S) para que o bloqueio do orçamento valha em
+// minutos: credencial vencida para de ser cobrada na hora e a alocação cai. A
+// etiqueta (customIdentifier) separa na analytics o TURN que leva ao SFU, que
+// não é cobrado de novo.
+// https://developers.cloudflare.com/realtime/turn/generate-credentials/
+const turnConfigurado = env => !!(env.CF_TURN_KEY_ID && env.CF_TURN_API_TOKEN)
+async function turnCloudflare(env, etiqueta) {
+  if (!turnConfigurado(env)) return []
   try {
     const r = await fetch(
       `https://rtc.live.cloudflare.com/v1/turn/keys/${env.CF_TURN_KEY_ID}/credentials/generate-ice-servers`,
       {
         method: 'POST',
         headers: { authorization: `Bearer ${env.CF_TURN_API_TOKEN}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ ttl: 86400 }),
+        body: JSON.stringify({ ttl: TTL_TURN_S, customIdentifier: etiqueta }),
       })
     if (!r.ok) { await enviarLogs(env, [linhaWorker('turn_cloudflare_falhou', { status: r.status })]); return [] }
     return (await r.json()).iceServers || []
@@ -95,79 +86,28 @@ const turnDeCasa = env => {
   }]
 }
 
-async function env2ice(env) {
-  const lista = [...await turnCloudflare(env), ...turnDeCasa(env)]
-  return lista.length ? lista : [{ urls: 'stun:stun.cloudflare.com:3478' }]
-}
-
-// Consumo do TURN da Cloudflare, para acompanhar a cota grátis de 1.000 GB/mês
-// (dividida com o SFU, que não usamos). Só a saída (egressBytes) é cobrada.
-// Fonte: GraphQL Analytics, dataset callsTurnUsageAdaptiveGroups, com um token
-// de API da conta com "Account Analytics: Read". O CF_TURN_API_TOKEN não serve:
-// é o token da chave TURN, que só gera credenciais.
-// https://developers.cloudflare.com/realtime/turn/analytics/
-const COTA_TURN_GB = 1000
-const GB = 1e9
-const USO_TURN = `query ($conta: string!, $de: Date!, $ate: Date!) {
-  viewer { accounts(filter: { accountTag: $conta }) {
-    callsTurnUsageAdaptiveGroups(limit: 10000, filter: { date_geq: $de, date_leq: $ate }) {
-      dimensions { datetimeHour }
-      sum { egressBytes ingressBytes }
-    }
-  } }
-}`
-
-// Uma consulta por execução traz o mês (UTC) em fatias de uma hora: a soma
-// delas é o acumulado, e a fatia da hora cheia anterior é o período. A hora
-// corrente ainda está enchendo, por isso entra só no acumulado. Na virada do
-// mês a hora anterior é do mês passado: a consulta começa nela.
-async function usoTurn(env, agora = new Date()) {
-  if (!env.CF_ACCOUNT_ID || !env.CF_ANALYTICS_TOKEN) return null
-  const dia = d => d.toISOString().slice(0, 10)
-  const inicioMes = new Date(Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), 1))
-  const horaAtual = new Date(agora); horaAtual.setUTCMinutes(0, 0, 0)
-  const horaAnterior = new Date(horaAtual - 3600_000)
-  const falhou = campos => linhaWorker('turn_uso_falhou', campos)
-  let r
-  try {
-    r = await fetch('https://api.cloudflare.com/client/v4/graphql', {
-      method: 'POST',
-      headers: { authorization: `Bearer ${env.CF_ANALYTICS_TOKEN}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ query: USO_TURN,
-        variables: { conta: env.CF_ACCOUNT_ID, de: dia(new Date(Math.min(inicioMes, horaAnterior))), ate: dia(agora) } }),
-    })
-  } catch (e) { return falhou({ erro: e.message }) }
-  if (!r.ok) return falhou({ status: r.status })
-  const corpo = await r.json().catch(() => null)
-  if (corpo?.errors?.length) return falhou({ erro: corpo.errors.map(e => e.message).join('; ').slice(0, 500) })
-  const grupos = corpo?.data?.viewer?.accounts?.[0]?.callsTurnUsageAdaptiveGroups
-  if (!Array.isArray(grupos)) return falhou({ erro: 'resposta sem callsTurnUsageAdaptiveGroups' })
-
-  const soma = lista => lista.reduce((t, g) => ({
-    egress: t.egress + (g.sum?.egressBytes || 0), ingress: t.ingress + (g.sum?.ingressBytes || 0),
-  }), { egress: 0, ingress: 0 })
-  const hora = g => Date.parse(g.dimensions?.datetimeHour)
-  const mes = soma(grupos.filter(g => hora(g) >= +inicioMes))
-  const periodo = soma(grupos.filter(g => hora(g) === +horaAnterior))
-  return linhaWorker('turn_uso', {
-    periodo_inicio: horaAnterior.toISOString(), periodo_fim: horaAtual.toISOString(),
-    egress_bytes_periodo: periodo.egress, ingress_bytes_periodo: periodo.ingress,
-    mes: dia(inicioMes).slice(0, 7),
-    egress_bytes_mes: mes.egress, ingress_bytes_mes: mes.ingress,
-    egress_gb_mes: Math.round(mes.egress / GB * 1000) / 1000,
-    cota_gb: COTA_TURN_GB,
-    cota_pct: Math.round(mes.egress / (COTA_TURN_GB * GB) * 10000) / 100,
-  })
-}
-
-async function registrarUsoTurn(env, agora) {
-  const linha = await usoTurn(env, agora)
-  if (linha) await enviarLogs(env, [linha])
+// TURN da Cloudflare só com o orçamento liberando. Negado, o cliente fica com
+// STUN (e o coturn de casa, que não é cobrado) e o motivo vai num cabeçalho:
+// o corpo continua a lista de sempre, que cliente antigo entende.
+async function env2ice(env, { sala, modo }) {
+  let cf = [], negado = null
+  if (turnConfigurado(env)) {
+    const sfu = modo === 'sfu'
+    const r = await autorizarCom(env, { recurso: 'turn', op: 'ice', sala,
+      // Relay até o SFU não é cobrado como TURN: a reserva fica com a assinatura.
+      reservas: sfu ? [] : [{ tipo: 'turn', bps: TAXA_TURN, duracao_ms: TTL_TURN_S * 1000 }] })
+    if (r.ok) cf = await turnCloudflare(env, sfu ? TAG_SFU : TAG_MALHA)
+    else negado = r.motivo
+  }
+  const lista = [...cf, ...turnDeCasa(env)]
+  return { lista: lista.length ? lista : [{ urls: 'stun:stun.cloudflare.com:3478' }], negado, validade: cf.length ? TTL_TURN_S : null }
 }
 
 // Batimento do cliente. A resposta automática não acorda o objeto hibernado, e
 // o horário da última resposta, por socket, é o que separa vivo de fantasma.
 const PING = '{"t":"ping"}', PONG = '{"t":"pong"}'
+// Nome que o cliente antigo mostra no lugar de uma pessoa (cabe nos 24 do tile).
+const AVISO_VERSAO = 'Recarregue o Disgalm'
 const FANTASMA_MS = 60_000   // cliente pinga a cada 20 s: três batidas perdidas
 
 export class Sala extends DurableObject {
@@ -228,6 +168,10 @@ export class Sala extends DurableObject {
         for (const p of this.#peers()) if (p.a.modo === 'sfu') this.#envia(p.ws, msg)
       },
       agora: () => Date.now(),
+      orcamento: {
+        autorizar: pedido => autorizarCom(this.env, { sala, ...pedido }),
+        liberar: pedido => liberarCom(this.env, pedido),
+      },
     }
   }
 
@@ -342,6 +286,9 @@ export class Sala extends DurableObject {
     if (path === '/invite' && req.method === 'POST') return this.#invite(req)
     if (path === '/guest/check' && req.method === 'POST') return this.#checkGuest(req)
     if (path === '/sfu' && req.method === 'POST') return this.#sfu(req)
+    // Modo da chamada em andamento, para a etiqueta da credencial TURN. Só
+    // conta quem está na sala: o estado de uma chamada que acabou não vale.
+    if (path === '/modo') return Response.json({ modo: this.#peers().some(p => p.a.modo === 'sfu') ? 'sfu' : 'mesh' })
     if (path !== '/ws') return new Response('não encontrado', { status: 404 })
     const role = req.headers.get('x-disgalm-role')
     let exp = Number(req.headers.get('x-disgalm-exp'))
@@ -420,9 +367,17 @@ export class Sala extends DurableObject {
     // vazia (o objeto reiniciou) continua a chamada que havia.
     const capaz = (q.get('cap') || '').split(',').includes(CAPACIDADE)
     let sfu = await this.#estadoSfu()
+    let aviso = null
     if (!jaEstavam.length && !(retomada && sfu)) {
       const anterior = sfu
-      sfu = novoEstado(salaEmEnsaio(this.env, sala) && capaz ? 'sfu' : 'mesh', crypto.randomUUID().slice(0, 8))
+      // Sala de ensaio com o orçamento negando: a chamada inteira fica na malha,
+      // e o compartilhamento continua direto.
+      let querSfu = salaEmEnsaio(this.env, sala) && capaz
+      if (querSfu) {
+        const r = await autorizarCom(this.env, { recurso: 'sfu', op: 'chamada', sala })
+        if (!r.ok) { querSfu = false; aviso = 'sfu_cota' }
+      }
+      sfu = novoEstado(querSfu ? 'sfu' : 'mesh', crypto.randomUUID().slice(0, 8))
       await this.ctx.storage.put('sfu', sfu)
       if (anterior?.modo === 'sfu') {
         const tarefa = encerrarChamada(this.#contextoSfu({ id }, sala), anterior).catch(e => console.log('sfu:', e.message))
@@ -430,12 +385,22 @@ export class Sala extends DurableObject {
       }
     }
     const modo = sfu?.modo === 'sfu' ? 'sfu' : 'mesh'
-    // Cliente sem SFU numa chamada em SFU não veria ninguém. 'cheia' é o único
-    // aviso que o cliente antigo entende sem religar em ciclo.
+    // Cliente sem SFU numa chamada em SFU não veria ninguém. Sem mexer no
+    // protocolo, o aviso vai no que ele já mostra: um welcome com uma pessoa
+    // fictícia cujo nome é o recado, e o fechamento com o motivo 'substituída',
+    // que desde adff869 faz o cliente parar de religar. Quem ainda manda o
+    // 'join' mas não tem 'aba' é anterior a isso e recebe 'cheia', que também
+    // para o ciclo.
     if (modo === 'sfu' && !capaz) {
       this.#registrar('sfu_recusado', { sala, op: 'entrar', motivo: 'cliente sem SFU' })
-      this.#envia(servidor, { t: 'cheia', motivo: 'versao' })
-      servidor.close(1013, 'cliente sem SFU')
+      if (q.has('aba')) {
+        this.#envia(servidor, { t: 'welcome', id: crypto.randomUUID().slice(0, 8), retomada: false,
+          peers: [{ id: '00000000', name: AVISO_VERSAO }] })
+        servidor.close(4001, 'substituída')
+      } else {
+        this.#envia(servidor, { t: 'cheia', motivo: 'versao' })
+        servidor.close(1013, 'cliente sem SFU')
+      }
       return aceitar()
     }
     // A chave liga as chamadas HTTP do gateway a esta conexão; só o hash fica.
@@ -454,7 +419,7 @@ export class Sala extends DurableObject {
       t: 'welcome', id, retomada,
       peers: jaEstavam.map(p => ({ id: p.a.id, name: p.a.nome })),
       // Clientes antigos ignoram os campos abaixo e seguem na malha.
-      protocolo: 1, modo,
+      protocolo: 1, modo, ...(aviso && { aviso }),
       ...(chave && { sfu: { chave, versao: sfu.versao, fontes: catalogo(sfu) } }),
     })
     for (const p of jaEstavam)
@@ -554,7 +519,15 @@ export default {
 
     if (url.pathname === '/ice') {
       if (!await quem()) return new Response('acesso negado', { status: 401, headers: noStore })
-      return Response.json(await env2ice(env), { headers: noStore })
+      // O modo da chamada em andamento decide a etiqueta da credencial.
+      let modo = 'mesh'
+      if (validRoom(room)) try {
+        modo = (await (await roomObject(env, room).fetch(internal(`${url.origin}/modo`, 'GET'))).json()).modo
+      } catch {}
+      const { lista, negado, validade } = await env2ice(env, { sala: validRoom(room) ? room : null, modo })
+      // Validade: quando buscar de novo. Negado, uma nova tentativa bem mais tarde.
+      return Response.json(lista, { headers: { ...noStore, 'x-disgalm-ice-validade': String(validade ?? 600),
+        ...(negado && { 'x-disgalm-relay': `negado;${negado}` }) } })
     }
 
     if (url.pathname === '/telemetria') {
@@ -613,8 +586,14 @@ export default {
     return env.ASSETS.fetch(req)
   },
 
-  // Cron do wrangler.toml: registra o consumo do TURN no Better Stack.
+  // Cron do wrangler.toml: mede TURN e SFU, manda turn_uso ao Better Stack e
+  // grava o retrato no orçamento da conta.
   async scheduled(controller, env, ctx) {
-    ctx.waitUntil(registrarUsoTurn(env, new Date(controller.scheduledTime)))
+    ctx.waitUntil((async () => {
+      const r = await coletarUso(env, new Date(controller.scheduledTime))
+      if (!r) return
+      await enviarLogs(env, r.linhas)
+      if (r.snapshot.completo) await orcamentoDa(env)?.gravarSnapshot(r.snapshot)
+    })())
   },
 }

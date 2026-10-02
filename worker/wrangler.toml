@@ -13,10 +13,20 @@ binding = "ASSETS"
 name = "SALA"
 class_name = "Sala"
 
+# Orçamento da franquia do Realtime (SFU + TURN), um objeto para a conta toda.
+# Sem ele o /ice não emite TURN da Cloudflare e o SFU não publica nem assina.
+[[durable_objects.bindings]]
+name = "ORCAMENTO"
+class_name = "Orcamento"
+
 # new_sqlite_classes: só o backend SQLite existe no plano gratuito.
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Sala"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Orcamento"]
 
 # Consumo do TURN para o Better Stack (evento turn_uso). De hora em hora porque
 # a consulta agrupa por datetimeHour e a hora cheia anterior é o período; no
