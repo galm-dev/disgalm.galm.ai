@@ -6,12 +6,15 @@ const { app, Menu, Tray, nativeImage, BrowserWindow } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
 
-// Desenha o ícone num canvas de 64 px numa janela escondida: sem arquivo de
-// imagem no repo, e o "G" sai na mesma família da marca.
-function desenho({ mic, tela }) {
+// Desenha o ícone num canvas numa janela escondida, no espaço de 64 px, e o
+// "G" sai na mesma família da marca. O ícone do app (build/icon.png) sai do
+// mesmo desenho, por gerar-icone.js; a margem é a grade dos ícones do Mac.
+function desenho({ mic, tela, px = 64, margem = 0 }) {
   const c = document.createElement('canvas')
-  c.width = c.height = 64
+  c.width = c.height = px
   const g = c.getContext('2d')
+  const s = (px - 2 * margem) / 64
+  g.translate(margem, margem); g.scale(s, s)
   g.fillStyle = '#7c8295'
   g.beginPath(); g.roundRect(4, 4, 56, 56, 14); g.fill()
   g.fillStyle = '#ffffff'
@@ -143,4 +146,4 @@ async function criarBandeja({ janela, comando, sair, atualizacao }) {
   }
 }
 
-module.exports = { criarBandeja, lerUltima, gravarUltima, acharUltima }
+module.exports = { desenho, criarBandeja, lerUltima, gravarUltima, acharUltima }

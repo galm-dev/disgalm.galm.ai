@@ -346,6 +346,8 @@ app.whenReady().then(async () => {
     width: 1280,
     height: 800,
     title: 'Disgalm',
+    // Mac e Windows tiram o ícone do pacote; no Linux a janela precisa dele.
+    ...(process.platform === 'linux' && { icon: path.join(__dirname, 'build', 'icon.png') }),
     autoHideMenuBar: true,
     backgroundColor: '#07080b',
     // Sem barra de título do sistema, como o Discord: a faixa de cima da UI

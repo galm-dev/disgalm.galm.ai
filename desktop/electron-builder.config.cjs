@@ -13,11 +13,12 @@ module.exports = {
   appId: 'ai.galm.disgalm',
   productName: 'Disgalm',
   artifactName: 'Disgalm-${version}-${os}-${arch}.${ext}',
+  // build/icon.png (npm run icone) vira o .icns, o .ico e o ícone do AppImage.
   directories: { output: 'dist', buildResources: 'build' },
   // Só o app. A UI vem de https://disgalm.galm.ai (main.js): não vai public/.
   files: [
     'main.js', 'preload.js', 'captura.js', 'alvo.js', 'login.js', 'pipewire.js', 'bandeja.js',
-    'atualizacao.js', 'saude.js', 'renderer/**', 'package.json',
+    'atualizacao.js', 'saude.js', 'renderer/**', 'package.json', 'build/icon.png',
     { from: 'native/build/Release', to: 'native/build/Release', filter: ['loopback.node'] },
   ],
   // O .node não carrega de dentro do asar.

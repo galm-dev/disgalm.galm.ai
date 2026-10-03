@@ -8,7 +8,8 @@
     "build:native": "cd native && node-gyp rebuild",
     "start": "electron .",
     "teste": "electron . --teste=teste/saida",
-    "dist": "electron-builder --config electron-builder.config.cjs --publish never"
+    "dist": "electron-builder --config electron-builder.config.cjs --publish never",
+    "icone": "electron gerar-icone.js"
   },
   "devDependencies": {
     "electron": "44.5.1",
