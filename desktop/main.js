@@ -42,7 +42,7 @@ const EXCLUIR = (process.env.DISGALM_EXCLUIR || 'Discord.exe,DiscordPTB.exe,Disc
 
 let nativo = null
 let erroNativo = null
-if (process.platform === 'win32') {
+if (process.platform === 'win32' || process.platform === 'darwin') {
   try {
     nativo = require('./native/build/Release/loopback.node')
   } catch (e) {
@@ -242,7 +242,8 @@ const capturasLinux = new Map()
 ipcMain.on('audio-disponivel', e => {
   const disponivel = !!nativo || pipewireOk
   e.returnValue = { disponivel, motivo: disponivel ? null : erroNativo, excluir: EXCLUIR.join(', '),
-    modo: nativo ? 'wasapi' : pipewireOk ? 'pipewire' : null, teste: TESTE || null }
+    modo: nativo ? (process.platform === 'darwin' ? 'coreaudio' : 'wasapi') : pipewireOk ? 'pipewire' : null,
+    teste: TESTE || null }
 })
 app.on('will-quit', () => { for (const c of capturasLinux.values()) c.fecharJa() })
 ipcMain.handle('audio-linux-abrir', async e => {

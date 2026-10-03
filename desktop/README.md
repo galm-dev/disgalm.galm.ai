@@ -1,4 +1,4 @@
-# Disgalm desktop (PoC, Windows)
+# Disgalm desktop
 
 Casca Electron do Disgalm. Compartilha a tela com o áudio do sistema **sem o
 Discord**, para que quem assiste não ouça a própria voz de volta. O navegador
@@ -12,6 +12,13 @@ não consegue fazer isso: o `getDisplayMedia` leva o sistema inteiro.
   loopback** (`ActivateAudioInterfaceAsync` com
   `PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE`) e entrega float32
   estéreo a 48 kHz em pacotes de ~10 ms.
+- No Mac, `native/loopback_mac.mm` faz o mesmo com um **process tap do Core
+  Audio** (`CATapDescription` global excluindo processos, macOS 14.2+). A
+  lista de exclusão (árvore do Disgalm e do Discord, `objetosParaExcluir` em
+  `alvo.js`) é refeita a cada segundo, e `reamostrar.js` leva o PCM a 48 kHz
+  quando a saída do sistema roda em outra taxa.
+- No Linux, `pipewire.js` monta um sink nulo e liga a ele cada saída que não
+  é do Disgalm nem do Discord.
 - A captura roda num processo utilitário só dela (`captura.js`), com a thread
   WASAPI em MMCSS "Pro Audio". O PCM vai de lá, por `MessagePort`, direto a um
   AudioWorklet (`renderer/pcm-worklet.js`). Uma
@@ -96,8 +103,8 @@ sistema depois do `npm install`, copia o Electron pronto, põe o app em
 `dist/Disgalm-<sistema>-<arch>` (pasta e `.zip`/`.tar.gz`). Não há instalador
 nem assinatura; no Mac o bundle é reassinado ad hoc.
 
-- **Windows:** rode antes `npm run build:native`. Abra com `Disgalm.exe`. É o
-  único com áudio do sistema sem o Discord.
+- **Windows:** rode antes `npm run build:native`. Abra com `Disgalm.exe`. O
+  áudio do sistema vai sem o Discord (WASAPI process loopback).
 - **Mac:** para usar no próprio Mac, rode `./instalar-mac.sh`. Ele empacota,
   assina com uma identidade estável (a "Apple Development" do Keychain ou um
   certificado local criado na primeira vez), instala em
@@ -105,7 +112,9 @@ nem assinatura; no Mac o bundle é reassinado ad hoc.
   presa à assinatura: com a assinatura ad hoc do `empacotar.mjs`, cada pacote
   novo deixa a chave "ligada" valendo para um app que não existe mais. O
   script só apaga a permissão (`tccutil reset`) quando a assinatura muda.
-  O Electron não tem áudio do sistema no Mac, então a tela vai sem som.
+  O áudio da tela vem de um tap do Core Audio (macOS 14.2+), que pega o som
+  do sistema menos o Discord e o próprio Disgalm. Na primeira captura o macOS
+  pede a permissão de Áudio do sistema.
   Abrir o app pelo terminal de outro app (T3 Code, por exemplo) faz o macOS
   pedir a permissão em nome desse app; o script abre com `open`.
 - **Linux:** `./disgalm`. O áudio do sistema vem do monitor do PipeWire,
@@ -230,11 +239,6 @@ para quem assiste.
 
 ## Fora do escopo (anotações)
 
-- **macOS:** ScreenCaptureKit (13+) captura áudio por app, com
-  `SCContentFilter` excluindo apps (`excludingApplications`), e permite
-  excluir o próprio processo (`excludesCurrentProcessAudio`). Ao contrário do
-  WASAPI, aceita **vários** apps excluídos. A partir do 14.2 há também os
-  Core Audio process taps (`CATapDescription` com lista de exclusão).
 - **Linux:** PipeWire permite montar um sink de captura ligado só aos nós de
   saída que não são do Discord (filtrar por `application.process.binary`).
   Na prática, é uma versão por app do `loopback.sh`.

@@ -115,6 +115,7 @@ jobs:
           CSC_FOR_PULL_REQUEST: 'true'
         run: |
           npm ci --no-fund --no-audit
+          npm run build:native
           npx electron-builder --config electron-builder.config.cjs --mac zip --arm64 --publish never
           codesign --verify --deep --strict dist/mac-arm64/Disgalm.app
           codesign -d -r- dist/mac-arm64/Disgalm.app 2>&1 | grep designated

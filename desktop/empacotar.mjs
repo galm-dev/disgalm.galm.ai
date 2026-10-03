@@ -5,7 +5,7 @@
 //
 //   npm install && node empacotar.mjs      → dist/Disgalm-<plataforma>-<arch>.{zip,tar.gz}
 //
-// No Windows, rode antes `npm run build:native`: o .node vai junto. No Mac, o
+// No Windows e no Mac, rode antes `npm run build:native`: o .node vai junto. No Mac, o
 // bundle é reassinado (mexer no Electron.app quebra a assinatura dele); para
 // instalar no próprio Mac, use instalar-mac.sh.
 import { cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
@@ -25,14 +25,15 @@ rmSync(saida, { recursive: true, force: true })
 mkdirSync(saida, { recursive: true })
 
 // Arquivos do app; o resto de desktop/ (testes, fontes C++, node_modules) fica.
-const APP = ['main.js', 'preload.js', 'captura.js', 'alvo.js', 'login.js', 'pipewire.js', 'bandeja.js', 'renderer']
+const APP = ['main.js', 'preload.js', 'captura.js', 'alvo.js', 'reamostrar.js', 'login.js', 'pipewire.js', 'bandeja.js',
+  'saude.js', 'atualizacao.js', 'renderer']
 function copiarApp(destino) {
   mkdirSync(destino, { recursive: true })
   for (const f of APP) cpSync(join(AQUI, f), join(destino, f), { recursive: true })
   writeFileSync(join(destino, 'package.json'),
     JSON.stringify({ name: 'disgalm', productName: 'Disgalm', version, main: 'main.js' }, null, 2))
   const nativo = join(AQUI, 'native', 'build', 'Release', 'loopback.node')
-  if (process.platform === 'win32') {
+  if (process.platform === 'win32' || process.platform === 'darwin') {
     if (!existsSync(nativo)) throw new Error('falta o módulo nativo: rode npm run build:native')
     mkdirSync(join(destino, 'native', 'build', 'Release'), { recursive: true })
     cpSync(nativo, join(destino, 'native', 'build', 'Release', 'loopback.node'))

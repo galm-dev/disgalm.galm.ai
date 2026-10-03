@@ -39,6 +39,7 @@ fi
 echo "assinando com: $ID"
 
 [ -d node_modules/electron/dist ] || { npm install --no-fund --no-audit; node node_modules/electron/install.js; }
+npm run build:native >/dev/null
 env -u ELECTRON_RUN_AS_NODE DISGALM_ASSINATURA="$ID" node empacotar.mjs >/dev/null
 NOVO=dist/Disgalm-mac-arm64/Disgalm.app
 [ "$(uname -m)" = arm64 ] || NOVO=dist/Disgalm-mac-x64/Disgalm.app

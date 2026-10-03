@@ -47,7 +47,13 @@ async function principal() {
     o.connect(g).connect(ctx.destination); o.start()
     log('o próprio app tocando 700 Hz')
   }
-  const tela = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 15 }, audio: false })
+  // ?semtela=1: vídeo sintético no lugar da tela (testa só o áudio, sem a
+  // permissão de gravação de tela).
+  const tela = q.get('semtela')
+    ? (() => { const c = document.createElement('canvas'); c.width = 320; c.height = 180
+        const g = c.getContext('2d'); setInterval(() => { g.fillStyle = `hsl(${Date.now() / 20 % 360} 60% 50%)`; g.fillRect(0, 0, 320, 180) }, 100)
+        return c.captureStream(15) })()
+    : await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 15 }, audio: false })
   log('tela:', tela.getVideoTracks()[0].label)
   const audio = await abrirAudioSemDiscord(log)
   log('track nativa:', audio.label, audio.readyState)

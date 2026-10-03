@@ -18,12 +18,12 @@ module.exports = {
   // Só o app. A UI vem de https://disgalm.galm.ai (main.js): não vai public/.
   files: [
     'main.js', 'preload.js', 'captura.js', 'alvo.js', 'login.js', 'pipewire.js', 'bandeja.js',
-    'atualizacao.js', 'saude.js', 'renderer/**', 'package.json', 'build/icon.png',
+    'atualizacao.js', 'saude.js', 'reamostrar.js', 'renderer/**', 'package.json', 'build/icon.png',
     { from: 'native/build/Release', to: 'native/build/Release', filter: ['loopback.node'] },
   ],
   // O .node não carrega de dentro do asar.
   asarUnpack: ['native/**/*.node'],
-  // O módulo N-API é compilado antes (npm run build:native, só no Windows).
+  // O módulo N-API é compilado antes (npm run build:native, no Windows e no Mac).
   npmRebuild: false,
   publish: [{
     provider: 'github', owner: 'galm-dev', repo: 'disgalm.galm.ai',
@@ -47,6 +47,8 @@ module.exports = {
     extendInfo: {
       NSMicrophoneUsageDescription: 'O Disgalm usa o microfone na chamada.',
       NSCameraUsageDescription: 'O Disgalm usa a câmera quando você liga o vídeo.',
+      // Tap do Core Audio (native/loopback_mac.mm): áudio da tela sem o Discord.
+      NSAudioCaptureUsageDescription: 'O Disgalm envia o áudio do sistema junto com a tela, sem o Discord.',
     },
   },
   dmg: { artifactName: 'Disgalm-${version}-mac-${arch}.${ext}' },

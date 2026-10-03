@@ -105,6 +105,12 @@ jobs:
         run: |
           npm run build:native
           node -e "const n = require('./native/build/Release/loopback.node'); if (typeof n.sessoesDeAudio !== 'function') throw new Error('exports')"
+      - name: Módulo nativo (Mac)
+        if: runner.os == 'macOS'
+        working-directory: desktop
+        run: |
+          npm run build:native
+          node -e "const n = require('./native/build/Release/loopback.node'); if (typeof n.CapturaMac !== 'function') throw new Error('exports')"
       - name: Assinatura do Mac é obrigatória
         if: runner.os == 'macOS'
         shell: bash

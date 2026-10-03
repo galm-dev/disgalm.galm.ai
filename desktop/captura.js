@@ -14,7 +14,8 @@
 //   { fechar: id }
 // Para o principal: { id, tipo: 'alvo' | 'inicio' | 'erro', valor }
 const nativo = require('./native/build/Release/loopback.node')
-const { planejarInclusoes } = require('./alvo.js')
+const { planejarInclusoes, objetosParaExcluir } = require('./alvo.js')
+const { Reamostrador } = require('./reamostrar.js')
 
 const TAXA = 48000
 const CANAIS = 2
@@ -106,18 +107,43 @@ function abrir(id, excluir, pidApp, porta) {
   c.relogios.push(setInterval(conferir, 1000), setInterval(misturar, 10))
 }
 
+// macOS: um tap só, que já aceita a lista de excluídos (o próprio Disgalm e o
+// Discord). Processo que começa a tocar depois ganha objeto de áudio novo: a
+// lista é refeita a cada segundo e trocada com a captura rodando.
+function abrirMac(id, pidApp, porta) {
+  const conferir = () => objetosParaExcluir(nativo.listarProcessos(), nativo.processosDeAudio(), { pidApp })
+  const reamostra = new Reamostrador(TAXA)
+  let excluidos = conferir()
+  const nativa = new nativo.CapturaMac(excluidos, (tipo, valor, taxa) => {
+    if (tipo === 'dados') porta.postMessage(reamostra.processar(valor, taxa))
+    else avisar(id, tipo, valor)
+  })
+  const c = { porta, fontes: new Map(), relogios: [], fechada: false, nativa }
+  capturas.set(id, c)
+  avisar(id, 'alvo', { nome: 'o Discord e o próprio Disgalm', pid: pidApp, incluidos: 'todo o resto do sistema' })
+  c.relogios.push(setInterval(() => {
+    const novos = conferir()
+    if (novos.join() === excluidos.join()) return
+    excluidos = novos
+    if (!nativa.excluir(novos)) avisar(id, 'erro', 'não deu para atualizar a lista de processos excluídos')
+  }, 1000))
+  porta.start()
+}
+
 function fechar(id) {
   const c = capturas.get(id)
   if (!c) return
   c.fechada = true
   for (const r of c.relogios) clearInterval(r)
   for (const f of c.fontes.values()) f.nativa.parar()
+  c.nativa?.parar()
   c.porta.close()
   capturas.delete(id)
 }
 
 process.parentPort.on('message', e => {
   const m = e.data
-  if (m.abrir) abrir(m.abrir, m.excluir, m.pidApp, e.ports[0])
+  if (m.abrir && process.platform === 'darwin') abrirMac(m.abrir, m.pidApp, e.ports[0])
+  else if (m.abrir) abrir(m.abrir, m.excluir, m.pidApp, e.ports[0])
   else if (m.fechar) fechar(m.fechar)
 })

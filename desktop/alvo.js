@@ -55,4 +55,22 @@ function planejarInclusoes(procs, sessoes, { pidApp, nomes }) {
   return candidatos.filter(pid => !ancestrais(pid).slice(1).some(a => conjunto.has(a))).sort((a, b) => a - b)
 }
 
-module.exports = { raizesDe, planejarInclusoes }
+// macOS: o tap exclui uma lista de objetos de processo do Core Audio. Fora
+// fica todo processo com áudio que é o próprio app (ou descendente dele, como
+// o serviço de áudio do Chromium) ou que descende de um processo cujo nome
+// casa com `padrao` (Discord, Discord Helper, DiscordPTB…).
+function objetosParaExcluir(procs, audio, { pidApp, padrao = /^discord/i }) {
+  const porPid = new Map(procs.map(p => [p.pid, p]))
+  const fora = pid => {
+    for (let atual = pid, passos = 0; atual && passos < 64; passos++) {
+      const p = porPid.get(atual)
+      if (atual === pidApp || (p && padrao.test(p.nome))) return true
+      if (!p || p.ppid === atual) return false
+      atual = p.ppid
+    }
+    return false
+  }
+  return [...new Set(audio.filter(a => fora(a.pid)).map(a => a.objeto))].sort((a, b) => a - b)
+}
+
+module.exports = { raizesDe, planejarInclusoes, objetosParaExcluir }
