@@ -1643,13 +1643,13 @@ button.channel:hover:not(:disabled) {
   pointer-events: none;
   transition: opacity 0.15s;
 }
-/* A faixa ocupa a largura toda e fica sobre o palco: só a barra e o menu
-   recebem clique, senão ela tapa o volume, PiP e o botão de sair da tela
-   cheia no canto do palco. */
+/* A faixa e o #barra ocupam a largura toda e ficam sobre o palco: só os
+   grupos de botões e o menu recebem clique, senão tapam o volume, PiP e o
+   botão de sair da tela cheia no canto do palco. */
 .room-main:fullscreen.mostrar-controles .toolbar-wrap {
   opacity: 1;
 }
-.room-main:fullscreen.mostrar-controles .toolbar-wrap > :is(#barra, #menu-telas) {
+.room-main:fullscreen.mostrar-controles :is(#barra > *, #menu-telas) {
   pointer-events: auto;
 }
 .room-main:fullscreen.mostrar-controles {
