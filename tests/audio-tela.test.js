@@ -96,11 +96,13 @@ function fixture() {
   const ligado = el => !!el.srcObject && !el.paused
   const vivos = () => audios.filter(ligado)
   const quadro = () => { const fs = [...frames.values()]; frames = new Map(); for (const f of fs) f() }
+  const pendentes = () => [...frames.keys()]
+  const rodarQuadro = n => { const f = frames.get(n); frames.delete(n); f() }
   const falando = () => $('t-' + par).classList.classes.has('falando')
   const abertos = () => contextos.filter(c => !c.closed)
   const recriar = () => run(`removerPessoa('${par}'); novaPessoa('${par}', 'B')`)
   return { run, receber, anunciar, tipos, tamanho, vivos, ligado, doStream: t => doStream.get(t), audios, track,
-           quadro, frames: () => frames.size, falando, contextos, abertos, recriar }
+           quadro, pendentes, rodarQuadro, frames: () => frames.size, falando, contextos, abertos, recriar }
 }
 
 test('parar a tela sem ended desliga o áudio dela e mantém a voz', async () => {
@@ -172,7 +174,8 @@ test('ended desliga o áudio', () => {
   f.receber(t, 'voz')
   t.encerrar()
   assert.equal(f.tamanho(), 0)
-  assert.equal(f.vivos().length, 0)
+  assert.equal(f.doStream(t).paused, true)
+  assert.equal(f.doStream(t).srcObject, null)
   assert.equal(f.abertos().length, 0)
 })
 
@@ -183,8 +186,40 @@ test('remover a pessoa desliga todo áudio dela', async () => {
   f.receber(f.track(), 'tela-1')
   f.recriar()
   assert.equal(f.tamanho(), 0)
-  assert.equal(f.vivos().length, 0)
+  assert.equal(f.audios.length, 2)
+  for (const el of f.audios) {
+    assert.equal(el.paused, true)
+    assert.equal(el.srcObject, null)
+  }
   assert.equal(f.abertos().length, 0)
+})
+
+test('pessoa recriada sem a tela no anúncio esquece o stream que foi tela', async () => {
+  const f = fixture()
+  await f.anunciar({ compartilhando: true, idsTelas: ['S'] })
+  await f.anunciar({ compartilhando: false, idsTelas: [] })
+  f.recriar()
+  const voz = f.track()
+  f.receber(voz, 'S')                                // geração nova: S agora é só um stream
+  assert.equal(f.tipos(), 'S:voz')
+  assert.equal(f.ligado(f.doStream(voz)), true)
+})
+
+test('medidor da pessoa antiga para sozinho quando outra assume o id', () => {
+  const f = fixture()
+  f.receber(f.track(0), 'voz')
+  const [antigo] = f.pendentes()
+  const ctxAntigo = f.contextos[0]
+  // Troca a pessoa sem passar por removerPessoa: ninguém chama o cancelador.
+  f.run("pessoas.delete('bbbb0002'); novaPessoa('bbbb0002', 'B')")
+  f.receber(f.track(1), 'voz')
+  assert.equal(f.falando(), true)
+  f.rodarQuadro(antigo)
+  assert.equal(ctxAntigo.closed, true)
+  assert.equal(ctxAntigo.fonte.desconectada, true)
+  assert.equal(f.frames(), 1)
+  assert.equal(f.abertos().length, 1)
+  assert.equal(f.falando(), true)                    // o antigo não apaga o anel do novo
 })
 
 test('áudio de tela que chega depois de sair do anúncio é descartado; readmitida volta', async () => {
