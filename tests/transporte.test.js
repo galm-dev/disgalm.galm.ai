@@ -225,3 +225,75 @@ test('Opus estéreo em toda seção de áudio, inclusive a do som da tela e o OP
   // Idempotente.
   assert.equal(ctx.criarTransporteMesh.opusEstereo(saida.join('\r\n')), saida.join('\r\n'))
 })
+
+// O navegador enfileira setRemoteDescription, setLocalDescription e
+// addIceCandidate na mesma conexão; o stub sem fila escondia a corrida. Aqui a
+// resposta só se aplica quando o teste libera.
+function filaComRespostaPresa(pc) {
+  let fila = Promise.resolve(), liberar
+  const presa = new Promise(r => { liberar = r })
+  const aplicadas = []
+  for (const nome of ['setRemoteDescription', 'setLocalDescription']) {
+    const original = pc[nome].bind(pc)
+    pc[nome] = d => (fila = fila.then(async () => {
+      if (nome === 'setRemoteDescription' && d.type === 'answer') await presa
+      await original(d)
+      if (nome === 'setRemoteDescription') aplicadas.push(d.type)
+    }))
+  }
+  return { aplicadas, liberar }
+}
+
+for (const [papel, eu] of [['impolite', 'zzzz0009'], ['polite', 'aaaa0001']])
+  test(`oferta que chega com a resposta ainda pendente é aceita (${papel})`, async () => {
+    const f = fixture({ eu })
+    f.t.entrar([{ id: 'bbbb0002', nome: 'B' }])
+    const p = f.t.pares.get('bbbb0002'), { pc } = p
+    assert.equal(p.polite, papel === 'polite')
+    await pc.setLocalDescription(await pc.createOffer())
+    const { aplicadas, liberar } = filaComRespostaPresa(pc)
+    const resposta = f.t.receberSinal('bbbb0002', { de: 'b1', description: { type: 'answer', sdp: '' } })
+    const oferta = f.t.receberSinal('bbbb0002', { de: 'b1', description: { type: 'offer', sdp: '' } })
+    await new Promise(r => setTimeout(r))
+    liberar()
+    await Promise.all([resposta, oferta])
+    assert.deepEqual(aplicadas, ['answer', 'offer'])
+    assert.ok(!f.eventos.some(e => e.evento === 'oferta_ignorada'))
+    assert.equal(f.sinais.at(-1).data.description.type, 'answer')
+    assert.equal(pc.signalingState, 'stable')
+    assert.equal(p.respostaPendente, false)
+  })
+
+test('colisão de verdade: impolite ignora a oferta, polite volta atrás e responde', async () => {
+  for (const [eu, ignora] of [['zzzz0009', true], ['aaaa0001', false]]) {
+    const f = fixture({ eu })
+    f.t.entrar([{ id: 'bbbb0002', nome: 'B' }])
+    const { pc } = f.t.pares.get('bbbb0002')
+    await pc.setLocalDescription(await pc.createOffer())
+    await f.t.receberSinal('bbbb0002', { de: 'b1', description: { type: 'offer', sdp: '' } })
+    assert.equal(f.eventos.some(e => e.evento === 'oferta_ignorada'), ignora, eu)
+    assert.equal(pc.signalingState, ignora ? 'have-local-offer' : 'stable', eu)
+    assert.equal(f.sinais.some(s => s.data.description?.type === 'answer'), !ignora, eu)
+  }
+})
+
+test('conexão recriada no meio da negociação: a continuação da velha não sinaliza', async () => {
+  const f = fixture()
+  f.t.entrar([{ id: 'bbbb0002', nome: 'B' }])
+  const velha = f.t.pares.get('bbbb0002')
+  let liberar
+  const presa = new Promise(r => { liberar = r })
+  const srd = velha.pc.setRemoteDescription.bind(velha.pc)
+  velha.pc.setRemoteDescription = async d => { await presa; return srd(d) }
+  const antiga = f.t.receberSinal('bbbb0002', { de: 'velha', description: { type: 'offer', sdp: '' } })
+  await new Promise(r => setTimeout(r))
+  await f.t.receberSinal('bbbb0002', { de: 'nova', description: { type: 'offer', sdp: '' } })
+  const nova = f.t.pares.get('bbbb0002')
+  assert.notEqual(nova, velha)
+  const enviados = f.sinais.length
+  liberar()
+  await antiga
+  assert.equal(f.sinais.length, enviados)
+  assert.equal(velha.pc.localDescription, null)
+  assert.equal(nova.remota, 'nova')
+})

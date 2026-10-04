@@ -93,6 +93,15 @@ const conectados = async (abas, n) => ate(async () => {
 const transceivers = (X, para) => X.run(`(() => { const p = pares.get('${para}'); return { polite: p.polite, remota: !!p.pc.remoteDescription,
   sinal: p.pc.signalingState, t: p.pc.getTransceivers().map(t => [t.mid, t.sender.track?.kind ?? null, t.currentDirection]) } })()`)
 
+// A renegociação presa deixava quem compartilha em have-local-offer com o
+// vídeo sem mid: a tela nunca chegava a quem entrou tarde ou recarregou.
+const negociado = t => t.sinal === 'stable' && t.t.every(([mid, kind]) => kind !== 'video' || mid !== null)
+// Com a tela já viva no receptor, a renegociação ainda pode estar em curso.
+const negociadoCom = (X, para) => ate(async () => { const t = await transceivers(X, para); return { ok: negociado(t), t } })
+const quadros = (X, de) => X.run(`(async () => [...(await pares.get('${de}').pc.getStats()).values()]
+  .filter(s => s.type === 'inbound-rtp' && s.kind === 'video').reduce((n, s) => n + (s.framesDecoded || 0), 0))()`)
+const quadrosCrescem = async (X, de) => { const q0 = await quadros(X, de); await espera(1500); const q1 = await quadros(X, de); return { ok: q1 > q0, q0, q1 } }
+
 const visto = async (quem, de, cond, ms) => ate(async () => {
   const l = await quem.ler()
   const p = l.pessoas.find(p => p.id === de)
@@ -164,7 +173,8 @@ try {
   passo('4 abas conectadas', (await conectados([A, B, C, D], 3)).ok, (await conectados([A, B, C, D], 3)).estados)
   r = await visto(D, idA, p => p.telasVivas === 1 && p.audios.includes('voz'))
   const idD = (await D.ler()).eu
-  passo('quem entra tarde recebe a tela e a voz de quem já compartilhava', r.ok, { p: r.p, AparaD: await transceivers(A, idD) })
+  let n = await negociadoCom(A, idD), q = await quadrosCrescem(D, idA)
+  passo('quem entra tarde recebe a tela e a voz de quem já compartilhava', r.ok && n.ok && q.ok, { p: r.p, AparaD: n.t, quadros: q })
 
   // colisão de oferta: B e C ligam a câmera ao mesmo tempo
   await Promise.all([B.run('alternarCam()'), C.run('alternarCam()')])
@@ -190,7 +200,8 @@ try {
   await B.page.waitForFunction(() => typeof meuId !== 'undefined' && meuId, null, { timeout: 30000 })
   passo('depois do F5 todos voltam a se conectar', (await conectados([A, B, C, D], 3)).ok, (await conectados([A, B, C, D], 3)).estados)
   r = await visto(B, idA, p => p.telasVivas === 1 && p.audios.includes('voz'))
-  passo('quem recarregou recebe a tela de Ana de novo', r.ok, { p: r.p, AparaB: await transceivers(A, (await B.ler()).eu) })
+  n = await negociadoCom(A, (await B.ler()).eu); q = await quadrosCrescem(B, idA)
+  passo('quem recarregou recebe a tela de Ana de novo', r.ok && n.ok && q.ok, { p: r.p, AparaB: n.t, quadros: q })
 
   // saída
   await D.page.close()

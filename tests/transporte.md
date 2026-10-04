@@ -68,6 +68,7 @@ enquanto `setRemoteDescription(answer)` ainda está pendente, e a ponta
 impolite a vê como colisão e a descarta. Ninguém oferece de novo. A correção
 provável é o `isSettingRemoteAnswerPending` do padrão de negociação perfeita,
 ou uma fila por par, mas ela muda comportamento e ficou fora desta fase.
+Corrigido em 04/10/2026 (seção abaixo).
 
 Também anterior: depois de parar a tela que levava som, o `<audio>` daquele som
 continua no receptor, mudo e classificado como `voz` (passo 6).
@@ -111,6 +112,42 @@ na malha, `removeTrack` remoto nem sempre dispara `ended`, então cem telas
 retiradas com tracks distintas deixam cem entradas. Não há teto global nem
 expiração por ora; um timeout poderia descartar uma tela que ainda vai ser
 readmitida. Nenhum caminho chama `stop()` numa track recebida.
+
+## Renegociação durante a resposta, 04/10/2026
+
+`receberSinal` não tem fila: oferta que chega com `setRemoteDescription(answer)`
+pendente já não conta como colisão. É o `readyForOffer` da negociação
+perfeita: `p.respostaPendente` fica ligado só enquanto a resposta é aplicada
+(`finally`), e o navegador enfileira a oferta atrás dela. A oferta cruzada de
+verdade continua igual: impolite ignora, polite volta atrás e responde. Também
+não sinaliza mais a continuação de uma conexão que foi recriada enquanto
+esperava: ela mandaria a descrição da velha com o id da nova.
+
+`tests/transporte.test.js` cobre a corrida com um stub que enfileira as
+descrições e segura a resposta, nos dois papéis, mais a colisão real e a
+recriação no meio. Sem a correção, falham o caso impolite (aplica só
+`answer`, registra `oferta_ignorada`) e o da recriação (sinal a mais). O caso
+polite já passava; ele protege o comportamento.
+
+Os passos 7 e 10 de `tests/e2e/malha.mjs` agora exigem, do lado de quem
+compartilha, conexão `stable`, vídeo com `mid` e quadros crescendo no
+receptor. Rodado no Mac com load de 34 a 58 (Chromium 1243 headless,
+`wrangler dev`):
+
+- Roteiro inteiro, uma vez: o passo 7 passou. O passo 10 falhou por leitura
+  cedo demais: a tela já estava viva e os quadros subindo (0 → 28), mas Ana
+  ainda estava em `have-local-offer`. Agora o roteiro espera a negociação.
+- Só entrada tardia e F5, 3 voltas com espera: 6 de 6, nos dois papéis,
+  todas `stable`, com `mid` e quadros crescendo (4 a 9 s até estabilizar).
+- O passo 3 (câmera de Ana em B e C) falhou em 2 de 3 rodadas com a correção
+  e passou na única rodada da base `ed1a0ea`. Do lado de Ana, a negociação
+  estava `stable`, com `mid` nas duas trilhas de vídeo e sem
+  `oferta_ignorada`. A causa provável está na sala, não no transporte.
+  `alternarCam` publica a câmera e só anuncia `idCam` depois de
+  `await listarCams()`. Se a track chega antes, `classificarVideo` a toma por
+  fonte não anunciada e a apaga. Ela não volta quando o anúncio chega. Na
+  rodada aprovada, a track chegou depois do anúncio (`eCam: true`). Fica em
+  aberto.
 
 ## Fica para o Marcus
 

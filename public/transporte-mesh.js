@@ -60,7 +60,7 @@
         iceServers: app.ice(),
         iceTransportPolicy: soRelay ? 'relay' : 'all',
       })
-      const p = { pc, polite, fazendoOferta: false, ignorandoOferta: false,
+      const p = { pc, polite, fazendoOferta: false, ignorandoOferta: false, respostaPendente: false,
                   conexao: Math.random().toString(36).slice(2, 10), remota: null,
                   amostras: [], relato: null }
       pares.set(id, p)
@@ -138,7 +138,7 @@
         try {
           p.fazendoOferta = true
           await definirLocal(pc)
-          sinalizarPar(id, { description: pc.localDescription })
+          if (pares.get(id) === p) sinalizarPar(id, { description: pc.localDescription })
         } catch (e) { log('negotiationneeded:', e.message); telemetria('negociacao_erro', { par: id, erro: e.message }) }
         finally { p.fazendoOferta = false }
       }
@@ -237,16 +237,26 @@
       const { pc } = p
       try {
         if (data.description) {
-          const colisao = data.description.type === 'offer' && (p.fazendoOferta || pc.signalingState !== 'stable')
+          // receberSinal não tem fila: a renegociação de quem respondeu chega
+          // logo atrás da resposta, com setRemoteDescription(answer) ainda
+          // pendente e a conexão em have-local-offer. Não é colisão; o
+          // navegador aplica as duas em ordem. Só oferta cruzada é.
+          const pronto = !p.fazendoOferta && (pc.signalingState === 'stable' || p.respostaPendente)
+          const colisao = data.description.type === 'offer' && !pronto
           p.ignorandoOferta = !p.polite && colisao
           if (p.ignorandoOferta) {
             telemetria('oferta_ignorada', { par: id })
             return log(`oferta ignorada de ${app.nome(id)} (impolite)`)
           }
-          await pc.setRemoteDescription(data.description)
+          p.respostaPendente = data.description.type === 'answer'
+          try { await pc.setRemoteDescription(data.description) }
+          finally { p.respostaPendente = false }
+          // A conexão foi recriada enquanto esta esperava: a resposta seria
+          // mandada com o id da nova.
+          if (pares.get(id) !== p) return
           if (data.description.type === 'offer') {
             await definirLocal(pc)
-            sinalizarPar(id, { description: pc.localDescription })
+            if (pares.get(id) === p) sinalizarPar(id, { description: pc.localDescription })
           }
         } else if (data.candidate) {
           try { await pc.addIceCandidate(data.candidate) } catch (e) { if (!p.ignorandoOferta) throw e }
