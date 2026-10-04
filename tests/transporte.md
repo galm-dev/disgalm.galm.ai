@@ -203,6 +203,27 @@ track, para tela e câmera, com a mesma track reentregue e `stop()` contado e
 sem volta. Com `t.stop()` no descarte, os quatro falham. A limpeza no `ended`
 e por outro stream tem teste próprio, que falha sem cada uma delas.
 
+Terceira revisão (R2): se a mesma track chegava com o stream novo antes do
+anúncio que retirava o antigo, ela ficava nos dois. O antigo ia para as
+retiradas, e readmiti-lo mostrava a mesma track em duas telas. Agora, ao
+chegar, `esquecerVideo` tira a track de qualquer outro stream, tanto em
+`p.videos` quanto em `p.videosRetirados`, antes de associar o novo. Outra
+track em outro stream fica. O ouvinte de `ended` é registrado uma vez por
+track (`p.videosOuvidos`, `WeakSet`) e limpa por identidade. Antes, um
+`ended` tardio de A apagava B quando B já ocupava o mesmo stream, porque a
+remoção era por stream; isso vinha de antes destas mudanças.
+
+Política de retenção de vídeo recebido, por pessoa:
+- Cada track tem no máximo uma associação vigente, contando `p.videos` e
+  `p.videosRetirados` juntos. A mesma track entregue cem vezes, com cem
+  streams, deixa uma associação e um ouvinte.
+- Tracks distintas ficam até `ended` ou até a pessoa ser recriada (conexão
+  nova). Na malha, `removeTrack` remoto em geral só silencia a track, sem
+  `ended`, então cem streams diferentes retirados deixam cem entradas.
+- Sem teto global nem prazo por ora: um prazo pode apagar uma readmissão
+  legítima. Nenhuma track recebida leva `stop()`. A retenção medida é de
+  referências JavaScript; decoder, rede e memória nativa não foram medidos.
+
 Em aberto: vídeo que nunca é anunciado fica em `p.videos` até `ended` ou até
 a pessoa sair. Sem política definida de expiração ou limite, não há descarte;
 um prazo pode apagar uma promoção legítima que só chega tarde.

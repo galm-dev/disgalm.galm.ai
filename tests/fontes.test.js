@@ -351,3 +351,48 @@ test('guardada some quando termina, e quando a mesma track volta com outro strea
   await r.anuncio({ compartilhando: true, idsTelas: ['C'] })
   assert.equal(r.pessoa().telas.has('C'), false)
 })
+
+// Uma associação por track: o transceiver reaproveitado pode trazer a mesma
+// track com outro stream antes do anúncio que retira o anterior.
+test('track que chega com outro stream antes da retirada não deixa o stream antigo como apelido', async () => {
+  for (const [antigo, ehCam] of [['S1', false], ['C1', true]]) {
+    const r = receptor()
+    const outra = { compartilhando: true, idsTelas: ['S3'] }
+    await r.anuncio(ehCam ? { ...outra, idCam: antigo } : { compartilhando: true, idsTelas: [antigo, 'S3'] })
+    const t = r.video(antigo), u = r.video('S3')
+    r.video('S2', t)                                     // antes de o anúncio tirar o antigo
+    assert.deepEqual([...r.pessoa().videos.keys()].sort(), ['S2', 'S3'], antigo)
+    await r.anuncio({ compartilhando: true, idsTelas: ['S2', 'S3'] })
+    assert.equal(r.pessoa().videosRetirados.has(antigo), false, antigo)
+    // Readmitir o antigo não ressuscita a mesma track em dois lugares.
+    await r.anuncio(ehCam ? { compartilhando: true, idsTelas: ['S2', 'S3'], idCam: antigo }
+                          : { compartilhando: true, idsTelas: [antigo, 'S2', 'S3'] })
+    assert.equal(r.pessoa().telas.has(antigo), false, antigo)
+    assert.equal(r.pessoa().cam.getVideoTracks().length, 0, antigo)
+    assert.equal(r.pessoa().telas.get('S2').getVideoTracks()[0], t, antigo)
+    assert.equal(r.pessoa().telas.get('S3').getVideoTracks()[0], u, antigo)  // a independente fica
+  }
+})
+
+test('a mesma track entregue muitas vezes: um ouvinte de ended e uma associação', async () => {
+  const r = receptor()
+  const t = r.video('S0')
+  for (let i = 1; i <= 100; i++) {
+    await r.anuncio({ compartilhando: true, idsTelas: [`S${i - 1}`] })
+    r.video(`S${i}`, t)
+    await r.anuncio({ compartilhando: false })
+  }
+  assert.equal(t.ouvintes.length, 1)
+  assert.equal(r.pessoa().videos.size + r.pessoa().videosRetirados.size, 1)
+  for (const fn of t.ouvintes) fn()
+  assert.equal(r.pessoa().videos.size + r.pessoa().videosRetirados.size, 0)
+})
+
+test('ended tardio da track substituída não apaga a que ocupa o stream agora', async () => {
+  const r = receptor()
+  await r.anuncio({ compartilhando: true, idsTelas: ['X'] })
+  const a = r.video('X'), b = r.video('X')
+  for (const fn of a.ouvintes) fn()
+  assert.equal(r.pessoa().telas.get('X')?.getVideoTracks()[0], b)
+  assert.equal(r.pessoa().videos.get('X'), b)
+})

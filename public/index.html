@@ -1271,6 +1271,11 @@
       redividir()
     }
 
+    function esquecerVideo(p, track) {
+      for (const mapa of [p.videos, p.videosRetirados ?? new Map()])
+        for (const [sid, t] of mapa) if (t === track) mapa.delete(sid)
+    }
+
     function receberTrack(id, track, stream) {
       const p = pessoas.get(id)
       if (!p) return
@@ -1280,13 +1285,17 @@
         eCam: sid === p.estado?.idCam, mudo: track.muted })
       if (track.kind === 'audio') return receberAudio(id, track, sid)
 
-      for (const [s, t] of p.videosRetirados ?? []) if (t === track) p.videosRetirados.delete(s)
+      // Uma associação por track, contando as retiradas: o transceiver
+      // reaproveitado traz a mesma track com outro stream, às vezes antes do
+      // anúncio que retira o anterior. Outra track em outro stream fica.
+      esquecerVideo(p, track)
       p.videos.set(sid, track)
-      track.addEventListener('ended', () => {
-        p.videos.delete(sid)
-        if (p.videosRetirados?.get(sid) === track) p.videosRetirados.delete(sid)
-        classificarVideo(id)
-      })
+      // Um ouvinte por track: ela pode chegar muitas vezes, com streams diferentes.
+      const ouvidas = p.videosOuvidos ??= new WeakSet()
+      if (!ouvidas.has(track)) {
+        ouvidas.add(track)
+        track.addEventListener('ended', () => { esquecerVideo(p, track); classificarVideo(id) })
+      }
       classificarVideo(id)
       if (!foco || foco === 'local' && !telas.length) focar(id)
     }
