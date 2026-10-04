@@ -204,7 +204,14 @@ function receptor() {
   const run = code => runInNewContext(code, state)
   run("novaPessoa('bbbb0002', 'B')")
   const pessoa = () => run("pessoas.get('bbbb0002')")
-  const video = sid => { const t = { ...faixa('video'), addEventListener() {} }; state.receberTrack('bbbb0002', t, { id: sid }); return t }
+  // stop() é sem volta, como no navegador, e fica contado.
+  const nova = () => {
+    const t = { ...faixa('video'), readyState: 'live', paradas: 0, ouvintes: [] }
+    t.stop = () => { t.paradas++; t.readyState = 'ended' }
+    t.addEventListener = (ev, fn) => { if (ev === 'ended') t.ouvintes.push(fn) }
+    return t
+  }
+  const video = (sid, t = nova()) => { state.receberTrack('bbbb0002', t, { id: sid }); return t }
   const anuncio = estado => state.receberSinal('bbbb0002', { estado: { compartilhando: false, idsTelas: [], idCam: null, ...estado } })
   return { pessoa, video, anuncio, novaPessoa: () => run("novaPessoa('bbbb0002', 'B')") }
 }
@@ -279,4 +286,68 @@ test('pessoa nova começa sem o histórico de vídeo da conexão anterior', asyn
   // vídeo espera em vez de cair pelo histórico velho.
   r.video('tela')
   assert.equal(r.pessoa().videos.has('tela'), true)
+})
+
+// Mesma conexão, mesmo stream: o navegador pode reentregar o mesmo
+// receiver.track, e a track da readmissão pode chegar antes do anúncio.
+for (const [fonte, anunciar] of [['tela', on => ({ compartilhando: on, idsTelas: on ? ['S'] : [] })],
+                                 ['câmera', on => ({ idCam: on ? 'S' : null })]]) {
+  const exibida = (r, t) => fonte === 'tela' ? r.pessoa().telas.get('S')?.getVideoTracks()[0] === t
+                                             : r.pessoa().cam.getVideoTracks()[0] === t
+  const semTile = r => fonte === 'tela' ? r.pessoa().telas.size === 0 : r.pessoa().cam.getVideoTracks().length === 0
+
+  test(`${fonte} readmitida com o mesmo id: track antes do anúncio volta a aparecer, sem stop()`, async () => {
+    const r = receptor()
+    await r.anuncio(anunciar(true))
+    const t = r.video('S')
+    assert.ok(exibida(r, t))
+    await r.anuncio(anunciar(false))
+    assert.ok(semTile(r))
+    assert.equal(r.pessoa().videos.has('S'), false)
+    // Readmissão: a mesma track chega de novo antes do anúncio.
+    r.video('S', t)
+    assert.ok(semTile(r))
+    assert.equal(r.pessoa().videos.has('S'), false)
+    await r.anuncio(anunciar(true))
+    assert.ok(exibida(r, t))
+    assert.equal(t.paradas, 0)
+    assert.equal(t.readyState, 'live')
+  })
+
+  test(`${fonte} readmitida com o mesmo id: anúncio antes da track, e a retirada não para a track`, async () => {
+    const r = receptor()
+    await r.anuncio(anunciar(true))
+    const t = r.video('S')
+    await r.anuncio(anunciar(false))
+    assert.ok(semTile(r))
+    // Sem novo evento de track: o anúncio sozinho promove a guardada.
+    await r.anuncio(anunciar(true))
+    assert.ok(exibida(r, t))
+    await r.anuncio(anunciar(false))
+    await r.anuncio(anunciar(true))
+    r.video('S', t)
+    assert.ok(exibida(r, t))
+    assert.equal(t.paradas, 0)
+  })
+}
+
+test('guardada some quando termina, e quando a mesma track volta com outro stream', async () => {
+  const r = receptor()
+  await r.anuncio({ compartilhando: true, idsTelas: ['A'] })
+  const t = r.video('A')
+  await r.anuncio({ compartilhando: false })
+  assert.equal(r.pessoa().videos.has('A'), false)
+  // O transceiver reaproveitado entrega a mesma track com o stream de outra tela.
+  await r.anuncio({ compartilhando: true, idsTelas: ['B'] })
+  r.video('B', t)
+  await r.anuncio({ compartilhando: true, idsTelas: ['A', 'B'] })
+  assert.equal(r.pessoa().telas.has('A'), false)
+  assert.equal(r.pessoa().telas.get('B').getVideoTracks()[0], t)
+
+  const u = r.video('C')
+  await r.anuncio({ compartilhando: true, idsTelas: ['C'] })
+  await r.anuncio({ compartilhando: false })
+  for (const fn of u.ouvintes) fn()
+  await r.anuncio({ compartilhando: true, idsTelas: ['C'] })
+  assert.equal(r.pessoa().telas.has('C'), false)
 })

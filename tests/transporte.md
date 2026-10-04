@@ -177,6 +177,32 @@ reaproveitar o transceiver e entregar o mesmo `receiver.track` se o stream
 voltar. O anúncio atual é conferido antes do histórico, então o mesmo stream
 pode voltar. O histórico é da pessoa, e conexão nova cria pessoa nova.
 
+A segunda revisão (D1) achou uma regressão nisso: na mesma conexão, anunciar
+S, receber, retirar, receber a track da readmissão e só então anunciar S de
+novo deixava zero vídeos. A track tinha sido apagada, e o anúncio não tinha o
+que promover. Agora a retirada guarda a track em `p.videosRetirados`, fora de
+`p.videos`, sem tile e sem `stop()`, uma por stream. O anúncio que readmite o
+stream a promove, sem precisar de outro evento de track. Ela sai de lá quando
+termina (`ended`), quando a mesma track chega com outro stream ou quando a
+pessoa é recriada.
+
+No emissor, nenhum caminho atual retira e volta a anunciar o mesmo stream:
+- Tela: cada uma nova é um `getDisplayMedia` novo, e `pararTela` para as
+  tracks. `recapturar` mantém o stream, mas a tela não sai do anúncio.
+- Câmera: ligar e virar (`pararCam` + `alternarCam`) chamam `getUserMedia` de
+  novo, sempre com id novo.
+- Malha: o transceiver reaproveitado pode trazer o mesmo `receiver.track` com
+  o stream de outra fonte; é o caso "chega com outro stream".
+- SFU: o catálogo fecha a assinatura com `ended` e reabre com outra track,
+  enquanto o anúncio continua.
+A readmissão do mesmo id fica coberta para cliente de outra versão e para o
+navegador que reentregar a track, não por um caminho de hoje.
+
+Testes em `tests/fontes.test.js`: as duas ordens, track → anúncio e anúncio →
+track, para tela e câmera, com a mesma track reentregue e `stop()` contado e
+sem volta. Com `t.stop()` no descarte, os quatro falham. A limpeza no `ended`
+e por outro stream tem teste próprio, que falha sem cada uma delas.
+
 Em aberto: vídeo que nunca é anunciado fica em `p.videos` até `ended` ou até
 a pessoa sair. Sem política definida de expiração ou limite, não há descarte;
 um prazo pode apagar uma promoção legítima que só chega tarde.

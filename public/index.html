@@ -1083,6 +1083,10 @@
     // track apagada aqui não volta quando o anúncio chega. O histórico vale
     // enquanto a pessoa durar (conexão nova é pessoa nova) e não esquece o
     // retirado; o anúncio atual vem antes dele, para o mesmo stream voltar.
+    // A track retirada não é parada: o navegador pode reentregar o mesmo
+    // receiver.track, e o anúncio que readmite o stream pode vir depois dela.
+    // Fica guardada fora de p.videos, sem tile, uma por stream, até voltar ao
+    // anúncio, terminar ou chegar com outro stream.
     function classificarVideo(id) {
       const p = pessoas.get(id)
       if (!p) return
@@ -1092,11 +1096,15 @@
       const ids = sabemos ? idsTelas(e) : [...p.videos.keys()]
       const cam = [], porTela = new Map(ids.map(sid => [sid, []]))
       const vistos = p.videosAnunciados ??= new Set()
+      const retirados = p.videosRetirados ??= new Map()
+      const anunciado = sid => sabemos && sid === e.idCam || porTela.has(sid)
       if (sabemos) for (const sid of [...ids, e.idCam].filter(Boolean)) vistos.add(sid)
+      for (const [sid, t] of retirados)
+        if (anunciado(sid)) { if (!p.videos.has(sid)) p.videos.set(sid, t); retirados.delete(sid) }
       for (const [sid, t] of p.videos) {
         if (sabemos && sid === e.idCam) cam.push(t)
         else if (porTela.has(sid)) porTela.get(sid).push(t)
-        else if (vistos.has(sid)) p.videos.delete(sid)   // saiu do anúncio: morta
+        else if (vistos.has(sid)) { p.videos.delete(sid); retirados.set(sid, t) }   // saiu do anúncio
       }
       sincroniza(p.cam, cam)
       // Reaproveita o MediaStream de cada tela: trocar o srcObject pisca o vídeo.
@@ -1272,8 +1280,13 @@
         eCam: sid === p.estado?.idCam, mudo: track.muted })
       if (track.kind === 'audio') return receberAudio(id, track, sid)
 
+      for (const [s, t] of p.videosRetirados ?? []) if (t === track) p.videosRetirados.delete(s)
       p.videos.set(sid, track)
-      track.addEventListener('ended', () => { p.videos.delete(sid); classificarVideo(id) })
+      track.addEventListener('ended', () => {
+        p.videos.delete(sid)
+        if (p.videosRetirados?.get(sid) === track) p.videosRetirados.delete(sid)
+        classificarVideo(id)
+      })
       classificarVideo(id)
       if (!foco || foco === 'local' && !telas.length) focar(id)
     }
