@@ -214,6 +214,21 @@ test('remoto: reconexão recria a pessoa e as tracks novas voltam a formar a min
   assert.equal(s.quadro('b').palcoMini, 'C2')
 })
 
+test('remoto: a troca do espectador sobrevive à reconexão, em qualquer ordem das tracks', () => {
+  for (const ordem of [['S', 'C'], ['C', 'S']]) {
+    const s = sala(); s.run("novaPessoa('b', 'B')")
+    s.anunciar(['S'], 'C'); s.receber('S'); s.receber('C')
+    s.run("focar('b')"); s.$('v-palco-mini').onclick()
+    assert.equal(s.quadro('b').palco, 'C')
+    // A conexão recriada entrega uma track por vez; no meio, só uma fonte existe.
+    s.run("novaPessoa('b', 'B')")
+    for (const sid of ordem) s.state.receberTrack('b', track(sid + '2'), { id: sid })
+    assert.equal(s.run('camNoCentro'), true, ordem.join('→'))
+    assert.equal(s.quadro('b').palco, 'C2')
+    assert.equal(s.quadro('b').palcoMini, 'S2')
+  }
+})
+
 test('remoto: várias telas + câmera mantém uma câmera na miniatura da tela escolhida', () => {
   const s = sala(); s.run("novaPessoa('b', 'B')")
   s.anunciar(['S1', 'S2', 'S3'], 'C')

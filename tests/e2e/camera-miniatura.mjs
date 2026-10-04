@@ -32,14 +32,20 @@ const falsos = () => {
 }
 
 // O que a página mostra para uma pessoa: tile e, se ela está em foco, o palco.
-// "vivo" = há track live e o elemento já decodificou imagem (videoWidth > 0).
-const VER = id => `(() => {
-  const v = el => el && { track: el.srcObject?.getVideoTracks()[0]?.readyState ?? null, largura: el.videoWidth,
-    vivo: el.srcObject?.getVideoTracks()[0]?.readyState === 'live' && el.videoWidth > 0, oculto: el.hidden }
+// "vivo" = track live, imagem já decodificada e quadros novos chegando ao elemento.
+// "track" é o id da track exibida, para conferir que tela e câmera estão no lugar certo.
+const VER = id => `(async () => {
+  const quadros = el => el?.getVideoPlaybackQuality?.().totalVideoFrames ?? 0
+  const els = el => [el, el?.srcObject?.getVideoTracks()[0], quadros(el)]
   const t = document.getElementById('t-${id}')
-  return { foco, camNoCentro,
-    tile: t && { tela: v(t.querySelector('.v-tela')), cam: v(t.querySelector('.v-cam')), mini: !!t.querySelector('.v-cam.mini') },
-    palco: v(document.getElementById('v-palco')), palcoMini: v(document.getElementById('v-palco-mini')) }
+  const todos = { tela: els(t?.querySelector('.v-tela')), cam: els(t?.querySelector('.v-cam')),
+    palco: els(document.getElementById('v-palco')), palcoMini: els(document.getElementById('v-palco-mini')) }
+  await new Promise(r => setTimeout(r, 700))
+  const v = ([el, tr, q0]) => el && { track: tr?.id ?? null, estado: tr?.readyState ?? null, largura: el.videoWidth,
+    quadros: quadros(el) - q0, vivo: tr?.readyState === 'live' && el.videoWidth > 0 && quadros(el) > q0, oculto: el.hidden }
+  const r = Object.fromEntries(Object.entries(todos).map(([k, x]) => [k, v(x)]))
+  return { foco, camNoCentro, tile: t && { tela: r.tela, cam: r.cam, mini: !!t.querySelector('.v-cam.mini') },
+    palco: r.palco, palcoMini: r.palcoMini }
 })()`
 
 const browser = await chromium.launch({ executablePath: exe, headless: true,
@@ -66,7 +72,11 @@ const quando = (X, id, cond, ms) => ate(async () => { const v = await X.ver(id);
 
 // Tile com tela grande e câmera no canto; palco com a tela e a câmera na miniatura.
 const tileComMini = v => v.tile?.mini && v.tile.tela?.vivo && v.tile.cam?.vivo
-const palcoComMini = v => v.palco?.vivo && v.palcoMini?.vivo && !v.palcoMini.oculto
+// Sem troca, a tela do tile está no centro e a câmera do tile na miniatura; com troca, o contrário.
+const palcoComMini = (v, trocado = false) => v.palco?.vivo && v.palcoMini?.vivo && !v.palcoMini.oculto &&
+  v.palco.track === (trocado ? v.tile?.cam?.track : v.tile?.tela?.track) &&
+  v.palcoMini.track === (trocado ? v.tile?.tela?.track : v.tile?.cam?.track)
+const semMiniNoPalco = v => v.palco?.vivo && v.palco.track === v.tile?.tela?.track && v.palcoMini?.oculto && v.palcoMini.track === null
 
 try {
   const A = await aba('Ana'), B = await aba('Bia')
@@ -86,16 +96,16 @@ try {
 
   // Trocar no palco e voltar.
   await B.page.locator('#v-palco-mini').click()
-  r = await quando(B, idA, v => v.camNoCentro && palcoComMini(v))
+  r = await quando(B, idA, v => v.camNoCentro && palcoComMini(v, true))
   passo('clique na miniatura troca câmera e tela no palco', r.ok, r.v)
   await B.page.locator('#v-palco-mini').click()
 
   // Câmera desligada durante a tela: nada de câmera parada no palco de quem envia.
   await A.page.locator('#v-palco-mini').click()          // câmera no centro antes de desligar
   await A.run('pararCam()')
-  r = await quando(A, 'local', v => !v.tile?.mini && v.palco?.vivo && v.palcoMini?.oculto && !v.camNoCentro)
+  r = await quando(A, 'local', v => !v.tile?.mini && semMiniNoPalco(v) && !v.camNoCentro)
   passo('Ana desliga a câmera: a tela volta ao centro e a miniatura some', r.ok, r.v)
-  r = await quando(B, idA, v => !v.tile?.mini && v.tile?.tela?.vivo && v.palco?.vivo && v.palcoMini?.oculto)
+  r = await quando(B, idA, v => !v.tile?.mini && v.tile?.tela?.vivo && semMiniNoPalco(v))
   passo('Bia: sem câmera de Ana, tile e palco só com a tela', r.ok, r.v)
 
   await A.run('alternarCam()')
@@ -110,11 +120,12 @@ try {
   passo('Caio entra tarde e vê a tela de Ana com a câmera no canto', r.ok, r.v)
 
   // Queda do WebSocket de quem envia: a mídia segue e a miniatura também.
+  const idAntes = idA
   await A.run('ws.close()')
-  await ate(async () => ({ ok: (await A.run('ws?.readyState')) === 1 }))
-  await espera(2000)
+  await ate(async () => ({ ok: (await A.run('ws?.readyState')) !== 1 }), 5000, 50)
+  const volta = await ate(async () => ({ ok: (await A.run('ws?.readyState')) === 1 && (await A.run('meuId')) === idAntes }))
   r = await quando(B, idA, v => tileComMini(v) && palcoComMini(v))
-  passo('depois da queda do WS de Ana, Bia segue com a miniatura', r.ok, r.v)
+  passo('queda do WS de Ana: ela volta com o mesmo id e Bia segue com a miniatura', !!volta?.ok && r.ok, { volta, v: r.v })
 
   // F5 de quem recebe.
   await B.page.reload()

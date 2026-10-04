@@ -665,8 +665,9 @@
       controle('b-cam', 'Ligar câmera')
       $('b-virar').hidden = true
       desenharTile('local')
-      // Com tela, o palco continua local, mas sem a câmera parada no centro ou na miniatura.
-      if (foco === 'local') focar(telas.length ? 'local' : proximoComVideo())
+      // Com tela, o palco continua local, mas sem a câmera parada no centro ou na
+      // miniatura. A troca acaba junto: religar põe a câmera de volta no canto.
+      if (foco === 'local') { camNoCentro = false; focar(telas.length ? 'local' : proximoComVideo()) }
       anunciar()
       atualizarDiag()
     }
@@ -1009,7 +1010,6 @@
         `<button type="button" data-tela="${textoHtml(t.id)}" aria-pressed="${t === tela}">Tela ${i + 1}</button>`).join('')
       const cam = d?.cam?.getVideoTracks().length ? d.cam : null
       const ambos = !!(tela && cam)
-      if (!ambos) camNoCentro = false     // a troca só vale enquanto houver as duas
       const fonte = ambos && camNoCentro ? cam : tela || cam
       const mini = ambos ? (camNoCentro ? tela : cam) : null
       $('v-palco-mini').srcObject = mini
