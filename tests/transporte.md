@@ -72,6 +72,17 @@ ou uma fila por par, mas ela muda comportamento e ficou fora desta fase.
 Também anterior: depois de parar a tela que levava som, o `<audio>` daquele som
 continua no receptor, mudo e classificado como `voz` (passo 6).
 
+Corrigido depois: `removeTrack` no emissor só silencia o áudio no receptor,
+sem `ended`, como já acontecia com o vídeo. `classificar()` agora remove o
+áudio que já foi de tela e saiu do anúncio; o que nunca foi tela continua voz,
+então cliente antigo ou sem anúncio não perde o microfone. Track nova no mesmo
+stream remove o `<audio>` anterior. Coberto por `tests/audio-tela.test.js` e
+por dois passos novos em `tests/e2e/malha.mjs`: parar a tela com som deixa só
+`voz`, e 3 ciclos de ligar e parar a tela com som não acumulam áudio. Malha
+local (wrangler dev + Chromium headless), 2026-10-04: todos os passos OK com a
+correção. Sem ela, os dois passos novos falham e cada ciclo deixa mais um
+`voz` (`voz,voz,voz` → `voz,voz,voz,voz,voz`).
+
 ## Fica para o Marcus
 
 - Rede real com TURN: `relay_bytes` só aparece com candidato relay local, e o

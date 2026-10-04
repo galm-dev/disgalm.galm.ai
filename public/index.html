@@ -1112,11 +1112,18 @@
     // Anúncio de versão anterior traz só streamId e, talvez, idTela2.
     const idsTelas = e => e.idsTelas || [e.streamId, e.idTela2].filter(Boolean)
 
+    // Como no vídeo, removeTrack no emissor só silencia o áudio aqui, sem
+    // 'ended'. Áudio que já foi de tela e saiu do anúncio está morto e sai. O
+    // resto vira voz: sem anúncio, não dá para apagar nada por não ser tela.
     function classificar(id) {
       const p = pessoas.get(id)
       if (!p) return
       const ids = idsTelas(p.estado || {})
-      for (const [sid, a] of p.audios) a.tipo = ids.includes(sid) ? 'tela' : 'voz'
+      for (const [sid, a] of p.audios) {
+        if (ids.includes(sid)) a.tipo = 'tela'
+        else if (a.tipo === 'tela') { a.el.remove(); p.audios.delete(sid) }
+        else a.tipo = 'voz'
+      }
       aplicarVolumes(id)
     }
 
@@ -1127,8 +1134,12 @@
       el.autoplay = true
       el.srcObject = new MediaStream([track])   // uma track por elemento: ver PLANO-POC.md
       el.play?.().catch(e => { log(`autoplay bloqueado (${e.name}) — clique na página`); telemetria('autoplay_bloqueado', { par: id }) })
+      p.audios.get(streamId)?.el.remove()       // track nova no mesmo stream substitui a velha
       p.audios.set(streamId, { el, tipo: 'voz', track })
-      track.addEventListener('ended', () => { el.remove(); p.audios.delete(streamId); })
+      track.addEventListener('ended', () => {
+        el.remove()
+        if (p.audios.get(streamId)?.el === el) p.audios.delete(streamId)
+      })
       classificar(id)
       if (p.audios.size === 1) medirFala(id, el.srcObject)  // primeira = voz, move o anel verde
     }

@@ -143,11 +143,21 @@ try {
 
   // parar fonte
   await A.run('pararTela(telas[0])')
-  r = await visto(B, idA, p => p.telasVivas === 1)
-  passo('parar a primeira tela deixa uma', r.ok, r.p)
+  // Só a primeira tela leva som: parado, o <audio> dela sai em vez de virar voz.
+  r = await visto(B, idA, p => p.telasVivas === 1 && p.audios.join() === 'voz')
+  passo('parar a primeira tela deixa uma, e o som dela sai', r.ok, r.p)
   await A.run('pararCam()')
   r = await visto(B, idA, p => p.cam === 0)
   passo('parar câmera tira a câmera', r.ok, r.p)
+  const ciclos = []
+  for (let i = 0; i < 3; i++) {
+    await A.run('adicionarTela()')
+    const liga = await visto(B, idA, p => p.telasVivas === 2 && p.audios.join() === 'tela,voz')
+    await A.run('pararTela(telas.at(-1))')
+    const desliga = await visto(B, idA, p => p.telasVivas === 1 && p.audios.join() === 'voz')
+    ciclos.push([liga.ok, desliga.ok, desliga.p?.audios])
+  }
+  passo('ligar e parar a tela com som 3 vezes não acumula áudio', ciclos.every(([l, d]) => l && d), ciclos)
 
   // entrar tarde
   const D = await aba('Davi')
