@@ -28,7 +28,10 @@ function fixture() {
   }
   const audios = []
   const createElement = tag => {
-    const el = { tag, paused: true, srcObject: null, volume: 1, remove() {},
+    let src = null
+    const el = { tag, paused: true, volume: 1, remove() {}, track: null,
+                 get srcObject() { return src },
+                 set srcObject(s) { src = s; if (s) this.track = s.getAudioTracks()[0] },   // de qual track ele nasceu
                  pause() { this.paused = true }, play() { this.paused = false; return Promise.resolve() } }
     if (tag === 'audio') audios.push(el)
     return el
@@ -81,15 +84,16 @@ function fixture() {
   const par = 'bbbb0002'
   const track = (nivel = 0) => {
     const ouvintes = {}
-    return { kind: 'audio', muted: false, readyState: 'live', nivel,
-             addEventListener: (t, f) => { ouvintes[t] = f }, encerrar: () => ouvintes.ended?.() }
+    const t = { kind: 'audio', muted: false, readyState: 'live', nivel, stops: 0, stop() { t.stops++ },
+                addEventListener: (tipo, f) => { (ouvintes[tipo] ??= []).push(f) },
+                encerrar: () => { for (const f of ouvintes.ended ?? []) f() } }
+    return t
   }
-  const doStream = new Map()                       // track → o <audio> criado para ela
   const receber = (t, streamId) => {
     state.__track = t
     run(`receberTrack('${par}', __track, { id: '${streamId}' })`)
-    doStream.set(t, audios.at(-1))
   }
+  const doStream = t => audios.findLast(el => el.track === t)   // o <audio> mais novo da track
   const anunciar = estado => run(`receberSinal('${par}', ${JSON.stringify({ de: 'x', estado })})`)
   const tipos = () => run(`[...pessoas.get('${par}').audios].map(([sid, a]) => sid + ':' + a.tipo).join(',')`)
   const tamanho = () => run(`pessoas.get('${par}').audios.size`)
@@ -101,7 +105,7 @@ function fixture() {
   const falando = () => $('t-' + par).classList.classes.has('falando')
   const abertos = () => contextos.filter(c => !c.closed)
   const recriar = () => run(`removerPessoa('${par}'); novaPessoa('${par}', 'B')`)
-  return { run, receber, anunciar, tipos, tamanho, vivos, ligado, doStream: t => doStream.get(t), audios, track,
+  return { run, receber, anunciar, tipos, tamanho, vivos, ligado, doStream, audios, track,
            quadro, pendentes, rodarQuadro, frames: () => frames.size, falando, contextos, abertos, recriar }
 }
 
@@ -230,7 +234,7 @@ test('áudio de tela que chega depois de sair do anúncio é descartado; readmit
   const tardia = f.track()
   f.receber(tardia, 'S')                             // primeira chegada de S, já fora do anúncio
   assert.equal(f.tipos(), 'voz:voz')
-  assert.equal(f.ligado(f.doStream(tardia)), false)
+  assert.equal(f.doStream(tardia), undefined)        // nem chega a tocar
 
   await f.anunciar({ compartilhando: true, idsTelas: ['S'] })
   const nova = f.track()
@@ -307,4 +311,61 @@ test('trocar a voz ou recriar a pessoa não deixa medidor velho', async () => {
   assert.equal(f.abertos().length, 1)
   assert.equal(f.frames(), 1)
   assert.equal(f.falando(), true)
+})
+
+// Retirada e readmissão do mesmo stream com a mesma track: o emissor atual não
+// faz isso (cada tela é um getDisplayMedia novo), mas a ordem dos eventos não
+// pode decidir se o som volta.
+async function retirada(f) {
+  await f.anunciar({ compartilhando: true, idsTelas: ['S'] })
+  const voz = f.track(), tela = f.track()
+  f.receber(voz, 'voz')
+  f.receber(tela, 'S')
+  await f.anunciar({ compartilhando: false, idsTelas: [] })
+  assert.equal(f.tipos(), 'voz:voz')
+  assert.equal(f.ligado(f.doStream(tela)), false)
+  return { voz, tela }
+}
+
+const readmitida = (f, { voz, tela }) => {
+  assert.equal(f.tipos(), 'voz:voz,S:tela')
+  assert.equal(f.ligado(f.doStream(tela)), true)
+  assert.equal(f.ligado(f.doStream(voz)), true)
+  assert.equal(f.vivos().length, 2)
+  assert.equal(tela.stops + voz.stops, 0)
+}
+
+test('readmissão: anúncio e depois a mesma track', async () => {
+  const f = fixture()
+  const t = await retirada(f)
+  await f.anunciar({ compartilhando: true, idsTelas: ['S'] })
+  readmitida(f, t)
+  f.receber(t.tela, 'S')
+  readmitida(f, t)
+})
+
+test('readmissão: a mesma track e depois o anúncio', async () => {
+  const f = fixture()
+  const t = await retirada(f)
+  f.receber(t.tela, 'S')
+  assert.equal(f.tipos(), 'voz:voz')
+  assert.equal(f.vivos().length, 1)
+  await f.anunciar({ compartilhando: true, idsTelas: ['S'] })
+  readmitida(f, t)
+})
+
+test('áudio retirado some com ended e com a recriação da pessoa', async () => {
+  const f = fixture()
+  const t = await retirada(f)
+  t.tela.encerrar()
+  await f.anunciar({ compartilhando: true, idsTelas: ['S'] })
+  assert.equal(f.tipos(), 'voz:voz')
+
+  const g = fixture()
+  const u = await retirada(g)
+  g.recriar()
+  await g.anunciar({ compartilhando: true, idsTelas: ['S'] })
+  assert.equal(g.tamanho(), 0)
+  assert.equal(g.vivos().length, 0)
+  assert.equal(u.tela.stops + u.voz.stops, 0)
 })

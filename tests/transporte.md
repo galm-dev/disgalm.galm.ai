@@ -92,6 +92,15 @@ acumulam áudio. Sem a correção, cada ciclo deixa mais um `voz`
 (`voz,voz,voz` → `voz,voz,voz,voz,voz`). O volume por pessoa ainda volta a 1
 quando a conexão é recriada: é outro item.
 
+Readmissão do mesmo stream: o áudio de tela retirado (ou que chega já
+retirado) fica num mapa de retirados da pessoa, sem `<audio>` e sem `stop()`,
+e sai no `ended` ou na recriação. Se o stream volta ao anúncio, a mesma track
+volta a tocar como tela, em qualquer ordem entre track e anúncio. No emissor
+atual isso não acontece: cada `adicionarTela` é um `getDisplayMedia` com
+stream novo, `recapturar` troca a track sem tirar o stream do anúncio, e
+`pararTela` tira a tela e para as tracks. A política cobre outra versão de
+cliente ou corrida de sinalização, e é a mesma que o vídeo vai seguir.
+
 ## Fica para o Marcus
 
 - Rede real com TURN: `relay_bytes` só aparece com candidato relay local, e o
