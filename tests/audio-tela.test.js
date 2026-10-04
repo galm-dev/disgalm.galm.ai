@@ -86,7 +86,8 @@ function fixture() {
     const ouvintes = {}
     const t = { kind: 'audio', muted: false, readyState: 'live', nivel, stops: 0, stop() { t.stops++ },
                 addEventListener: (tipo, f) => { (ouvintes[tipo] ??= []).push(f) },
-                encerrar: () => { for (const f of ouvintes.ended ?? []) f() } }
+                encerrar: () => { for (const f of ouvintes.ended ?? []) f() },
+                ouvintesFim: () => (ouvintes.ended ?? []).length }
     return t
   }
   const receber = (t, streamId) => {
@@ -105,8 +106,15 @@ function fixture() {
   const falando = () => $('t-' + par).classList.classes.has('falando')
   const abertos = () => contextos.filter(c => !c.closed)
   const recriar = () => run(`removerPessoa('${par}'); novaPessoa('${par}', 'B')`)
+  // Onde a track está associada, tocando ou retirada.
+  const associacoes = t => {
+    state.__alvo = t
+    return JSON.parse(run(`JSON.stringify((p => [...[...p.audios].filter(([, a]) => a.track === __alvo).map(([sid]) => sid),
+                       ...[...p.retirados].filter(([, x]) => x === __alvo).map(([sid]) => 'retirado:' + sid)])(pessoas.get('${par}')))`))
+  }
+  const vivosDe = t => audios.filter(el => el.track === t && ligado(el)).length
   return { run, receber, anunciar, tipos, tamanho, vivos, ligado, doStream, audios, track,
-           quadro, pendentes, rodarQuadro, frames: () => frames.size, falando, contextos, abertos, recriar }
+           quadro, pendentes, rodarQuadro, frames: () => frames.size, falando, contextos, abertos, recriar, associacoes, vivosDe }
 }
 
 test('parar a tela sem ended desliga o áudio dela e mantém a voz', async () => {
@@ -322,7 +330,7 @@ async function retirada(f) {
   f.receber(voz, 'voz')
   f.receber(tela, 'S')
   await f.anunciar({ compartilhando: false, idsTelas: [] })
-  assert.equal(f.tipos(), 'voz:voz')
+  assert.ok(!f.tipos().split(',').includes('S:tela'))
   assert.equal(f.ligado(f.doStream(tela)), false)
   return { voz, tela }
 }
@@ -368,4 +376,69 @@ test('áudio retirado some com ended e com a recriação da pessoa', async () =>
   assert.equal(g.tamanho(), 0)
   assert.equal(g.vivos().length, 0)
   assert.equal(u.tela.stops + u.voz.stops, 0)
+})
+
+// Uma associação vigente por track. A mesma track retirada de S e entregue
+// com outro stream passa a valer só no novo: readmitir S não a toca de novo.
+for (const destino of ['S2', 'mic2'])
+  for (const ordem of ['anúncio antes', 'evento antes']) {
+    test(`track de S retirada que volta como ${destino} (${ordem}) não reaparece em S`, async () => {
+      const f = fixture()
+      const outra = f.track()                        // outro microfone, que não pode mudar
+      f.receber(outra, 'outra')
+      const ids = destino === 'S2' ? ['S2'] : []
+      let t
+      if (ordem === 'anúncio antes') {
+        t = await retirada(f)
+        f.receber(t.tela, destino)
+        await f.anunciar({ compartilhando: ids.length > 0, idsTelas: ids })
+      } else {
+        await f.anunciar({ compartilhando: true, idsTelas: ['S'] })
+        t = { voz: f.track(), tela: f.track() }
+        f.receber(t.voz, 'voz')
+        f.receber(t.tela, 'S')
+        f.receber(t.tela, destino)                   // antes do anúncio que tira S
+        await f.anunciar({ compartilhando: ids.length > 0, idsTelas: ids })
+      }
+      await f.anunciar({ compartilhando: true, idsTelas: ['S', ...ids] })   // S readmitida
+      const tipo = destino === 'S2' ? 'tela' : 'voz'
+      assert.deepEqual(f.associacoes(t.tela), [destino])
+      assert.equal(f.vivosDe(t.tela), 1)
+      assert.equal(f.tipos().split(',').sort().join(), ['outra:voz', 'voz:voz', `${destino}:${tipo}`].sort().join())
+      assert.equal(f.vivosDe(outra), 1)
+      assert.equal(f.vivosDe(t.voz), 1)
+      assert.equal(t.tela.stops + t.voz.stops + outra.stops, 0)
+    })
+  }
+
+test('a mesma track em 100 streams de tela fica com uma associação só', async () => {
+  const f = fixture()
+  const voz = f.track(), t = f.track()
+  f.receber(voz, 'voz')
+  const ids = []
+  for (let i = 0; i < 100; i++) {
+    ids.push(`S${i}`)
+    await f.anunciar({ compartilhando: true, idsTelas: [`S${i}`] })
+    f.receber(t, `S${i}`)
+    await f.anunciar({ compartilhando: false, idsTelas: [] })
+    assert.ok(f.associacoes(t).length <= 1)
+  }
+  assert.deepEqual(f.associacoes(t), ['retirado:S99'])
+  await f.anunciar({ compartilhando: true, idsTelas: ids })   // todas de volta
+  assert.deepEqual(f.associacoes(t), ['S99'])
+  assert.equal(f.vivosDe(t), 1)
+  assert.equal(f.vivosDe(voz), 1)
+  assert.equal(t.stops, 0)
+})
+
+test('100 entregas da mesma track registram um listener de ended', () => {
+  const f = fixture()
+  const t = f.track()
+  for (let i = 0; i < 100; i++) f.receber(t, 'voz')
+  assert.equal(t.ouvintesFim(), 1)
+  assert.equal(f.tipos(), 'voz:voz')
+  assert.equal(f.vivosDe(t), 1)
+  t.encerrar()
+  assert.equal(f.tamanho(), 0)
+  assert.equal(f.vivosDe(t), 0)
 })

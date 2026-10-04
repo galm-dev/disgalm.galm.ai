@@ -101,6 +101,17 @@ stream novo, `recapturar` troca a track sem tirar o stream do anúncio, e
 `pararTela` tira a tela e para as tracks. A política cobre outra versão de
 cliente ou corrida de sinalização, e é a mesma que o vídeo vai seguir.
 
+Retenção: cada track tem no máximo uma associação vigente, contando o que
+toca e o que está retirado. A mesma track entregue com outro stream (outra
+tela ou voz) perde a associação antiga antes de ganhar a nova, então
+readmitir o stream antigo não a toca duas vezes, e cem streams com a mesma
+track deixam uma entrada só. O listener de `ended` é um por track. Tracks
+distintas retiradas ficam guardadas até o `ended` ou a recriação da pessoa:
+na malha, `removeTrack` remoto nem sempre dispara `ended`, então cem telas
+retiradas com tracks distintas deixam cem entradas. Não há teto global nem
+expiração por ora; um timeout poderia descartar uma tela que ainda vai ser
+readmitida. Nenhum caminho chama `stop()` numa track recebida.
+
 ## Fica para o Marcus
 
 - Rede real com TURN: `relay_bytes` só aparece com candidato relay local, e o

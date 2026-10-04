@@ -1152,24 +1152,35 @@
       p.audios.set(streamId, { el, tipo, track })
     }
 
+    // Cada track tem no máximo uma associação vigente, tocando ou retirada: a
+    // mesma track entregue com outro stream deixa de valer no stream antigo,
+    // senão a readmissão dele a tocaria duas vezes. Nunca stop(): a track é do
+    // receiver, e a associação nova a usa.
+    function soltarTrack(p, track) {
+      for (const [sid, t] of p.retirados) if (t === track) p.retirados.delete(sid)
+      for (const [sid, a] of p.audios) if (a.track === track) { desligarAudio(a.el); p.audios.delete(sid) }
+    }
+
+    const ouvindoFim = new WeakSet()            // tracks que já têm o listener de 'ended'
+
     function receberAudio(id, track, streamId) {
       const p = pessoas.get(id)
       if (!p) return
-      track.addEventListener('ended', () => {
-        if (pessoas.get(id) !== p) return
-        if (p.retirados.get(streamId) === track) p.retirados.delete(streamId)
-        const a = p.audios.get(streamId)
-        if (a?.track !== track) return
-        desligarAudio(a.el)
-        p.audios.delete(streamId)
-        medirVoz(id, p)
-      })
-      p.retirados.delete(streamId)
-      if (p.jaTelas.has(streamId) && !idsTelas(p.estado || {}).includes(streamId)) {
-        p.retirados.set(streamId, track)         // tela já retirada: guarda sem tocar
-        return
+      if (!ouvindoFim.has(track)) {
+        ouvindoFim.add(track)
+        track.addEventListener('ended', () => {
+          const atual = pessoas.get(id)
+          if (!atual) return
+          soltarTrack(atual, track)
+          classificar(id)
+        })
       }
-      tocarAudio(id, p, streamId, track, 'voz')
+      soltarTrack(p, track)
+      p.retirados.delete(streamId)               // track nova no stream substitui a retirada
+      if (p.jaTelas.has(streamId) && !idsTelas(p.estado || {}).includes(streamId))
+        p.retirados.set(streamId, track)         // tela já retirada: guarda sem tocar
+      else
+        tocarAudio(id, p, streamId, track, 'voz')
       classificar(id)
     }
 
