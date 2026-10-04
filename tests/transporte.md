@@ -146,8 +146,27 @@ receptor. Rodado no Mac com load de 34 a 58 (Chromium 1243 headless,
   `alternarCam` publica a câmera e só anuncia `idCam` depois de
   `await listarCams()`. Se a track chega antes, `classificarVideo` a toma por
   fonte não anunciada e a apaga. Ela não volta quando o anúncio chega. Na
-  rodada aprovada, a track chegou depois do anúncio (`eCam: true`). Fica em
-  aberto.
+  rodada aprovada, a track chegou depois do anúncio (`eCam: true`). A
+  thread do áudio viu a mesma falha numa worktree sem esta correção: a
+  corrida é anterior, e a base passava por sorte de tempo.
+
+## Câmera que chega antes do anúncio, 04/10/2026
+
+Somando as rodadas, o passo 3 falhou em 6 de 7 com a correção acima e
+passou em 3 de 3 na base. A track não anunciada não é mais apagada:
+`classificarVideo` a deixa em `p.videos` sem mostrar, e o anúncio que chega
+depois a promove a câmera ou tela. Só sai o vídeo que já foi anunciado e
+saiu do anúncio (`p.videosAnunciados`), o que mantém a limpeza de câmera e
+tela paradas. O caminho de áudio não mudou.
+
+`tests/fontes.test.js` monta o receptor e entrega a track da câmera antes do
+anúncio com `idCam`. Sem a correção, a câmera nunca aparece.
+
+E2E focado, uma vez (load de 21 a 36): passo 3 e mais 5 voltas de desligar e
+religar a câmera, 12 de 12 em Bia e Caio. Entrada tardia e F5, 2 voltas, 4
+de 4 `stable`, com `mid` e quadros crescendo. No passo 3 a câmera chegou
+depois do anúncio (`eCam: true`): esta rodada não prova que a corrida
+aconteceu no navegador. Quem prova a correção é o teste.
 
 ## Fica para o Marcus
 

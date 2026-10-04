@@ -189,3 +189,53 @@ test('parar a tela tira as duas fontes do transporte e do anúncio', async () =>
   assert.deepEqual(est.fontes.map(f => f.id), [restante[0].id])
   assert.deepEqual(est.idsTelas, [p.run('telas[0].id')])
 })
+
+// ---------- do lado de quem recebe: track contra anúncio ----------
+
+function receptor() {
+  const state = {
+    document: { getElementById: () => ({ textContent: '', value: '', hidden: true, classList: { toggle() {} }, remove() {} }),
+                querySelector: () => null, addEventListener() {} },
+    addEventListener() {}, setInterval() {}, clearInterval() {}, setTimeout() {}, clearTimeout() {},
+    RTCPeerConnection: PC, MediaStream: Stream,
+  }
+  rodarCliente(state)
+  for (const f of ['desenharTile', 'focar', 'atualizarParticipantes', 'aplicarQualidade']) state[f] = () => {}
+  const run = code => runInNewContext(code, state)
+  run("novaPessoa('bbbb0002', 'B')")
+  const pessoa = () => run("pessoas.get('bbbb0002')")
+  const video = sid => { const t = { ...faixa('video'), addEventListener() {} }; state.receberTrack('bbbb0002', t, { id: sid }); return t }
+  const anuncio = estado => state.receberSinal('bbbb0002', { estado: { compartilhando: false, idsTelas: [], idCam: null, ...estado } })
+  return { pessoa, video, anuncio }
+}
+
+test('câmera que chega antes do anúncio espera por ele, e só some quando sai do anúncio', async () => {
+  const r = receptor()
+  await r.anuncio({ compartilhando: true, idsTelas: ['tela'] })
+  r.video('tela')
+  assert.deepEqual([...r.pessoa().telas.keys()], ['tela'])
+
+  // alternarCam publica antes de anunciar: a track pode chegar primeiro.
+  const cam = r.video('cam')
+  assert.equal(r.pessoa().cam.getVideoTracks().length, 0)
+  assert.deepEqual([...r.pessoa().telas.keys()], ['tela'])
+  await r.anuncio({ compartilhando: true, idsTelas: ['tela'], idCam: 'cam' })
+  assert.deepEqual(r.pessoa().cam.getVideoTracks(), [cam])
+
+  // Parar não encerra a track no receptor: quem manda é o anúncio.
+  await r.anuncio({ compartilhando: true, idsTelas: ['tela'] })
+  assert.equal(r.pessoa().cam.getVideoTracks().length, 0)
+  assert.equal(r.pessoa().videos.has('cam'), false)
+  await r.anuncio({ compartilhando: false })
+  assert.equal(r.pessoa().telas.size, 0)
+  assert.equal(r.pessoa().videos.has('tela'), false)
+})
+
+test('antes do primeiro anúncio todo vídeo aparece como tela; o anúncio separa a câmera', async () => {
+  const r = receptor()
+  const cam = r.video('cam')
+  assert.deepEqual([...r.pessoa().telas.keys()], ['cam'])
+  await r.anuncio({ idCam: 'cam' })
+  assert.deepEqual(r.pessoa().cam.getVideoTracks(), [cam])
+  assert.equal(r.pessoa().telas.size, 0)
+})
