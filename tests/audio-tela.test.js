@@ -528,7 +528,7 @@ test('volume ajustado durante o surdo vale na hora para a tela e na volta para a
   const voz = f.doStream(receberEm('bbbb0002', 'voz')), tela = f.doStream(receberEm('bbbb0002', 'tela-1'))
   clicar('b-surdo')
   assert.deepEqual([voz.volume, tela.volume], [0, 1])
-  // Slider do palco (tela) e do tile (voz), com a pessoa em foco.
+  // Tela pelo slider do palco, com a pessoa em foco; voz direto no volume guardado.
   f.run("foco = 'bbbb0002'")
   f.run("$('palco-vol').oninput({ target: { value: '0.4' } })")
   f.run("pessoas.get('bbbb0002').volumes.voz = 0.5; aplicarVolumes('bbbb0002')")
@@ -549,4 +549,20 @@ test('silenciar o mic não mexe no que se ouve', async () => {
   clicar('b-mic')
   assert.equal(mic.enabled, true)
   assert.deepEqual([voz.volume, tela.volume], [0.6, 0.25])
+})
+
+test('surdo com o mic já mudo volta mudo; abrir o mic tira do surdo com a tela intacta', async () => {
+  const { f, mic, anunciarA, receberEm, vol, clicar, surdo } = preparar()
+  await anunciarA('bbbb0002', { compartilhando: true, idsTelas: ['tela-1'] })
+  const voz = f.doStream(receberEm('bbbb0002', 'voz')), tela = f.doStream(receberEm('bbbb0002', 'tela-1'))
+  vol('bbbb0002', 'voz', 0.6); vol('bbbb0002', 'tela', 0.25)
+  clicar('b-mic')
+  clicar('b-surdo')
+  assert.deepEqual([voz.volume, tela.volume, mic.enabled], [0, 0.25, false])
+  clicar('b-surdo')
+  assert.deepEqual([surdo(), voz.volume, tela.volume, mic.enabled], [false, 0.6, 0.25, false])
+  // Pelo mic: sai do surdo e abre o mic.
+  clicar('b-surdo')
+  clicar('b-mic')
+  assert.deepEqual([surdo(), voz.volume, tela.volume, mic.enabled], [false, 0.6, 0.25, true])
 })
