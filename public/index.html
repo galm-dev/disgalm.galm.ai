@@ -641,13 +641,16 @@
       transporte.publicar(fontes.abrir('camera', t, camStream))
       $('b-cam').classList.replace('cortado', 'on')
       controle('b-cam', 'Desligar câmera')
-      await listarCams()                        // os rótulos só existem depois da permissão
+      // Os rótulos só existem depois da permissão. Se a listagem falhar, a câmera
+      // já está publicada e ainda precisa aparecer e ser anunciada.
+      await listarCams().catch(() => {})
       const cfg = t.getSettings()
       if (cfg.deviceId) $('camdev').value = cfg.deviceId
       ladoCam = cfg.facingMode || ladoCam
       $('b-virar').hidden = !cfg.facingMode || $('camdev').options.length < 2
       telemetria('camera', { ligada: true, lado: cfg.facingMode ?? null, res: `${cfg.width}x${cfg.height}`, pares: pessoas.size })
       desenharTile('local')
+      if (foco === 'local') focar('local')      // com tela no palco, a câmera entra na miniatura
       anunciar()
       aplicarQualidade()
     }
@@ -662,7 +665,8 @@
       controle('b-cam', 'Ligar câmera')
       $('b-virar').hidden = true
       desenharTile('local')
-      if (foco === 'local' && !telas.length) focar(proximoComVideo())
+      // Com tela, o palco continua local, mas sem a câmera parada no centro ou na miniatura.
+      if (foco === 'local') focar(telas.length ? 'local' : proximoComVideo())
       anunciar()
       atualizarDiag()
     }
@@ -1005,6 +1009,7 @@
         `<button type="button" data-tela="${textoHtml(t.id)}" aria-pressed="${t === tela}">Tela ${i + 1}</button>`).join('')
       const cam = d?.cam?.getVideoTracks().length ? d.cam : null
       const ambos = !!(tela && cam)
+      if (!ambos) camNoCentro = false     // a troca só vale enquanto houver as duas
       const fonte = ambos && camNoCentro ? cam : tela || cam
       const mini = ambos ? (camNoCentro ? tela : cam) : null
       $('v-palco-mini').srcObject = mini
