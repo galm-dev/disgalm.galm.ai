@@ -168,6 +168,19 @@ de 4 `stable`, com `mid` e quadros crescendo. No passo 3 a câmera chegou
 depois do anúncio (`eCam: true`): esta rodada não prova que a corrida
 aconteceu no navegador. Quem prova a correção é o teste.
 
+Depois da revisão (`investigacoes/disgalm-revisao-p2.md`, M1), o histórico
+guarda todo id que já esteve no anúncio, `idCam` e telas, mesmo sem track, e
+não esquece o retirado. Antes, uma track que chegava depois da retirada, ou
+uma segunda track atrasada do mesmo stream, ficava pendente para sempre. A
+descartada sai de `p.videos` mas não leva `stop()`: o navegador pode
+reaproveitar o transceiver e entregar o mesmo `receiver.track` se o stream
+voltar. O anúncio atual é conferido antes do histórico, então o mesmo stream
+pode voltar. O histórico é da pessoa, e conexão nova cria pessoa nova.
+
+Em aberto: vídeo que nunca é anunciado fica em `p.videos` até `ended` ou até
+a pessoa sair. Sem política definida de expiração ou limite, não há descarte;
+um prazo pode apagar uma promoção legítima que só chega tarde.
+
 ## Fica para o Marcus
 
 - Rede real com TURN: `relay_bytes` só aparece com candidato relay local, e o

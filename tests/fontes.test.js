@@ -206,7 +206,7 @@ function receptor() {
   const pessoa = () => run("pessoas.get('bbbb0002')")
   const video = sid => { const t = { ...faixa('video'), addEventListener() {} }; state.receberTrack('bbbb0002', t, { id: sid }); return t }
   const anuncio = estado => state.receberSinal('bbbb0002', { estado: { compartilhando: false, idsTelas: [], idCam: null, ...estado } })
-  return { pessoa, video, anuncio }
+  return { pessoa, video, anuncio, novaPessoa: () => run("novaPessoa('bbbb0002', 'B')") }
 }
 
 test('câmera que chega antes do anúncio espera por ele, e só some quando sai do anúncio', async () => {
@@ -238,4 +238,45 @@ test('antes do primeiro anúncio todo vídeo aparece como tela; o anúncio separ
   await r.anuncio({ idCam: 'cam' })
   assert.deepEqual(r.pessoa().cam.getVideoTracks(), [cam])
   assert.equal(r.pessoa().telas.size, 0)
+})
+
+test('vídeo retirado do anúncio é descartado mesmo se a track chega depois; o mesmo stream pode voltar', async () => {
+  const r = receptor()
+  // Anunciada e retirada antes de a track chegar.
+  await r.anuncio({ compartilhando: true, idsTelas: ['tarde'] })
+  await r.anuncio({ compartilhando: false })
+  r.video('tarde')
+  assert.equal(r.pessoa().videos.has('tarde'), false)
+  assert.equal(r.pessoa().telas.size, 0)
+
+  // Anunciada, recebida, retirada; outra track do mesmo stream chega atrasada.
+  await r.anuncio({ compartilhando: true, idsTelas: ['tela'] })
+  r.video('tela')
+  await r.anuncio({ compartilhando: false })
+  r.video('tela')
+  assert.equal(r.pessoa().videos.has('tela'), false)
+
+  // Readmissão: o anúncio atual manda, mesmo com o id no histórico.
+  await r.anuncio({ compartilhando: true, idsTelas: ['tela'] })
+  const volta = r.video('tela')
+  assert.deepEqual(r.pessoa().telas.get('tela').getVideoTracks(), [volta])
+
+  // Vídeo nunca anunciado espera e vira tela quando anunciado.
+  r.video('nova')
+  assert.equal(r.pessoa().telas.has('nova'), false)
+  await r.anuncio({ compartilhando: true, idsTelas: ['tela', 'nova'] })
+  assert.ok(r.pessoa().telas.has('nova'))
+})
+
+test('pessoa nova começa sem o histórico de vídeo da conexão anterior', async () => {
+  const r = receptor()
+  await r.anuncio({ compartilhando: true, idsTelas: ['tela'] })
+  await r.anuncio({ compartilhando: false })
+  assert.ok(r.pessoa().videosAnunciados.has('tela'))
+  r.novaPessoa()
+  assert.equal(r.pessoa().videosAnunciados, undefined)
+  // Sem anúncio da conexão nova ainda vale o anterior, guardado na sala; o
+  // vídeo espera em vez de cair pelo histórico velho.
+  r.video('tela')
+  assert.equal(r.pessoa().videos.has('tela'), true)
 })

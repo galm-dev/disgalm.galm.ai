@@ -1077,9 +1077,12 @@
     // E há um detalhe que não é óbvio: removeTrack no emissor NÃO encerra a track
     // no receptor — ela apenas fica muda, o evento 'ended' nunca dispara, e o
     // <video> segue exibindo o último quadro para sempre. Então quem manda é o
-    // anúncio: track cujo streamId foi anunciado e saiu do anúncio está morta.
-    // A que chega antes de ser anunciada espera: quem liga a câmera publica e
-    // só anuncia depois, e a track apagada aqui não volta quando o anúncio chega.
+    // anúncio: track cujo streamId foi anunciado e saiu do anúncio está morta,
+    // inclusive a que só chega depois da retirada. A que chega antes de ser
+    // anunciada espera: quem liga a câmera publica e só anuncia depois, e a
+    // track apagada aqui não volta quando o anúncio chega. O histórico vale
+    // enquanto a pessoa durar (conexão nova é pessoa nova) e não esquece o
+    // retirado; o anúncio atual vem antes dele, para o mesmo stream voltar.
     function classificarVideo(id) {
       const p = pessoas.get(id)
       if (!p) return
@@ -1089,14 +1092,11 @@
       const ids = sabemos ? idsTelas(e) : [...p.videos.keys()]
       const cam = [], porTela = new Map(ids.map(sid => [sid, []]))
       const vistos = p.videosAnunciados ??= new Set()
+      if (sabemos) for (const sid of [...ids, e.idCam].filter(Boolean)) vistos.add(sid)
       for (const [sid, t] of p.videos) {
         if (sabemos && sid === e.idCam) cam.push(t)
         else if (porTela.has(sid)) porTela.get(sid).push(t)
-        else {
-          if (vistos.delete(sid)) p.videos.delete(sid)   // saiu do anúncio: morta
-          continue                                      // ainda não anunciada: espera
-        }
-        if (sabemos) vistos.add(sid)
+        else if (vistos.has(sid)) p.videos.delete(sid)   // saiu do anúncio: morta
       }
       sincroniza(p.cam, cam)
       // Reaproveita o MediaStream de cada tela: trocar o srcObject pisca o vídeo.
