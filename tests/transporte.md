@@ -181,6 +181,19 @@ Em aberto: vídeo que nunca é anunciado fica em `p.videos` até `ended` ou até
 a pessoa sair. Sem política definida de expiração ou limite, não há descarte;
 um prazo pode apagar uma promoção legítima que só chega tarde.
 
+Também da revisão (M2), os testes da negociação ganharam três casos, cada
+um derrubado pela sua mutação: resposta rejeitada seguida de oferta em
+`have-local-offer` (sem o `finally`, a impolite aceita a oferta) e conexão
+recriada com o `setLocalDescription` preso na própria oferta ou na resposta
+(sem o guard de cada ponto, sai a descrição velha com o id novo).
+
+Fica para depois (M3): o `PC` do stub troca de estado sem validar a
+transição, não faz rollback e não enfileira `createOffer`, `createAnswer` nem
+`addIceCandidate`. Por isso answer → offer → answer "funciona" no stub e
+responde uma oferta com outra oferta. Validar as transições e modelar a fila
+inteira, com rejeição, daria prova de rollback e de glare durante a criação
+da oferta. SDP real e celulares continuam dependendo de ensaio.
+
 ## Fica para o Marcus
 
 - Rede real com TURN: `relay_bytes` só aparece com candidato relay local, e o

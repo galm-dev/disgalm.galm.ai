@@ -297,3 +297,47 @@ test('conexão recriada no meio da negociação: a continuação da velha não s
   assert.equal(velha.pc.localDescription, null)
   assert.equal(nova.remota, 'nova')
 })
+
+test('resposta rejeitada libera a marca: a oferta seguinte em have-local-offer é colisão', async () => {
+  const f = fixture({ eu: 'zzzz0009' })                  // impolite
+  f.t.entrar([{ id: 'bbbb0002', nome: 'B' }])
+  const p = f.t.pares.get('bbbb0002'), { pc } = p
+  await pc.setLocalDescription(await pc.createOffer())
+  pc.setRemoteDescription = async () => { throw new Error('resposta inválida') }
+  await f.t.receberSinal('bbbb0002', { de: 'b1', description: { type: 'answer', sdp: '' } })
+  assert.equal(p.respostaPendente, false)
+  assert.ok(f.eventos.some(e => e.evento === 'sinal_erro'))
+  await f.t.receberSinal('bbbb0002', { de: 'b1', description: { type: 'offer', sdp: '' } })
+  assert.ok(f.eventos.some(e => e.evento === 'oferta_ignorada'))
+  assert.equal(pc.signalingState, 'have-local-offer')
+})
+
+// Segura o setLocalDescription da conexão atual até o teste liberar.
+function slPreso(pc) {
+  let liberar
+  const presa = new Promise(r => { liberar = r })
+  const sld = pc.setLocalDescription.bind(pc)
+  pc.setLocalDescription = async d => { await presa; return sld(d) }
+  return () => liberar()
+}
+
+for (const [caso, preparar] of [
+  ['a própria oferta', async (f, velha) => { velha.remota = 'velha'; return velha.pc.onnegotiationneeded() }],
+  ['a resposta', async f => f.t.receberSinal('bbbb0002', { de: 'velha', description: { type: 'offer', sdp: '' } })],
+])
+  test(`conexão recriada enquanto aplicava ${caso}: a descrição velha não sai com o id novo`, async () => {
+    const f = fixture({ eu: 'zzzz0009' })                // impolite: oferece sem esperar
+    f.t.entrar([{ id: 'bbbb0002', nome: 'B' }])
+    const velha = f.t.pares.get('bbbb0002')
+    const liberar = slPreso(velha.pc)
+    const pendente = preparar(f, velha)
+    await new Promise(r => setTimeout(r))
+    await f.t.receberSinal('bbbb0002', { de: 'nova', description: { type: 'offer', sdp: '' } })
+    const nova = f.t.pares.get('bbbb0002')
+    assert.notEqual(nova, velha)
+    const enviados = f.sinais.length
+    liberar()
+    await pendente
+    assert.ok(velha.pc.localDescription)                 // a velha terminou, mas calada
+    assert.equal(f.sinais.length, enviados)
+  })
