@@ -1113,18 +1113,29 @@
     const idsTelas = e => e.idsTelas || [e.streamId, e.idTela2].filter(Boolean)
 
     // Como no vídeo, removeTrack no emissor só silencia o áudio aqui, sem
-    // 'ended'. Áudio que já foi de tela e saiu do anúncio está morto e sai. O
-    // resto vira voz: sem anúncio, não dá para apagar nada por não ser tela.
+    // 'ended'. Stream que já foi anunciado como tela nesta conexão e saiu do
+    // anúncio está morto: o áudio dele sai, mesmo chegando depois. O resto vira
+    // voz: sem anúncio, não dá para apagar nada só por não ser tela.
     function classificar(id) {
       const p = pessoas.get(id)
       if (!p) return
       const ids = idsTelas(p.estado || {})
+      for (const sid of ids) p.jaTelas.add(sid)
       for (const [sid, a] of p.audios) {
         if (ids.includes(sid)) a.tipo = 'tela'
-        else if (a.tipo === 'tela') { a.el.remove(); p.audios.delete(sid) }
+        else if (p.jaTelas.has(sid)) { desligarAudio(a.el); p.audios.delete(sid) }
         else a.tipo = 'voz'
       }
+      medirVoz(id, p)
       aplicarVolumes(id)
+    }
+
+    // Os <audio> recebidos nunca entram no DOM: remove() sozinho não faz nada
+    // e o elemento seguiria tocando a track.
+    function desligarAudio(el) {
+      el.pause()
+      el.srcObject = null
+      el.remove()
     }
 
     function receberAudio(id, track, streamId) {
@@ -1134,35 +1145,57 @@
       el.autoplay = true
       el.srcObject = new MediaStream([track])   // uma track por elemento: ver PLANO-POC.md
       el.play?.().catch(e => { log(`autoplay bloqueado (${e.name}) — clique na página`); telemetria('autoplay_bloqueado', { par: id }) })
-      p.audios.get(streamId)?.el.remove()       // track nova no mesmo stream substitui a velha
+      const velho = p.audios.get(streamId)      // track nova no mesmo stream substitui a velha
+      if (velho) desligarAudio(velho.el)
       p.audios.set(streamId, { el, tipo: 'voz', track })
       track.addEventListener('ended', () => {
-        el.remove()
-        if (p.audios.get(streamId)?.el === el) p.audios.delete(streamId)
+        desligarAudio(el)
+        if (pessoas.get(id) !== p || p.audios.get(streamId)?.el !== el) return
+        p.audios.delete(streamId)
+        medirVoz(id, p)
       })
       classificar(id)
-      if (p.audios.size === 1) medirFala(id, el.srcObject)  // primeira = voz, move o anel verde
+    }
+
+    // O anel verde segue a voz: a primeira entrada classificada como voz. Se a
+    // tela chegou antes, o medidor passa para a voz quando ela for reconhecida.
+    function medirVoz(id, p) {
+      const el = [...p.audios.values()].find(a => a.tipo === 'voz')?.el
+      if (p.medidor?.el === el) return
+      p.medidor?.parar()
+      p.medidor = el ? { el, parar: medirFala(id, el.srcObject, () => pessoas.get(id) === p) } : null
     }
 
     // Anel verde de quem está falando, reaproveitando o medidor dos PoCs.
-    function medirFala(id, stream) {
+    // Devolve como parar; para sozinho quando as tracks acabam ou `vale` nega.
+    function medirFala(id, stream, vale = () => true) {
       const ctx = new AudioContext()
       ctx.resume()
       const an = ctx.createAnalyser()
       an.fftSize = 2048
-      ctx.createMediaStreamSource(stream).connect(an)
+      const fonte = ctx.createMediaStreamSource(stream)
+      fonte.connect(an)
       const buf = new Float32Array(an.fftSize)
+      let raf = null, parado = false
+      const parar = () => {
+        if (parado) return
+        parado = true
+        cancelAnimationFrame(raf)
+        fonte.disconnect()
+        ctx.close()
+        if (vale()) document.getElementById('t-' + id)?.classList.remove('falando')
+      }
       const tick = () => {
-        if (id !== 'local' && !pessoas.has(id)) return
-        if (stream.getAudioTracks().every(t => t.readyState === 'ended')) return ctx.close()
+        if (!vale() || stream.getAudioTracks().every(t => t.readyState === 'ended')) return parar()
         an.getFloatTimeDomainData(buf)
         let s = 0
         for (const v of buf) s += v * v
         const db = 20 * Math.log10(Math.sqrt(s / buf.length) + 1e-12)
         document.getElementById('t-' + id)?.classList.toggle('falando', db > -50)
-        requestAnimationFrame(tick)
+        raf = requestAnimationFrame(tick)
       }
       tick()
+      return parar
     }
 
     // ---------- pessoas ----------
@@ -1176,14 +1209,17 @@
       pessoas.set(id, { nome, foto: fotoValida(estado.foto),
                         // tela e câmera são as duas vídeo: só o streamId anunciado separa.
                         videos: new Map(), telas: new Map(), cam: new MediaStream(),
-                        audios: new Map(), volumes: { voz: 1, tela: 1 }, estado })
+                        audios: new Map(), volumes: { voz: 1, tela: 1 }, estado,
+                        // streams já anunciados como tela nesta conexão
+                        jaTelas: new Set(idsTelas(estado)), medidor: null })
       desenharTile(id)
     }
 
     function removerPessoa(id) {
       const p = pessoas.get(id)
       if (!p) return
-      for (const [, a] of p.audios) a.el.remove()
+      for (const [, a] of p.audios) desligarAudio(a.el)
+      p.medidor?.parar()
       pessoas.delete(id)
       document.getElementById('t-' + id)?.remove()
       if (foco === id) focar(proximoComVideo())

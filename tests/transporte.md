@@ -73,15 +73,24 @@ Também anterior: depois de parar a tela que levava som, o `<audio>` daquele som
 continua no receptor, mudo e classificado como `voz` (passo 6).
 
 Corrigido depois: `removeTrack` no emissor só silencia o áudio no receptor,
-sem `ended`, como já acontecia com o vídeo. `classificar()` agora remove o
-áudio que já foi de tela e saiu do anúncio; o que nunca foi tela continua voz,
-então cliente antigo ou sem anúncio não perde o microfone. Track nova no mesmo
-stream remove o `<audio>` anterior. Coberto por `tests/audio-tela.test.js` e
-por dois passos novos em `tests/e2e/malha.mjs`: parar a tela com som deixa só
-`voz`, e 3 ciclos de ligar e parar a tela com som não acumulam áudio. Malha
-local (wrangler dev + Chromium headless), 2026-10-04: todos os passos OK com a
-correção. Sem ela, os dois passos novos falham e cada ciclo deixa mais um
-`voz` (`voz,voz,voz` → `voz,voz,voz,voz,voz`).
+sem `ended`, como já acontecia com o vídeo. Cada pessoa guarda, por conexão,
+os streams já anunciados como tela; `classificar()` desliga o áudio de um
+stream desses que saiu do anúncio, mesmo quando a track chega depois do
+anúncio que o tirou. Se ele voltar ao anúncio, volta a valer. O que nunca foi
+tela continua voz, então cliente antigo ou sem anúncio não perde o microfone.
+Os `<audio>` recebidos nunca entram no DOM e `remove()` sozinho não os
+desliga: o descarte é sempre `pause()`, `srcObject = null` e `remove()`, na
+classificação, na troca de track do mesmo stream, no `ended` e na saída da
+pessoa. O anel de fala tem um medidor por pessoa, preso à entrada de voz:
+passa para a voz quando a tela chegou antes, e quem sai fecha o
+`AudioContext` e cancela o quadro. O medidor velho para por identidade da
+pessoa, não só pelo id. Coberto por `tests/audio-tela.test.js` (11 casos,
+com `paused`, `srcObject`, contextos e quadros observáveis; 10 falham com o
+`index.html` anterior) e por dois passos em `tests/e2e/malha.mjs`: parar a
+tela com som deixa só `voz`, e 3 ciclos de ligar e parar a tela com som não
+acumulam áudio. Sem a correção, cada ciclo deixa mais um `voz`
+(`voz,voz,voz` → `voz,voz,voz,voz,voz`). O volume por pessoa ainda volta a 1
+quando a conexão é recriada: é outro item.
 
 ## Fica para o Marcus
 
