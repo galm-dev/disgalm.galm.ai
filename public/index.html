@@ -143,7 +143,7 @@
         <div id="barra">
           <div class="control-group">
             <button id="b-mic" title="Silenciar microfone">Microfone</button
-            ><button id="b-surdo" title="Silenciar tudo">Áudio</button
+            ><button id="b-surdo" title="Silenciar vozes">Áudio</button
             ><button id="b-cam" class="cortado" title="Ligar câmera">Câmera</button
             ><button id="b-virar" title="Virar câmera" hidden>Virar câmera</button>
           </div>
@@ -1055,10 +1055,11 @@
 
     // ---------- áudio recebido ----------
 
+    // Surdo cala só a voz: o som das telas segue no volume de cada pessoa.
     function aplicarVolumes(id) {
       const p = pessoas.get(id)
       if (!p) return
-      for (const [, a] of p.audios) a.el.volume = surdo ? 0 : (p.volumes[a.tipo] ?? 1)
+      for (const [, a] of p.audios) a.el.volume = surdo && a.tipo === 'voz' ? 0 : (p.volumes[a.tipo] ?? 1)
     }
 
     // Classifica a track pelo streamId anunciado por quem compartilha: o stream da
@@ -2168,7 +2169,7 @@
     function definirSurdo(valor) {
       surdo = valor
       $('b-surdo').classList.toggle('cortado', surdo)
-      controle('b-surdo', surdo ? 'Ativar áudio da sala' : 'Silenciar áudio da sala')
+      controle('b-surdo', surdo ? 'Ativar vozes' : 'Silenciar vozes')
       for (const id of pessoas.keys()) aplicarVolumes(id)
     }
 

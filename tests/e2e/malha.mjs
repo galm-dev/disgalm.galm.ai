@@ -133,6 +133,23 @@ try {
   const vol = (await B.ler()).pessoas.find(p => p.id === idA).volumes
   passo('volume de tela separado do de voz', vol.some(([t, v]) => t === 'tela' && v === 0.25) && vol.some(([t, v]) => t === 'voz' && v === 1), vol)
 
+  // ensurdecer: cala a voz, a tela segue no volume dela, mesmo ajustado no meio
+  const ouvir = () => B.run(`(() => { const p = pessoas.get('${idA}'); return { surdo, mic: micStream?.getAudioTracks()[0]?.enabled,
+    audios: [...p.audios.values()].map(a => [a.tipo, a.el.volume, a.el.muted, a.el.paused, !!a.el.srcObject]) } })()`)
+  const tocando = o => o.audios.every(([, , muted, paused, src]) => !muted && !paused && src)
+  await B.page.locator('#b-surdo').click()
+  let o = await ouvir()
+  passo('surdo cala a voz e mantém a tela no volume dela', o.surdo && o.mic === false && tocando(o) &&
+    o.audios.some(([t, v]) => t === 'voz' && v === 0) && o.audios.some(([t, v]) => t === 'tela' && v === 0.25), o)
+  await B.run(`(() => { const p = pessoas.get('${idA}'); p.volumes.tela = 0.4; aplicarVolumes('${idA}') })()`)
+  o = await ouvir()
+  passo('volume de tela mudado no surdo vale na hora', o.audios.some(([t, v]) => t === 'tela' && v === 0.4) &&
+    o.audios.some(([t, v]) => t === 'voz' && v === 0), o)
+  await B.page.locator('#b-surdo').click()
+  o = await ouvir()
+  passo('sair do surdo devolve a voz e o mic', !o.surdo && o.mic === true && tocando(o) &&
+    o.audios.some(([t, v]) => t === 'voz' && v === 1) && o.audios.some(([t, v]) => t === 'tela' && v === 0.4), o)
+
   // várias telas
   await A.run('adicionarTela()')
   let r = await visto(B, idA, p => p.telasVivas === 2)

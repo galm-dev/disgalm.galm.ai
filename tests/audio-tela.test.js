@@ -22,7 +22,8 @@ function fixture() {
     if (!elements.has(id)) {
       const classes = new Set()
       elements.set(id, { textContent: '', value: '', hidden: true, innerHTML: '', remove() {},
-        classList: { classes, toggle: (c, on) => on ? classes.add(c) : classes.delete(c), remove: c => classes.delete(c) } })
+        classList: { classes, toggle: (c, on) => on ? classes.add(c) : classes.delete(c), remove: c => classes.delete(c),
+                     contains: c => classes.has(c) } })
     }
     return elements.get(id)
   }
@@ -161,7 +162,7 @@ test('sem anúncio, ou com anúncio antigo sem a tela, a voz fica', async () => 
   assert.equal(f.vivos().length, 2)
 })
 
-test('track nova no mesmo stream desliga a velha; surdo zera todo áudio ligado', async () => {
+test('track nova no mesmo stream desliga a velha; surdo zera a voz', async () => {
   const f = fixture()
   const velha = f.track()
   f.receber(velha, 'voz')
@@ -441,4 +442,111 @@ test('100 entregas da mesma track registram um listener de ended', () => {
   t.encerrar()
   assert.equal(f.tamanho(), 0)
   assert.equal(f.vivosDe(t), 0)
+})
+
+// Ensurdecer cala só a voz dos outros; o som das telas segue no volume que cada
+// um escolheu. Pelos botões, como o usuário faz: o surdo também muta o mic.
+function preparar() {
+  const f = fixture()
+  const mic = { kind: 'audio', enabled: true, getSettings: () => ({}) }
+  f.run("novaPessoa('cccc0003', 'C'); bip = () => {}; controle = () => {}")
+  f.run('globalThis').__mic = mic
+  f.run('micStream = new MediaStream([__mic])')
+  const anunciarA = (id, estado) => f.run(`receberSinal('${id}', ${JSON.stringify({ de: 'x', estado })})`)
+  const receberEm = (id, sid) => {
+    const t = f.track()
+    f.run('globalThis').__t = t
+    f.run(`receberTrack('${id}', __t, { id: '${sid}' })`)
+    return t
+  }
+  const vol = (id, tipo, v) => f.run(`pessoas.get('${id}').volumes.${tipo} = ${v}; aplicarVolumes('${id}')`)
+  const clicar = b => f.run(`$('${b}').onclick()`)
+  const surdo = () => f.run('surdo')
+  return { f, mic, anunciarA, receberEm, vol, clicar, surdo }
+}
+
+test('ensurdecer cala a voz de todos e mantém cada tela no seu volume; voltar restaura', async () => {
+  const { f, mic, anunciarA, receberEm, vol, clicar, surdo } = preparar()
+  await anunciarA('bbbb0002', { compartilhando: true, idsTelas: ['tela-b'] })
+  await anunciarA('cccc0003', { compartilhando: true, idsTelas: ['tela-c'] })
+  const vozB = f.doStream(receberEm('bbbb0002', 'voz-b')), telaB = f.doStream(receberEm('bbbb0002', 'tela-b'))
+  const vozC = f.doStream(receberEm('cccc0003', 'voz-c')), telaC = f.doStream(receberEm('cccc0003', 'tela-c'))
+  vol('bbbb0002', 'voz', 0.6); vol('bbbb0002', 'tela', 0.25)
+  vol('cccc0003', 'voz', 0.8); vol('cccc0003', 'tela', 0.5)
+
+  clicar('b-surdo')
+  assert.equal(surdo(), true)
+  assert.deepEqual([vozB.volume, vozC.volume], [0, 0])
+  assert.deepEqual([telaB.volume, telaC.volume], [0.25, 0.5])
+  assert.ok([vozB, telaB, vozC, telaC].every(f.ligado))
+  // O surdo segue mutando o próprio mic, como antes.
+  assert.equal(mic.enabled, false)
+
+  clicar('b-surdo')
+  assert.equal(surdo(), false)
+  assert.deepEqual([vozB.volume, telaB.volume, vozC.volume, telaC.volume], [0.6, 0.25, 0.8, 0.5])
+  assert.equal(mic.enabled, true)
+})
+
+test('tela que chega durante o surdo toca no volume de tela; voz nova fica calada', async () => {
+  const { f, anunciarA, receberEm, vol, clicar } = preparar()
+  await anunciarA('bbbb0002', { compartilhando: false, idsTelas: [] })
+  vol('bbbb0002', 'tela', 0.3)
+  clicar('b-surdo')
+  const voz = f.doStream(receberEm('bbbb0002', 'voz'))
+  assert.equal(voz.volume, 0)
+  // Anúncio antes da track.
+  await anunciarA('bbbb0002', { compartilhando: true, idsTelas: ['tela-1'] })
+  const tela1 = f.doStream(receberEm('bbbb0002', 'tela-1'))
+  assert.equal(tela1.volume, 0.3)
+  // Track antes do anúncio: provisória como voz, calada; vira tela com o anúncio.
+  const tela2 = f.doStream(receberEm('bbbb0002', 'tela-2'))
+  assert.equal(tela2.volume, 0)
+  await anunciarA('bbbb0002', { compartilhando: true, idsTelas: ['tela-1', 'tela-2'] })
+  assert.equal(f.tipos(), 'voz:voz,tela-1:tela,tela-2:tela')
+  assert.deepEqual([voz.volume, tela1.volume, tela2.volume], [0, 0.3, 0.3])
+})
+
+test('tela retirada que volta durante o surdo volta no volume de tela', async () => {
+  const { f, anunciarA, receberEm, vol, clicar } = preparar()
+  await anunciarA('bbbb0002', { compartilhando: true, idsTelas: ['tela-1'] })
+  receberEm('bbbb0002', 'voz')
+  const t = receberEm('bbbb0002', 'tela-1')
+  vol('bbbb0002', 'tela', 0.7)
+  clicar('b-surdo')
+  await anunciarA('bbbb0002', { compartilhando: false, idsTelas: [] })
+  assert.equal(f.tipos(), 'voz:voz')
+  await anunciarA('bbbb0002', { compartilhando: true, idsTelas: ['tela-1'] })
+  assert.equal(f.tipos(), 'voz:voz,tela-1:tela')
+  assert.equal(f.doStream(t).volume, 0.7)
+  assert.equal(f.ligado(f.doStream(t)), true)
+})
+
+test('volume ajustado durante o surdo vale na hora para a tela e na volta para a voz', async () => {
+  const { f, anunciarA, receberEm, clicar } = preparar()
+  await anunciarA('bbbb0002', { compartilhando: true, idsTelas: ['tela-1'] })
+  const voz = f.doStream(receberEm('bbbb0002', 'voz')), tela = f.doStream(receberEm('bbbb0002', 'tela-1'))
+  clicar('b-surdo')
+  assert.deepEqual([voz.volume, tela.volume], [0, 1])
+  // Slider do palco (tela) e do tile (voz), com a pessoa em foco.
+  f.run("foco = 'bbbb0002'")
+  f.run("$('palco-vol').oninput({ target: { value: '0.4' } })")
+  f.run("pessoas.get('bbbb0002').volumes.voz = 0.5; aplicarVolumes('bbbb0002')")
+  assert.deepEqual([voz.volume, tela.volume], [0, 0.4])
+  clicar('b-surdo')
+  assert.deepEqual([voz.volume, tela.volume], [0.5, 0.4])
+})
+
+test('silenciar o mic não mexe no que se ouve', async () => {
+  const { f, mic, anunciarA, receberEm, vol, clicar, surdo } = preparar()
+  await anunciarA('bbbb0002', { compartilhando: true, idsTelas: ['tela-1'] })
+  const voz = f.doStream(receberEm('bbbb0002', 'voz')), tela = f.doStream(receberEm('bbbb0002', 'tela-1'))
+  vol('bbbb0002', 'voz', 0.6); vol('bbbb0002', 'tela', 0.25)
+  clicar('b-mic')
+  assert.equal(mic.enabled, false)
+  assert.equal(surdo(), false)
+  assert.deepEqual([voz.volume, tela.volume], [0.6, 0.25])
+  clicar('b-mic')
+  assert.equal(mic.enabled, true)
+  assert.deepEqual([voz.volume, tela.volume], [0.6, 0.25])
 })
