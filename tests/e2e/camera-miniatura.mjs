@@ -42,7 +42,7 @@ const VER = id => `(async () => {
     palco: els(document.getElementById('v-palco')), palcoMini: els(document.getElementById('v-palco-mini')) }
   await new Promise(r => setTimeout(r, 700))
   const v = ([el, tr, q0]) => el && { track: tr?.id ?? null, estado: tr?.readyState ?? null, largura: el.videoWidth,
-    quadros: quadros(el) - q0, vivo: tr?.readyState === 'live' && el.videoWidth > 0 && quadros(el) > q0, oculto: el.hidden }
+    quadros: quadros(el) - q0, semFonte: el.srcObject === null, vivo: tr?.readyState === 'live' && el.videoWidth > 0 && quadros(el) > q0, oculto: el.hidden }
   const r = Object.fromEntries(Object.entries(todos).map(([k, x]) => [k, v(x)]))
   return { foco, camNoCentro, tile: t && { tela: r.tela, cam: r.cam, mini: !!t.querySelector('.v-cam.mini') },
     palco: r.palco, palcoMini: r.palcoMini }
@@ -76,7 +76,7 @@ const tileComMini = v => v.tile?.mini && v.tile.tela?.vivo && v.tile.cam?.vivo
 const palcoComMini = (v, trocado = false) => v.palco?.vivo && v.palcoMini?.vivo && !v.palcoMini.oculto &&
   v.palco.track === (trocado ? v.tile?.cam?.track : v.tile?.tela?.track) &&
   v.palcoMini.track === (trocado ? v.tile?.tela?.track : v.tile?.cam?.track)
-const semMiniNoPalco = v => v.palco?.vivo && v.palco.track === v.tile?.tela?.track && v.palcoMini?.oculto && v.palcoMini.track === null
+const semMiniNoPalco = v => v.palco?.vivo && v.palco.track === v.tile?.tela?.track && v.palcoMini?.oculto && v.palcoMini.semFonte
 
 try {
   const A = await aba('Ana'), B = await aba('Bia')
