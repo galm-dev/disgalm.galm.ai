@@ -6,14 +6,17 @@
   />
   <meta name="theme-color" content="#07080B" /><title>Disgalm · Sua sala</title>
   <meta name="referrer" content="no-referrer" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="icon" href="/marca/favicon-32.png" sizes="32x32" type="image/png" />
+  <link rel="apple-touch-icon" href="/marca/apple-touch-icon.png" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,100..900&family=Geist+Mono:wght@400;500&family=Geist:wght@300;400;500;600;700&display=swap" />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,100..900;1,62..125,100..900&family=Geist+Mono:wght@400;500&family=Geist:wght@400;500;600&display=swap" />
   <link rel="stylesheet" href="/style.css" />
   <div id="entrada">
     <form class="entry-card" id="entry-form">
-      <div class="wordmark">disgalm<span>.</span></div>
-      <h1>A galera está aqui.</h1>
+      <div class="logo"><img src="/marca/simbolo.svg" alt="" width="40" height="40" /><span class="wordmark">Disgalm</span></div>
+      <h1>A galera <em>está aqui.</em></h1>
       <p>Compartilhe a tela, o jogo e a conversa.</p>
       <p id="auth-state" role="status">Verificando acesso GALM…</p>
       <button id="auth-login" type="button" hidden>Entrar com conta GALM</button>
@@ -40,7 +43,7 @@
       <span class="app-top-sep">/</span> uma sala pra galera
     </header>
     <nav class="rail" aria-label="Disgalm">
-      <div class="rail-logo wordmark">G</div>
+      <div class="rail-logo"><img src="/marca/simbolo-simplificado.svg" alt="GALM" width="28" height="28" /></div>
       <div class="rail-line"></div>
       <div class="rail-active" data-icon="voice" title="Sala de voz"></div>
       <div class="rail-bottom">GALM</div>

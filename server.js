@@ -18,7 +18,8 @@ const PORT = process.env.PORT || (tls ? 8444 : 8080)
 const RAIZ = new URL('./public/', import.meta.url).pathname
 const GUID = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11' // RFC 6455
 
-const TIPOS = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.wav': 'audio/wav' }
+const TIPOS = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.wav': 'audio/wav',
+  '.svg': 'image/svg+xml', '.png': 'image/png' }
 
 // Chaves do TURN vivem em local/ (fora do git). Quando são da Cloudflare,
 // o navegador recebe apenas credenciais efêmeras geradas pela API.

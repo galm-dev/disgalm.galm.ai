@@ -1,22 +1,23 @@
-/* Identidade do app.galm.ai (src/estilo/base.css, shell.css e proc.css):
-   superfícies quase pretas, linhas translúcidas, cor principal #7C8295,
-   Geist no corpo e Archivo largo na marca. */
+/* Identidade visual GALM (símbolo Maré): Noite no fundo, Abismo nas
+   superfícies, Névoa no texto e Prata só onde está o caminho. Archivo largo na
+   marca e Archivo 700 nos títulos, Geist no texto, Geist Mono em números e
+   etiquetas. Cantos de 8 a 12 px e bordas de 1 px sutis. */
 :root {
   color-scheme: dark;
   --bg: #07080b;
   --surface: #0c0d12;
-  --surface-2: #12131a;
-  --surface-3: #1a1b23;
+  --surface-2: #14151b;
+  --surface-3: #1c1d25;
   --fg: #edeef2;
-  --fg-2: rgba(237, 238, 242, 0.64);
-  --fg-3: rgba(237, 238, 242, 0.42);
+  --fg-2: #a4a7b4;
+  --fg-3: #6f7282;
   --fg-4: rgba(237, 238, 242, 0.26);
   --line: rgba(237, 238, 242, 0.08);
   --line-2: rgba(237, 238, 242, 0.14);
   --accent: #7c8295;
   --accent-soft: rgba(124, 130, 149, 0.13);
   --accent-line: rgba(124, 130, 149, 0.34);
-  --accent-text: rgb(179, 182.5, 193.5);
+  --accent-text: #b4becb;
   --btn: #7c8295;
   --btn-ink: #fff;
   --btn-hover: rgb(139.7, 145, 161.7);
@@ -30,9 +31,9 @@
   --body: "Geist", "Inter", system-ui, -apple-system, sans-serif;
   --mono: "Geist Mono", ui-monospace, monospace;
   --brand: "Archivo", "Geist", system-ui, sans-serif;
-  --r-1: 6px;
-  --r-2: 10px;
-  --r-3: 14px;
+  --r-1: 8px;
+  --r-2: 12px;
+  --r-3: 12px;
   --rail: 64px;
   --panel: 252px;
 }
@@ -196,8 +197,30 @@ input[type="checkbox"] {
   text-transform: uppercase;
   white-space: nowrap;
 }
-.wordmark span {
-  color: var(--accent-text);
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.logo img {
+  display: block;
+  width: 40px;
+  height: 40px;
+}
+.logo .wordmark {
+  font-size: 19px;
+}
+/* Título GALM: Archivo 700 apertado; a segunda parte em itálico 500, mais clara. */
+.titulo,
+.entry-card h1 {
+  font-family: var(--brand);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+.entry-card h1 em {
+  font-style: italic;
+  font-weight: 500;
+  color: var(--fg-2);
 }
 #entrada {
   position: absolute;
@@ -206,23 +229,25 @@ input[type="checkbox"] {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: radial-gradient(ellipse at 50% 20%, rgba(124, 130, 149, 0.1), transparent 60%), var(--bg);
+  background:
+    url("/marca/ceu.svg") center / cover no-repeat,
+    radial-gradient(ellipse at 50% 18%, rgba(180, 190, 203, 0.08), transparent 60%),
+    var(--bg);
 }
 .entry-card {
   width: 400px;
   max-width: 100%;
   padding: 32px;
-  background: var(--surface);
+  background: rgba(12, 13, 18, 0.86);
+  backdrop-filter: blur(8px);
   border: 1px solid var(--line);
   border-radius: var(--r-3);
   box-shadow: var(--shadow);
 }
 .entry-card h1 {
-  font-size: 30px;
-  font-weight: 600;
+  font-size: 34px;
   line-height: 1.05;
-  letter-spacing: -0.04em;
-  margin: 28px 0 8px;
+  margin: 32px 0 10px;
 }
 .entry-card p {
   color: var(--fg-2);
@@ -281,10 +306,11 @@ input[type="checkbox"] {
   text-align: center;
   font-family: var(--mono);
   font-size: 10px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--fg-4);
   margin-top: 22px;
+  text-wrap: balance;
 }
 #sala {
   display: none;
@@ -306,7 +332,7 @@ input[type="checkbox"] {
   background: var(--bg);
   font-family: var(--mono);
   font-size: 10px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--fg-3);
 }
@@ -353,7 +379,11 @@ input[type="checkbox"] {
   display: grid;
   place-items: center;
   border-bottom: 1px solid var(--line);
-  font-size: 20px;
+}
+.rail-logo img {
+  display: block;
+  width: 28px;
+  height: 28px;
 }
 .rail-line {
   display: none;
@@ -384,7 +414,7 @@ input[type="checkbox"] {
   color: var(--fg-4);
   font-size: 9px;
   writing-mode: vertical-rl;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.16em;
 }
 .sidebar {
   grid-column: 2;
@@ -411,10 +441,19 @@ input[type="checkbox"] {
 .eyebrow {
   font-family: var(--mono);
   font-size: 10px;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
   color: var(--fg-3);
   margin: 0 11px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.eyebrow::before {
+  content: "";
+  width: 12px;
+  height: 1px;
+  background: var(--fg-4);
 }
 .channel {
   height: 40px;
@@ -557,7 +596,7 @@ button.channel:hover:not(:disabled) {
   background: linear-gradient(135deg, hsl(var(--hue) 14% 52%), hsl(var(--hue) 42% 40%));
   color: #fff;
   font-size: 10px;
-  font-weight: 700;
+  font-weight: 600;
 }
 .avatar-small,
 .tile .avatar {
@@ -676,7 +715,8 @@ button.channel:hover:not(:disabled) {
 .profile .avatar-small {
   width: 30px;
   height: 30px;
-  background: linear-gradient(135deg, var(--accent), #8b5cff);
+  background: linear-gradient(135deg, var(--accent-text), var(--accent));
+  color: var(--bg);
   font-size: 12px;
 }
 .profile-name {
@@ -714,12 +754,10 @@ button.channel:hover:not(:disabled) {
 .room-head h2 {
   margin: 0;
   font-family: var(--brand);
-  font-stretch: 125%;
-  font-weight: 800;
-  font-size: 17px;
-  letter-spacing: 0.02em;
+  font-weight: 700;
+  font-size: 20px;
+  letter-spacing: -0.03em;
   line-height: 1;
-  text-transform: uppercase;
 }
 .room-head .head-detail {
   font-size: 12px;
@@ -822,9 +860,10 @@ button.channel:hover:not(:disabled) {
 #vazio strong {
   display: block;
   color: var(--fg);
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-family: var(--brand);
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
   margin-bottom: 6px;
 }
 #vazio p {
@@ -992,7 +1031,7 @@ button.channel:hover:not(:disabled) {
   background: linear-gradient(135deg, hsl(var(--hue) 14% 52%), hsl(var(--hue) 42% 40%));
   color: #fff;
   font-size: 18px;
-  font-weight: 700;
+  font-weight: 600;
   box-shadow: 0 0 0 6px var(--line);
 }
 .tile .nome {
@@ -1184,9 +1223,10 @@ button.channel:hover:not(:disabled) {
   border-bottom: 1px solid var(--line);
 }
 .dialog-head h2 {
-  font-size: 15px;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-family: var(--brand);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
   margin: 0;
 }
 .dialog-head button {
@@ -1229,7 +1269,8 @@ button.channel:hover:not(:disabled) {
   width: 44px;
   height: 44px;
   font-size: 16px;
-  background: linear-gradient(135deg, var(--accent), #8b5cff);
+  background: linear-gradient(135deg, var(--accent-text), var(--accent));
+  color: var(--bg);
 }
 .profile-preview small {
   flex: 1;

@@ -1,0 +1,8 @@
+<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+<defs><mask id="tide" maskUnits="userSpaceOnUse" x="0" y="0" width="100" height="100">
+<rect width="100" height="100" fill="#fff"></rect>
+<g fill="none" stroke="#000" stroke-linecap="round"><path d="M0 57Q10 53 20 57T40 57T60 57T80 57T100 57" stroke-width="3.8"></path><path d="M-8 68Q2 64 12 68T32 68T52 68T72 68T92 68T112 68" stroke-width="5"></path><path d="M0 79Q10 75 20 79T40 79T60 79T80 79T100 79" stroke-width="6.2"></path></g>
+<path d="M71.50 25.40Q73.43 34.17 82.20 36.10Q73.43 38.03 71.50 46.80Q69.57 38.03 60.80 36.10Q69.57 34.17 71.50 25.40Z" fill="#000"></path><path d="M55.90 21.80Q56.72 25.78 60.70 26.60Q56.72 27.42 55.90 31.40Q55.08 27.42 51.10 26.60Q55.08 25.78 55.90 21.80Z" fill="#000"></path><path d="M44.10 22.30Q44.63 24.87 47.20 25.40Q44.63 25.93 44.10 28.50Q43.57 25.93 41.00 25.40Q43.57 24.87 44.10 22.30Z" fill="#000"></path><path d="M35.50 26.75Q35.88 28.62 37.75 29.00Q35.88 29.38 35.50 31.25Q35.12 29.38 33.25 29.00Q35.12 28.62 35.50 26.75Z" fill="#000"></path><path d="M29.20 32.10Q29.47 33.43 30.80 33.70Q29.47 33.97 29.20 35.30Q28.93 33.97 27.60 33.70Q28.93 33.43 29.20 32.10Z" fill="#000"></path>
+</mask></defs>
+<circle cx="50" cy="50" r="40" fill="#EDEEF2" mask="url(#tide)"></circle>
+</svg>
