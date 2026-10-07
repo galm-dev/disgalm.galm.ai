@@ -15,11 +15,15 @@ const { criarRetorno, urlDeLoginValida } = require('./login.js')
 const { criarBandeja, lerUltima, gravarUltima, acharUltima } = require('./bandeja.js')
 const { criarSaude } = require('./saude.js')
 const { criarAtualizacao } = require('./atualizacao.js')
+const { segurarMontagem } = require('./montagem.js')
 
 // Uma instância só: abrir de novo (atalho, o app reaberto por um update) traz
 // a janela existente para a frente, em vez de entrar na sala duas vezes. Sai
 // antes de contar a abertura na saúde da versão.
 if (!process.argv.some(a => a.startsWith('--teste=')) && !app.requestSingleInstanceLock()) process.exit(0)
+
+// AppImage: sem isto os filhos do Chromium morrem com SIGBUS ao sair (montagem.js).
+segurarMontagem()
 
 // Conta esta abertura antes de tudo: é o que detecta crash loop (saude.js).
 const saude = process.argv.some(a => a.startsWith('--teste=')) ? null : criarSaude(app)

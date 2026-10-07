@@ -18,7 +18,7 @@ module.exports = {
   // Só o app. A UI vem de https://disgalm.galm.ai (main.js): não vai public/.
   files: [
     'main.js', 'preload.js', 'captura.js', 'alvo.js', 'login.js', 'pipewire.js', 'bandeja.js',
-    'atualizacao.js', 'saude.js', 'reamostrar.js', 'marca.js', 'renderer/**', 'package.json', 'build/icon.png',
+    'atualizacao.js', 'saude.js', 'reamostrar.js', 'marca.js', 'montagem.js', 'renderer/**', 'package.json', 'build/icon.png',
     { from: 'native/build/Release', to: 'native/build/Release', filter: ['loopback.node'] },
   ],
   // O .node não carrega de dentro do asar.
