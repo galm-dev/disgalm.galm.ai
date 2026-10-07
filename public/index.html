@@ -42,14 +42,8 @@
       <span class="wordmark">Disgalm</span>
       <span class="app-top-sep">/</span> uma sala pra galera
     </header>
-    <nav class="rail" aria-label="Disgalm">
-      <div class="rail-logo"><img src="/marca/simbolo-simplificado.svg" alt="GALM" width="28" height="28" /></div>
-      <div class="rail-line"></div>
-      <div class="rail-active" data-icon="voice" title="Sala de voz"></div>
-      <div class="rail-bottom">GALM</div>
-    </nav>
     <aside class="sidebar">
-      <div class="sidebar-head"><span class="wordmark">Disgalm</span></div>
+      <div class="sidebar-head"><img src="/marca/simbolo-simplificado.svg" alt="" width="26" height="26" /><span class="wordmark">Disgalm</span></div>
       <div class="sidebar-body">
         <div class="eyebrow">SALAS DE VOZ</div>
         <div id="channels"></div>
@@ -58,11 +52,6 @@
             aria-label="Nome da nova sala" autocomplete="off" />
         </form>
         <button id="b-new-room" class="channel-add" type="button"><span data-icon="plus"></span> Nova sala</button>
-        <div class="eyebrow">JUNTOS NA SALA</div>
-        <p class="sidebar-note">
-          Abra a câmera ou compartilhe sua tela.<br />A conversa continua por
-          aqui.
-        </p>
       </div>
       <div class="connection">
         <div class="connection-status">
@@ -83,8 +72,7 @@
       <header class="room-head">
         <button id="b-sidebar" title="Ocultar barra lateral" aria-label="Ocultar barra lateral"><span data-icon="sidebar"></span></button>
         <h2 id="room-title">galm</h2>
-        <span class="head-detail">Compartilhe o que está rolando.</span
-        ><button
+        <button
           id="b-grid"
           title="Ver participantes"
           aria-label="Ver participantes"
@@ -956,7 +944,7 @@
         `<div class="env"></div><div class="nome"><span>${textoHtml(d.nome)}${d.local ? ' <span class="muted">(você)</span>' : ''}</span><span class="badges">
            ${d.estado?.mudo ? ICONES.mudo : ''}
            ${d.estado?.surdo ? ICONES.surdo : ''}
-           ${d.estado?.compartilhando ? '<span class="tag live">LIVE</span>' : ''}
+           ${d.estado?.compartilhando ? '<span class="tag live">AO VIVO</span>' : ''}
            ${d.estado?.compartilhando && !d.estado?.temAudio ? '<span class="tag semaudio">sem áudio</span>' : ''}
          </span></div>` +
         (d.local ? '' : `<div class="vols">
@@ -2343,7 +2331,7 @@
     function atualizarParticipantes() {
       if (!$('people')) return
       const lista = [{nome: perfil.nome || 'Você', foto: perfil.foto, estado: {mudo: estouMudo()}, local:true}, ...[...pessoas.values()].map(p => ({nome:p.nome,foto:p.foto,estado:p.estado}))]
-      $('people').innerHTML = lista.map(p => `<div class="person">${avatar(p.nome, p.foto)}<span class="person-name">${textoHtml(p.nome)}${p.local ? ' <span class="muted">(você)</span>' : ''}</span>${p.estado?.compartilhando ? '<span class="tag live">LIVE</span>' : ''}${p.estado?.mudo ? ICONES.mudo : ''}</div>`).join('')
+      $('people').innerHTML = lista.map(p => `<div class="person">${avatar(p.nome, p.foto)}<span class="person-name">${textoHtml(p.nome)}${p.local ? ' <span class="muted">(você)</span>' : ''}</span>${p.estado?.compartilhando ? '<span class="tag live">AO VIVO</span>' : ''}${p.estado?.mudo ? ICONES.mudo : ''}</div>`).join('')
     }
     addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('[data-icon]').forEach(el => el.innerHTML = svgIcon(el.dataset.icon))

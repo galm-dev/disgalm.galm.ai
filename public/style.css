@@ -34,7 +34,6 @@
   --r-1: 8px;
   --r-2: 12px;
   --r-3: 12px;
-  --rail: 64px;
   --panel: 252px;
 }
 * {
@@ -315,7 +314,7 @@ input[type="checkbox"] {
 #sala {
   display: none;
   height: 100dvh;
-  grid-template-columns: var(--rail) var(--panel) minmax(0, 1fr);
+  grid-template-columns: var(--panel) minmax(0, 1fr);
   grid-template-rows: 40px minmax(0, 1fr);
   background: var(--bg);
 }
@@ -361,63 +360,8 @@ input[type="checkbox"] {
 .app-top-sep {
   color: var(--fg-4);
 }
-.rail {
-  grid-column: 1;
-  grid-row: 2;
-  background: var(--bg);
-  border-right: 1px solid var(--line);
-  display: flex;
-  align-items: center;
-  flex-direction: column;
-  padding: 0 0 16px;
-  gap: 12px;
-}
-.rail-logo {
-  width: 100%;
-  height: 60px;
-  flex: none;
-  display: grid;
-  place-items: center;
-  border-bottom: 1px solid var(--line);
-}
-.rail-logo img {
-  display: block;
-  width: 28px;
-  height: 28px;
-}
-.rail-line {
-  display: none;
-}
-.rail-active {
-  width: 42px;
-  height: 40px;
-  border-radius: var(--r-1);
-  background: var(--accent-soft);
-  color: var(--accent-text);
-  display: grid;
-  place-items: center;
-  position: relative;
-}
-.rail-active:before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 10px;
-  bottom: 10px;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--accent);
-}
-.rail-bottom {
-  margin-top: auto;
-  font-family: var(--mono);
-  color: var(--fg-4);
-  font-size: 9px;
-  writing-mode: vertical-rl;
-  letter-spacing: 0.16em;
-}
 .sidebar {
-  grid-column: 2;
+  grid-column: 1;
   grid-row: 2;
   display: flex;
   flex-direction: column;
@@ -430,6 +374,7 @@ input[type="checkbox"] {
   flex: none;
   display: flex;
   align-items: center;
+  gap: 10px;
   padding: 0 16px;
   border-bottom: 1px solid var(--line);
 }
@@ -613,19 +558,9 @@ button.channel:hover:not(:disabled) {
   width: 13px;
   height: 13px;
 }
-.sidebar-note {
-  font-size: 12px;
-  color: var(--fg-3);
-  line-height: 1.6;
-  padding: 0 11px;
-  margin: 0;
-}
 .connection {
   margin: 0 12px;
   padding: 9px 11px;
-  border-radius: var(--r-1);
-  background: var(--surface);
-  border: 1px solid var(--line);
 }
 .connection-status {
   color: var(--fg-2);
@@ -731,13 +666,17 @@ button.channel:hover:not(:disabled) {
   color: var(--fg-3);
 }
 .room-main {
-  grid-column: 3;
+  grid-column: 2;
   grid-row: 2;
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
+  /* Céu e mar da marca, com o mar apagado perto dos controles. */
+  background:
+    linear-gradient(transparent 55%, rgba(7, 8, 11, 0.7)),
+    url("/marca/ceu.svg") center / cover no-repeat,
+    var(--bg);
 }
 .room-head {
   height: 60px;
@@ -746,7 +685,6 @@ button.channel:hover:not(:disabled) {
   align-items: center;
   gap: 12px;
   padding: 0 20px 0 24px;
-  border-bottom: 1px solid var(--line);
 }
 .room-head > .icon {
   color: var(--fg-3);
@@ -758,12 +696,6 @@ button.channel:hover:not(:disabled) {
   font-size: 20px;
   letter-spacing: -0.03em;
   line-height: 1;
-}
-.room-head .head-detail {
-  font-size: 12px;
-  color: var(--fg-3);
-  border-left: 1px solid var(--line-2);
-  padding-left: 12px;
 }
 .room-head button {
   margin-left: auto;
@@ -810,7 +742,6 @@ button.channel:hover:not(:disabled) {
   background: var(--surface);
   min-height: 180px;
   flex: 1;
-  border: 1px solid var(--line);
   border-radius: var(--r-2);
   overflow: hidden;
   display: flex;
@@ -916,7 +847,7 @@ button.channel:hover:not(:disabled) {
   align-items: center;
   background: rgba(12, 13, 18, 0.82);
   border: 1px solid var(--line-2);
-  border-radius: 999px;
+  border-radius: var(--r-1);
   padding: 2px 9px;
   font-size: 11px;
   color: var(--fg-2);
@@ -924,14 +855,30 @@ button.channel:hover:not(:disabled) {
 .tag:empty {
   display: none;
 }
+/* Ao vivo: etiqueta prata com um ponto vermelho; o vermelho cheio fica para
+   o microfone, a câmera e o sair. */
 .live {
-  background: var(--danger);
-  color: var(--bg);
+  gap: 6px;
+  color: var(--fg);
   font-family: var(--mono);
   font-weight: 500;
   font-size: 9.5px;
   letter-spacing: 0.1em;
-  border-color: transparent;
+  text-transform: uppercase;
+}
+.live::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--danger);
+}
+/* Na miniatura o nome vem antes: fica só o ponto. */
+.tile .live {
+  gap: 0;
+  padding: 0 6px;
+  font-size: 0;
+  align-self: stretch;
 }
 .semaudio {
   background: var(--warn-soft);
@@ -1394,13 +1341,10 @@ button.channel:hover:not(:disabled) {
 }
 @media (max-width: 1000px) {
   #sala {
-    grid-template-columns: var(--rail) 210px minmax(0, 1fr);
+    grid-template-columns: 210px minmax(0, 1fr);
   }
   .room-head {
     padding: 0 16px 0 18px;
-  }
-  .room-head .head-detail {
-    display: none;
   }
   .room-content {
     padding: 18px 18px 0;
@@ -1414,7 +1358,6 @@ button.channel:hover:not(:disabled) {
     grid-template-columns: 1fr;
     grid-template-rows: 36px minmax(0, 1fr);
   }
-  .rail,
   .sidebar {
     display: none;
   }
@@ -1529,7 +1472,7 @@ button.channel:hover:not(:disabled) {
 #sala.lateral-oculta, #sala.maximizada {
   grid-template-columns: minmax(0, 1fr);
 }
-#sala:is(.lateral-oculta, .maximizada) :is(.rail, .sidebar) { display: none; }
+#sala:is(.lateral-oculta, .maximizada) .sidebar { display: none; }
 #sala:is(.lateral-oculta, .maximizada) .room-main { grid-column: 1; }
 #sala:not(.sem-foco):is(.participantes-ocultos, .maximizada) #tira { display: none; }
 #sala.maximizada .room-content { padding: 8px 12px 0; }

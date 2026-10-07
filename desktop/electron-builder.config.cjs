@@ -20,6 +20,7 @@ module.exports = {
     'main.js', 'preload.js', 'captura.js', 'alvo.js', 'login.js', 'pipewire.js', 'bandeja.js',
     'atualizacao.js', 'saude.js', 'reamostrar.js', 'marca.js', 'renderer/**', 'package.json', 'build/icon.png',
     { from: 'native/build/Release', to: 'native/build/Release', filter: ['loopback.node'] },
+    'linux.js',
   ],
   // O .node não carrega de dentro do asar.
   asarUnpack: ['native/**/*.node'],

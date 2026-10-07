@@ -5,12 +5,13 @@
 // produção), mas os arquivos estáticos saem de ../public deste checkout: assim
 // a UI do app é a do branch, sem precisar publicar nada. /_desktop/* sai de
 // ./renderer e só existe no app.
-const { app, BrowserWindow, MessageChannelMain, desktopCapturer, ipcMain, net, protocol, session, shell,
-  utilityProcess, webContents } = require('electron')
+const { app, BrowserWindow, MessageChannelMain, desktopCapturer, ipcMain, nativeImage, net, protocol, session,
+  shell, utilityProcess, webContents } = require('electron')
 const fs = require('node:fs')
 const path = require('node:path')
 const { pathToFileURL } = require('node:url')
 const { raizesDe } = require('./alvo.js')
+const { integrarLinux } = require('./linux.js')
 const { criarRetorno, urlDeLoginValida } = require('./login.js')
 const { criarBandeja, lerUltima, gravarUltima, acharUltima } = require('./bandeja.js')
 const { criarSaude } = require('./saude.js')
@@ -23,6 +24,12 @@ if (!process.argv.some(a => a.startsWith('--teste=')) && !app.requestSingleInsta
 
 // Conta esta abertura antes de tudo: é o que detecta crash loop (saude.js).
 const saude = process.argv.some(a => a.startsWith('--teste=')) ? null : criarSaude(app)
+
+// No Wayland, o Chromium marca a janela como sRGB e o KWin a converte para a
+// gama 2.2 da tela: os pretos clareiam (#07080b sai #101113) e a UI fica
+// cinza, diferente da mesma página no navegador. Sem a marcação, a cor passa
+// como está.
+if (process.platform === 'linux') app.commandLine.appendSwitch('disable-features', 'WaylandWpColorManagerV1')
 
 const ORIGEM = new URL(process.env.DISGALM_URL || 'https://disgalm.galm.ai').origin
 // Argumento livre na linha de comando: uma URL do Disgalm (link de convite,
@@ -335,6 +342,7 @@ ipcMain.handle('login-abrir', async (_e, href, state) => {
 
 app.whenReady().then(async () => {
   if (pipewire) pipewireOk = await pipewire.disponivel()
+  integrarLinux({ nativeImage, icone: path.join(__dirname, 'build', 'icon.png') })
   servirLocal()
   tratarGetDisplayMedia()
   // Microfone, câmera, tela e tela cheia: a UI pede, o app concede. Sem
