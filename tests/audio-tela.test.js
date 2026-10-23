@@ -650,7 +650,8 @@ test('sair da sala esquece os volumes escolhidos', async () => {
   receberEm('bbbb0002', 'voz')
   vol('bbbb0002', 'voz', 0.2)
   f.run('sairDaSala()')
-  assert.equal(f.run('volumesDe.size'), 0)
+  f.run("novaPessoa('bbbb0002', 'B')")                // a mesma pessoa, na próxima entrada
+  assert.equal(f.run("pessoas.get('bbbb0002').volumes.voz"), 1)
 })
 
 test('volume 0 fica em 0: surdo, volta do surdo e recriação', async () => {
