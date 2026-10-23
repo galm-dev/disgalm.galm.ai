@@ -6,8 +6,16 @@ const SCOPE = 'disgalm:use'
 const JWKS_URL = `${ISSUER}/.well-known/jwks.json`
 const encoder = new TextEncoder()
 
+// O JWKS fica 5 min em cache. Um kid fora dele renova antes do prazo, mas no
+// máximo uma vez a cada 30 s, e pedidos simultâneos dividem a mesma busca: o
+// header do token é do cliente, e um kid forjado não pode virar uma busca ao
+// auth por pedido. Chave nova do auth entra em até 30 s.
+const KEYS_TTL = 5 * 60_000
+const KEYS_MIN_REFRESH = 30_000
 let cachedKeys = null
 let cachedUntil = 0
+let fetchedAt = 0
+let pending = null
 
 function decode(part) {
   if (!/^[A-Za-z0-9_-]+$/.test(part)) throw new Error('base64url inválido')
@@ -15,15 +23,29 @@ function decode(part) {
   return Uint8Array.from(atob(base64.padEnd(Math.ceil(base64.length / 4) * 4, '=')), c => c.charCodeAt(0))
 }
 
-async function keys(force = false) {
-  if (!force && cachedKeys && Date.now() < cachedUntil) return cachedKeys
+async function fetchKeys() {
+  fetchedAt = Date.now()
   const response = await fetch(JWKS_URL, { headers: { accept: 'application/json' } })
   if (!response.ok) throw new Error('JWKS indisponível')
   const body = await response.json()
   if (!Array.isArray(body.keys)) throw new Error('JWKS inválido')
   cachedKeys = body.keys
-  cachedUntil = Date.now() + 5 * 60_000
+  cachedUntil = Date.now() + KEYS_TTL
   return cachedKeys
+}
+
+function refreshKeys() {
+  pending ||= fetchKeys().finally(() => { pending = null })
+  return pending
+}
+
+async function keyFor(kid) {
+  const match = list => list.find(k => k.kid === kid && k.kty === 'EC' && k.crv === 'P-256')
+  if (cachedKeys && Date.now() < cachedUntil) {
+    const jwk = match(cachedKeys)
+    if (jwk || Date.now() - fetchedAt < KEYS_MIN_REFRESH) return jwk || null
+  }
+  return match(await refreshKeys()) || null
 }
 
 export async function verifyAccess(token) {
@@ -43,8 +65,7 @@ export async function verifyAccess(token) {
         !Array.isArray(claims.amr) || !claims.amr.includes('passkey') ||
         !String(claims.scope || '').split(' ').includes(SCOPE)) return null
 
-    let jwk = (await keys()).find(k => k.kid === header.kid && k.kty === 'EC' && k.crv === 'P-256')
-    if (!jwk) jwk = (await keys(true)).find(k => k.kid === header.kid && k.kty === 'EC' && k.crv === 'P-256')
+    const jwk = await keyFor(header.kid)
     if (!jwk) return null
     const key = await crypto.subtle.importKey('jwk', jwk, { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify'])
     const valid = await crypto.subtle.verify(
