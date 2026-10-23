@@ -1,21 +1,25 @@
 // Access tokens do auth.galm.ai são conferidos no Worker, antes de entregar
 // credenciais TURN ou abrir a sinalização. Nenhum segredo do auth mora aqui.
+import { lerCorpo } from './corpo.js'
+
 const ISSUER = 'https://auth.galm.ai'
 const AUDIENCE = 'disgalm'
 const SCOPE = 'disgalm:use'
 const JWKS_URL = `${ISSUER}/.well-known/jwks.json`
 const encoder = new TextEncoder()
+// Corpo do /auth/code: code e code_verifier do PKCE, poucas centenas de bytes.
+const MAX_CODE = 8 * 1024
 
 // O JWKS fica 5 min em cache. Um kid fora dele renova antes do prazo, mas no
-// máximo uma vez a cada 30 s, e pedidos simultâneos dividem a mesma busca: o
-// header do token é do cliente, e um kid forjado não pode virar uma busca ao
-// auth por pedido. Chave nova do auth entra em até 30 s.
+// máximo uma vez a cada 30 s: o header do token é do cliente, e um kid forjado
+// não pode virar uma busca ao auth por pedido. Chave nova do auth entra em até
+// 30 s. A busca não é compartilhada entre pedidos: no Workers, uma promessa de
+// outro pedido é cancelada quando ele termina e travaria quem a esperasse.
 const KEYS_TTL = 5 * 60_000
 const KEYS_MIN_REFRESH = 30_000
 let cachedKeys = null
 let cachedUntil = 0
 let fetchedAt = 0
-let pending = null
 
 function decode(part) {
   if (!/^[A-Za-z0-9_-]+$/.test(part)) throw new Error('base64url inválido')
@@ -34,18 +38,13 @@ async function fetchKeys() {
   return cachedKeys
 }
 
-function refreshKeys() {
-  pending ||= fetchKeys().finally(() => { pending = null })
-  return pending
-}
-
 async function keyFor(kid) {
   const match = list => list.find(k => k.kid === kid && k.kty === 'EC' && k.crv === 'P-256')
   if (cachedKeys && Date.now() < cachedUntil) {
     const jwk = match(cachedKeys)
     if (jwk || Date.now() - fetchedAt < KEYS_MIN_REFRESH) return jwk || null
   }
-  return match(await refreshKeys()) || null
+  return match(await fetchKeys()) || null
 }
 
 export async function verifyAccess(token) {
@@ -134,7 +133,10 @@ export async function session(request, url) {
   if (url.pathname === '/auth/code') {
     if (request.headers.get('content-type')?.split(';')[0] !== 'application/json')
       return new Response('conteúdo inválido', { status: 415 })
-    const body = await request.json().catch(() => null)
+    const corpo = await lerCorpo(request, MAX_CODE).catch(() => '')
+    if (corpo === null) return fail(413, 'Resposta do login inválida. Tente novamente.')
+    let body = null
+    try { body = JSON.parse(corpo) } catch {}
     if (typeof body?.code !== 'string' || typeof body?.code_verifier !== 'string')
       return fail(400, 'Resposta do login inválida. Tente novamente.')
     fields = { grant_type: 'authorization_code', code: body.code, code_verifier: body.code_verifier,

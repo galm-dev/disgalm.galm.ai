@@ -490,7 +490,7 @@ export default {
       if (redeem) {
         if (req.headers.get('content-type')?.split(';')[0] !== 'application/json')
           return new Response('conteúdo inválido', { status: 415 })
-        const corpo = await lerCorpo(req, MAX_CONVITE)
+        const corpo = await lerCorpo(req, MAX_CONVITE).catch(() => '')
         if (corpo === null) return new Response('pedido grande demais', { status: 413 })
         try { token = JSON.parse(corpo)?.token } catch { token = null }
       }

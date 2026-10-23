@@ -57,10 +57,24 @@ test('JWKS: kid desconhecido repetido não busca o JWKS a cada pedido', () => co
   assert.ok(jwks.buscas <= 2, `buscou o JWKS ${jwks.buscas} vezes`)
 }))
 
-test('JWKS: kid desconhecido simultâneo divide uma só busca', () => comJwks(async ({ jwks, ice }) => {
+test('JWKS: kid desconhecido simultâneo, com cache, não multiplica a busca', () => comJwks(async ({ jwks, ice, avancar }) => {
+  assert.equal(await ice('k1'), 200)
+  avancar(60_000)
   const r = await Promise.all(Array.from({ length: 20 }, () => ice('forjado')))
   assert.ok(r.every(s => s === 401))
   assert.ok(jwks.buscas <= 2, `buscou o JWKS ${jwks.buscas} vezes`)
+}))
+
+test('JWKS: renovação que falha também respeita os 30 s', () => comJwks(async ({ jwks, ice, avancar }) => {
+  assert.equal(await ice('k1'), 200)
+  avancar(60_000)
+  const fetchMock = globalThis.fetch
+  globalThis.fetch = async () => { jwks.buscas++; return new Response('fora', { status: 503 }) }
+  for (let i = 0; i < 20; i++) assert.equal(await ice('forjado'), 401)
+  assert.equal(jwks.buscas, 2)
+  globalThis.fetch = fetchMock
+  assert.equal(await ice('k1'), 200)
+  assert.equal(jwks.buscas, 2)
 }))
 
 test('JWKS: chave nova do auth entra pela renovação do kid desconhecido', () => comJwks(async ({ jwks, ice, avancar }) => {
@@ -123,6 +137,23 @@ test('/sfu: corpo grande para no teto, antes de autenticar', () => comJwks(async
   assert.ok(corpo.puxados <= 12, `puxou ${corpo.puxados} pedaços`)
   assert.equal(jwks.buscas, 0)
   assert.equal(repassados.length, 0)
+}))
+
+test('/auth/code: corpo grande para no teto, sem chamar o auth', () => comJwks(async ({ worker, jwks }) => {
+  const corpo = corpoSemFim()
+  const pedido = new Request(`${ORIGEM}/auth/code`, { method: 'POST', duplex: 'half', body: corpo.stream,
+    headers: { origin: ORIGEM, 'content-type': 'application/json' } })
+  const r = await comPrazo(worker.fetch(pedido, {}, {}))
+  assert.equal(r.status, 413)
+  assert.ok(corpo.puxados <= 2, `puxou ${corpo.puxados} pedaços`)
+  assert.equal(jwks.buscas, 0)
+}))
+
+test('/guest/redeem: upload interrompido continua 401, não 500', () => comJwks(async ({ worker }) => {
+  const stream = new ReadableStream({ pull(ctrl) { ctrl.error(new Error('conexão caiu')) } })
+  const r = await worker.fetch(new Request(`${ORIGEM}/guest/redeem?sala=galm`, { method: 'POST', duplex: 'half',
+    body: stream, headers: { origin: ORIGEM, 'content-type': 'application/json' } }), {}, {})
+  assert.equal(r.status, 401)
 }))
 
 test('/guest/redeem: corpo grande para no teto', () => comJwks(async ({ worker }) => {
