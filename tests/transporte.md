@@ -90,8 +90,16 @@ com `paused`, `srcObject`, contextos e quadros observáveis; 10 falham com o
 `index.html` anterior) e por dois passos em `tests/e2e/malha.mjs`: parar a
 tela com som deixa só `voz`, e 3 ciclos de ligar e parar a tela com som não
 acumulam áudio. Sem a correção, cada ciclo deixa mais um `voz`
-(`voz,voz,voz` → `voz,voz,voz,voz,voz`). O volume por pessoa ainda volta a 1
-quando a conexão é recriada: é outro item.
+(`voz,voz,voz` → `voz,voz,voz,voz,voz`).
+
+Volumes por pessoa: os volumes de voz e tela que escolhi para alguém, inclusive
+o 0 que a silencia, ficam em `volumesDe`, por id, fora da mídia da pessoa. A
+pessoa recriada (F5 dela, oferta de instância nova) reaproveita o mesmo objeto,
+e sair da sala esquece todos. Antes voltavam a 1 a cada recriação. Coberto em
+`tests/audio-tela.test.js`, com os sliders do tile pelo DOM, o volume 0, a
+recriação durante o surdo, o surdo sem track de mic, a reentrega da track de
+tela durante o surdo, a track sem stream, o medidor da track retirada que volta
+como voz e o `ended` da track reentregue depois da recriação (áudio e vídeo).
 
 Readmissão do mesmo stream: o áudio de tela retirado (ou que chega já
 retirado) fica num mapa de retirados da pessoa, sem `<audio>` e sem `stop()`,

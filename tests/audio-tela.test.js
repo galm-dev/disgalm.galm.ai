@@ -16,12 +16,23 @@ class PC {
   close() { this.connectionState = 'closed' }
 }
 
-function fixture() {
+// Com `tiles`, desenharTile é o real: o tile ganha os sliders de voz e tela
+// como entradas com dataset.tipo, e o teste mexe neles como o usuário.
+function fixture({ tiles = false } = {}) {
   const elements = new Map()
   const $ = id => {
     if (!elements.has(id)) {
       const classes = new Set()
-      elements.set(id, { textContent: '', value: '', hidden: true, innerHTML: '', remove() {},
+      let html = '', entradas = []
+      elements.set(id, { textContent: '', value: '', hidden: true, remove() {},
+        style: { setProperty() {} }, setAttribute() {}, append() {},
+        get innerHTML() { return html },
+        set innerHTML(h) {
+          html = h
+          entradas = [...h.matchAll(/data-tipo="([^"]+)"/g)].map(m => ({ dataset: { tipo: m[1] }, value: '' }))
+        },
+        querySelector: () => null,
+        querySelectorAll: s => s === '.vols input' ? entradas : [],
         classList: { classes, toggle: (c, on) => on ? classes.add(c) : classes.delete(c), remove: c => classes.delete(c),
                      contains: c => classes.has(c) } })
     }
@@ -73,7 +84,8 @@ function fixture() {
     crypto: { randomUUID: () => `aba-${++uuid}` }, alert() {},
   }
   rodarCliente(state)
-  for (const f of ['desenharTile', 'focar', 'classificarVideo', 'atualizarParticipantes', 'aplicarQualidade', 'redividir'])
+  for (const f of [...tiles ? [] : ['desenharTile'], 'focar', 'classificarVideo', 'atualizarParticipantes',
+                   'aplicarQualidade', 'redividir'])
     state[f] = () => {}
   const run = code => runInNewContext(code, state)
   run("sala = { cod: 'galm', nome: 'Eu' }")
@@ -83,9 +95,9 @@ function fixture() {
   ws.onmessage({ data: JSON.stringify({ t: 'welcome', id: 'aaaa0001', peers: [{ id: 'bbbb0002', name: 'B' }] }) })
 
   const par = 'bbbb0002'
-  const track = (nivel = 0) => {
+  const track = (nivel = 0, kind = 'audio') => {
     const ouvintes = {}
-    const t = { kind: 'audio', muted: false, readyState: 'live', nivel, stops: 0, stop() { t.stops++ },
+    const t = { kind, muted: false, readyState: 'live', nivel, stops: 0, stop() { t.stops++ },
                 addEventListener: (tipo, f) => { (ouvintes[tipo] ??= []).push(f) },
                 encerrar: () => { for (const f of ouvintes.ended ?? []) f() },
                 ouvintesFim: () => (ouvintes.ended ?? []).length }
@@ -114,7 +126,9 @@ function fixture() {
                        ...[...p.retirados].filter(([, x]) => x === __alvo).map(([sid]) => 'retirado:' + sid)])(pessoas.get('${par}')))`))
   }
   const vivosDe = t => audios.filter(el => el.track === t && ligado(el)).length
-  return { run, receber, anunciar, tipos, tamanho, vivos, ligado, doStream, audios, track,
+  // O slider de voz ou tela do tile, como desenharTile o deixou.
+  const slider = tipo => $('t-' + par).querySelectorAll('.vols input').find(i => i.dataset.tipo === tipo)
+  return { run, receber, anunciar, tipos, tamanho, vivos, ligado, doStream, audios, track, $, slider,
            quadro, pendentes, rodarQuadro, frames: () => frames.size, falando, contextos, abertos, recriar, associacoes, vivosDe }
 }
 
@@ -446,8 +460,8 @@ test('100 entregas da mesma track registram um listener de ended', () => {
 
 // Ensurdecer cala só a voz dos outros; o som das telas segue no volume que cada
 // um escolheu. Pelos botões, como o usuário faz: o surdo também muta o mic.
-function preparar() {
-  const f = fixture()
+function preparar(opcoes) {
+  const f = fixture(opcoes)
   const mic = { kind: 'audio', enabled: true, getSettings: () => ({}) }
   f.run("novaPessoa('cccc0003', 'C'); bip = () => {}; controle = () => {}")
   f.run('globalThis').__mic = mic
@@ -565,4 +579,176 @@ test('surdo com o mic já mudo volta mudo; abrir o mic tira do surdo com a tela 
   clicar('b-surdo')
   clicar('b-mic')
   assert.deepEqual([surdo(), voz.volume, tela.volume, mic.enabled], [false, 0.6, 0.25, true])
+})
+
+// O ramo da track já retirada que volta como voz: sem outra voz, o anel passa
+// a medir essa track.
+test('track de tela retirada que volta como voz ganha o medidor de fala', async () => {
+  const f = fixture()
+  await f.anunciar({ compartilhando: true, idsTelas: ['S'] })
+  const t = f.track(1)
+  f.receber(t, 'S')
+  assert.equal(f.tipos(), 'S:tela')
+  await f.anunciar({ compartilhando: false, idsTelas: [] })
+  assert.deepEqual(f.associacoes(t), ['retirado:S'])
+  assert.equal(f.abertos().length, 0)
+  f.receber(t, 'mic2')
+  assert.equal(f.tipos(), 'mic2:voz')
+  assert.equal(f.abertos().length, 1)
+  assert.equal(f.abertos()[0].fonte.stream.t[0], t)
+  f.quadro()
+  assert.equal(f.falando(), true)
+})
+
+// O listener de 'ended' é um por track, mas o fim precisa valer para a pessoa
+// que existe agora, não para a que estava lá quando a track chegou.
+test('ended da track reentregue depois da recriação solta o áudio da pessoa nova', () => {
+  const f = fixture()
+  const t = f.track()
+  f.receber(t, 'voz')
+  f.recriar()
+  f.receber(t, 'voz')
+  assert.equal(t.ouvintesFim(), 1)
+  assert.equal(f.vivosDe(t), 1)
+  t.encerrar()
+  assert.equal(f.tamanho(), 0)
+  assert.equal(f.vivosDe(t), 0)
+})
+
+test('ended do vídeo reentregue depois da recriação o tira da pessoa nova', () => {
+  const f = fixture()
+  const t = f.track(0, 'video')
+  const videos = () => f.run("[...pessoas.get('bbbb0002').videos.keys()].join()")
+  f.receber(t, 'S')
+  f.recriar()
+  f.receber(t, 'S')
+  assert.equal(videos(), 'S')
+  t.encerrar()
+  assert.equal(videos(), '')
+})
+
+// P11: o volume que escolhi para alguém é meu, não da conexão. F5 dele ou
+// oferta de instância nova recriam a pessoa com a mesma identidade.
+test('volumes e o silêncio individual sobrevivem à recriação da pessoa', async () => {
+  const { f, anunciarA, receberEm, vol } = preparar()
+  await anunciarA('bbbb0002', { compartilhando: true, idsTelas: ['tela-1'] })
+  receberEm('bbbb0002', 'voz'); receberEm('bbbb0002', 'tela-1')
+  vol('bbbb0002', 'voz', 0); vol('bbbb0002', 'tela', 0.4)
+  f.recriar()
+  const voz = f.doStream(receberEm('bbbb0002', 'voz')), tela = f.doStream(receberEm('bbbb0002', 'tela-1'))
+  assert.deepEqual([voz.volume, tela.volume], [0, 0.4])
+  assert.ok([voz, tela].every(f.ligado))
+  // Quem nunca mexeu continua em 1.
+  const vozC = f.doStream(receberEm('cccc0003', 'voz-c'))
+  f.run("removerPessoa('cccc0003'); novaPessoa('cccc0003', 'C')")
+  assert.equal(f.doStream(receberEm('cccc0003', 'voz-c')).volume, 1)
+  assert.equal(vozC.volume, 1)
+})
+
+test('sair da sala esquece os volumes escolhidos', async () => {
+  const { f, receberEm, vol } = preparar()
+  receberEm('bbbb0002', 'voz')
+  vol('bbbb0002', 'voz', 0.2)
+  f.run('sairDaSala()')
+  f.run("novaPessoa('bbbb0002', 'B')")                // a mesma pessoa, na próxima entrada
+  assert.equal(f.run("pessoas.get('bbbb0002').volumes.voz"), 1)
+})
+
+test('volume 0 fica em 0: surdo, volta do surdo e recriação', async () => {
+  const { f, anunciarA, receberEm, vol, clicar } = preparar()
+  await anunciarA('bbbb0002', { compartilhando: true, idsTelas: ['tela-1'] })
+  const voz = f.doStream(receberEm('bbbb0002', 'voz')), tela = f.doStream(receberEm('bbbb0002', 'tela-1'))
+  vol('bbbb0002', 'voz', 0); vol('bbbb0002', 'tela', 0)
+  clicar('b-surdo')
+  assert.deepEqual([voz.volume, tela.volume], [0, 0])
+  clicar('b-surdo')
+  assert.deepEqual([voz.volume, tela.volume], [0, 0])
+  f.recriar()
+  const voz2 = f.doStream(receberEm('bbbb0002', 'voz')), tela2 = f.doStream(receberEm('bbbb0002', 'tela-1'))
+  assert.deepEqual([voz2.volume, tela2.volume], [0, 0])
+})
+
+test('surdo sem track de mic cala as vozes, mantém a tela e volta', async () => {
+  const { f, anunciarA, receberEm, vol, clicar, surdo } = preparar()
+  f.run('micStream = null')
+  await anunciarA('bbbb0002', { compartilhando: true, idsTelas: ['tela-1'] })
+  const voz = f.doStream(receberEm('bbbb0002', 'voz')), tela = f.doStream(receberEm('bbbb0002', 'tela-1'))
+  vol('bbbb0002', 'voz', 0.6); vol('bbbb0002', 'tela', 0.25)
+  clicar('b-surdo')
+  assert.deepEqual([surdo(), voz.volume, tela.volume], [true, 0, 0.25])
+  assert.equal(f.$('b-mic').classList.contains('cortado'), true)
+  clicar('b-surdo')
+  assert.deepEqual([surdo(), voz.volume, tela.volume], [false, 0.6, 0.25])
+  assert.equal(f.$('b-mic').classList.contains('cortado'), false)
+})
+
+for (const ordem of ['track antes', 'anúncio antes'])
+  test(`a mesma track de tela reentregue durante o surdo (${ordem}) volta no volume de tela`, async () => {
+    const { f, anunciarA, receberEm, vol, clicar } = preparar()
+    await anunciarA('bbbb0002', { compartilhando: true, idsTelas: ['tela-1'] })
+    const voz = f.doStream(receberEm('bbbb0002', 'voz'))
+    const t = receberEm('bbbb0002', 'tela-1')
+    vol('bbbb0002', 'voz', 0.6); vol('bbbb0002', 'tela', 0.7)
+    clicar('b-surdo')
+    await anunciarA('bbbb0002', { compartilhando: false, idsTelas: [] })
+    const reentregar = () => { f.run('globalThis').__t = t; f.run("receberTrack('bbbb0002', __t, { id: 'tela-1' })") }
+    if (ordem === 'track antes') reentregar()
+    await anunciarA('bbbb0002', { compartilhando: true, idsTelas: ['tela-1'] })
+    if (ordem === 'anúncio antes') reentregar()
+    assert.equal(f.tipos(), 'voz:voz,tela-1:tela')
+    assert.equal(f.vivosDe(t), 1)
+    assert.deepEqual([voz.volume, f.doStream(t).volume], [0, 0.7])
+    clicar('b-surdo')
+    assert.deepEqual([voz.volume, f.doStream(t).volume], [0.6, 0.7])
+  })
+
+test('pessoa recriada durante o surdo: voz calada, tela no volume escolhido', async () => {
+  const { f, anunciarA, receberEm, vol, clicar } = preparar()
+  await anunciarA('bbbb0002', { compartilhando: true, idsTelas: ['tela-1'] })
+  receberEm('bbbb0002', 'voz'); receberEm('bbbb0002', 'tela-1')
+  vol('bbbb0002', 'voz', 0.6); vol('bbbb0002', 'tela', 0.25)
+  clicar('b-surdo')
+  f.recriar()
+  const voz = f.doStream(receberEm('bbbb0002', 'voz')), tela = f.doStream(receberEm('bbbb0002', 'tela-1'))
+  assert.deepEqual([voz.volume, tela.volume], [0, 0.25])
+  clicar('b-surdo')
+  assert.deepEqual([voz.volume, tela.volume], [0.6, 0.25])
+})
+
+// Track sem stream cai como voz (limitação conhecida): calada no surdo e de
+// volta no volume de voz.
+test('áudio sem stream toca como voz e segue o surdo', () => {
+  const { f, vol, clicar } = preparar()
+  const t = f.track()
+  f.run('globalThis').__t = t
+  f.run("receberTrack('bbbb0002', __t, undefined)")
+  assert.equal(f.tipos(), 'sem-stream:voz')
+  const el = f.doStream(t)
+  vol('bbbb0002', 'voz', 0.5)
+  clicar('b-surdo')
+  assert.equal(el.volume, 0)
+  clicar('b-surdo')
+  assert.equal(el.volume, 0.5)
+})
+
+// Os sliders do tile, pelo DOM: mexer muda o <audio> e o volume guardado, e o
+// tile redesenhado (inclusive com a pessoa recriada) mostra o valor escolhido.
+test('sliders do tile mudam o volume e sobrevivem ao redesenho e à recriação', async () => {
+  const { f, anunciarA, receberEm, clicar } = preparar({ tiles: true })
+  await anunciarA('bbbb0002', { compartilhando: true, idsTelas: ['tela-1'] })
+  const voz = f.doStream(receberEm('bbbb0002', 'voz')), tela = f.doStream(receberEm('bbbb0002', 'tela-1'))
+  const mexer = (tipo, v) => { const i = f.slider(tipo); i.value = v; i.oninput() }
+  mexer('voz', '0.3'); mexer('tela', '0')
+  assert.deepEqual([voz.volume, tela.volume], [0.3, 0])
+  assert.equal(f.run("pessoas.get('bbbb0002').volumes.voz"), 0.3)
+  clicar('b-surdo')
+  mexer('voz', '0.8')
+  assert.deepEqual([voz.volume, tela.volume], [0, 0])
+  clicar('b-surdo')
+  assert.deepEqual([voz.volume, tela.volume], [0.8, 0])
+
+  f.recriar()
+  assert.deepEqual([f.slider('voz').value, f.slider('tela').value], [0.8, 0])
+  const voz2 = f.doStream(receberEm('bbbb0002', 'voz'))
+  assert.equal(voz2.volume, 0.8)
 })
