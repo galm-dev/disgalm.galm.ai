@@ -387,8 +387,9 @@ test('Worker: /sfu só em sala da lista, mesma origem, com chave e credencial', 
     if (new URL(req.url).pathname === '/guest/check') return Response.json({ exp: agoraS() + 900 })
     return Response.json({ ok: true })
   } }) } }
-  globalThis.Request = class { constructor(url, init = {}) { this.url = url; Object.assign(this, init); this.headers = new Headers(init.headers) }
-    async text() { return this.body ?? '' } }
+  // Corpo como stream, como no runtime: o Worker lê com teto, sem req.text().
+  globalThis.Request = class { constructor(url, init = {}) { this.url = url; Object.assign(this, init); this.headers = new Headers(init.headers)
+    this.body = init.body == null ? null : new Blob([init.body]).stream() } }
   const pede = ({ sala = 'ensaio', origem = 'https://disgalm.galm.ai', chave = 'a'.repeat(64), cookie = `__Host-disgalm_guest=${convite}`,
     tipo = 'application/json', metodo = 'POST', corpo = '{"op":"sessao","id":"abcd1234"}' } = {}) =>
     worker.fetch(new Request(`https://disgalm.galm.ai/sfu?sala=${sala}`, { method: metodo, body: corpo,

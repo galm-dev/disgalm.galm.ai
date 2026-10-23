@@ -5,6 +5,7 @@
 // e o recado nunca passaria. idFromName(sala) é o que os faz cair no mesmo lugar.
 import { DurableObject } from 'cloudflare:workers'
 import { bearer, session, sessionPaths, verifyAccess, websocketToken } from './auth.js'
+import { lerCorpo } from './corpo.js'
 import { enviarLogs, linhaWorker } from './logs.js'
 import { TAG_MALHA, TAG_SFU, TAXA_TURN, TTL_TURN_S, autorizarCom, coletarUso, liberarCom, orcamentoDa }
   from './orcamento.js'
@@ -31,6 +32,8 @@ const internal = (url, method, headers = {}, body) => new Request(url, { method,
 // Eventos que o navegador manda sobre as próprias conexões. Limites para que um
 // cliente não encha a cota: lote pequeno, corpo pequeno, só campos simples.
 const MAX_EVENTOS = 100, MAX_CORPO = 64 * 1024
+// Resgate de convite: só {"token": 64 hex}.
+const MAX_CONVITE = 1024
 const campoSimples = v => v === null || ['string', 'number', 'boolean'].includes(typeof v)
 function limparEvento(e) {
   if (!e || typeof e !== 'object' || typeof e.evento !== 'string') return null
@@ -487,8 +490,9 @@ export default {
       if (redeem) {
         if (req.headers.get('content-type')?.split(';')[0] !== 'application/json')
           return new Response('conteúdo inválido', { status: 415 })
-        const body = await req.json().catch(() => null)
-        token = body?.token
+        const corpo = await lerCorpo(req, MAX_CONVITE).catch(() => '')
+        if (corpo === null) return new Response('pedido grande demais', { status: 413 })
+        try { token = JSON.parse(corpo)?.token } catch { token = null }
       }
       if (!/^[0-9a-f]{64}$/.test(token || '')) return new Response('convite inválido', { status: 401, headers: noStore })
       const check = await roomObject(env, room).fetch(internal(`${url.origin}/guest/check`, 'POST',
@@ -538,8 +542,8 @@ export default {
       if (!validRoom(room)) return new Response('sala inválida', { status: 400 })
       const autor = await quem()
       if (!autor) return new Response('acesso negado', { status: 401, headers: noStore })
-      const corpo = await req.text()
-      if (corpo.length > MAX_CORPO) return new Response('lote grande demais', { status: 413 })
+      const corpo = await lerCorpo(req, MAX_CORPO)
+      if (corpo === null) return new Response('lote grande demais', { status: 413 })
       let eventos
       try { eventos = JSON.parse(corpo)?.eventos } catch {}
       if (!Array.isArray(eventos)) return new Response('lote inválido', { status: 400 })
