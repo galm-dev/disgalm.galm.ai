@@ -21,7 +21,8 @@ globalThis.Response = class {
   get ok() { return this.status >= 200 && this.status < 300 }
   static json(body, init) { const r = new this(JSON.stringify(body), init); r.json = async () => body; return r }
 }
-const { Sala, Orcamento, default: worker } = await carregarWorker()
+const { Sala, Orcamento, default: worker, pasta } = await carregarWorker()
+const { rotaSfu, MAX_PEDIDO } = await import(`${pasta}/sfu.mjs`)
 
 // Orçamento de verdade, com um retrato recém-coletado e zerado: libera tudo.
 let orcamento = criarOrcamento(Orcamento)
@@ -401,6 +402,13 @@ test('Worker: /sfu só em sala da lista, mesma origem, com chave e credencial', 
   assert.equal((await pede({ corpo: 'x'.repeat(200 * 1024) })).status, 413)
   assert.equal(delegados.length, 0)
   assert.equal((await pede({ cookie: '' })).status, 401)
+  for (const tipo of ['Application/JSON', 'application/json ; charset=utf-8', 'APPLICATION/JSON\t; charset=UTF-8']) {
+    const antes = delegados.length
+    assert.equal((await pede({ tipo })).status, 200, tipo)
+    assert.equal(delegados.length, antes + 2)
+    assert.equal(delegados.at(-1).headers.get('content-type'), 'application/json')
+    assert.equal(await delegados.at(-1).text(), '{"op":"sessao","id":"abcd1234"}')
+  }
   const r = await pede()
   assert.equal(r.status, 200)
   const repassado = delegados.at(-1)
@@ -409,6 +417,53 @@ test('Worker: /sfu só em sala da lista, mesma origem, com chave e credencial', 
   assert.equal(repassado.headers.get('x-disgalm-guest-token'), convite)
   assert.equal(repassado.headers.get('x-disgalm-sfu'), 'a'.repeat(64))
   assert.ok(Number(repassado.headers.get('x-disgalm-exp')) > agoraS())
+})
+
+test('rota SFU: MIME exato normalizado preserva guardas, identidade e repasse', async t => {
+  const tipos = ['application/json', 'Application/JSON', 'APPLICATION/JSON; charset=UTF-8',
+    'application/json ; charset=utf-8', 'Application/JSON\t; charset=utf-8',
+    null, '', 'text/plain', 'application/jsonp', 'application/problem+json',
+    'application/jsonx; charset=utf-8', 'application/json, text/plain', 'application/ json']
+  const chave = 'a'.repeat(64)
+  for (const tipo of tipos) {
+    const valido = tipos.indexOf(tipo) < 5
+    for (const caso of ['member', 'guest', 'metodo', 'origem', 'sala', 'config', 'chave', 'tamanho', 'anonimo']) {
+      await t.test(`${JSON.stringify(tipo)}/${caso}`, async () => {
+        let identificacoes = 0
+        const repasses = []
+        const corpo = caso === 'tamanho' ? 'x'.repeat(MAX_PEDIDO + 1) : '{"op":"sessao","id":"abcd1234","texto":"á"}'
+        const autor = caso === 'anonimo' ? null : caso === 'guest'
+          ? { papel: 'guest', convite: 'd'.repeat(64), exp: 2000000000 }
+          : { papel: 'member', sub: 'membro-sintetico', exp: 2000000000 }
+        const req = { method: caso === 'metodo' ? 'GET' : 'POST',
+          headers: new Headers({ ...(tipo !== null && { 'content-type': tipo }),
+            'x-disgalm-sfu': caso === 'chave' ? 'invalida' : chave }), text: async () => corpo }
+        const resposta = Response.json({ fixture: true }, { status: 202 })
+        const r = await rotaSfu(req, caso === 'config' ? {} : ENV, {
+          sala: caso === 'sala' ? 'fora' : 'ensaio', mesmaOrigem: caso !== 'origem', origem: 'https://fixture.invalid',
+          identificar: async () => { identificacoes++; return autor },
+          objeto: { fetch: async r => { repasses.push(r); return resposta } },
+        })
+        const status = caso === 'metodo' ? 405 : caso === 'origem' ? 403 : ['sala', 'config'].includes(caso) ? 404
+          : !valido ? 415 : caso === 'chave' ? 401 : caso === 'tamanho' ? 413 : caso === 'anonimo' ? 401 : 202
+        assert.equal(r.status, status, `${tipo}/${caso}`)
+        assert.equal(identificacoes, valido && ['member', 'guest', 'anonimo'].includes(caso) ? 1 : 0)
+        assert.equal(repasses.length, status === 202 ? 1 : 0)
+        if (status !== 202) return
+        assert.equal(r, resposta)
+        const repasse = repasses[0]
+        assert.equal(repasse.method, 'POST')
+        assert.equal(repasse.url, 'https://fixture.invalid/sfu?sala=ensaio')
+        assert.equal(await repasse.text(), corpo)
+        assert.deepEqual(Object.fromEntries(repasse.headers), {
+          'content-type': 'application/json', 'x-disgalm-sfu': chave,
+          'x-disgalm-role': autor.papel, 'x-disgalm-exp': String(autor.exp),
+          ...(autor.papel === 'member' ? { 'x-disgalm-sub': autor.sub } : { 'x-disgalm-guest-token': autor.convite }),
+        })
+      })
+    }
+  }
+  assert.equal(api.chamadas.length, 0)
 })
 
 // ---------- orçamento ----------
