@@ -131,6 +131,9 @@ export async function session(request, url) {
   } catch {
     return fail(502, 'O login GALM não respondeu. Tente novamente.')
   }
+  // Limitação transitória do refresh não invalida o cookie nem concede acesso.
+  if (fields.grant_type === 'refresh_token' && response.status === 429)
+    return fail(502, body?.error_description || 'O login GALM não respondeu. Tente novamente.')
   // Recusa do auth (code ruim, refresh vencido ou revogado): o cookie morreu.
   if (!response.ok) return fail(response.status >= 500 ? 502 : 401,
     body?.error_description || 'Sessão expirada. Entre com GALM novamente.', response.status < 500)
