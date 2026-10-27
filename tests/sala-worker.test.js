@@ -49,6 +49,65 @@ test('batimento responde sem acordar o objeto', () => {
   assert.equal(ctx.auto.res, '{"t":"pong"}')
 })
 
+test('frames que não são signal são ignorados sem efeitos, mesmo com remetente expirado ou ausente', async t => {
+  const frames = ['{', '', 'null', 'false', 'true', '0', '42', '"signal"', '[]', '[null]',
+    '[{"t":"signal"}]', '{}', '{"t":"join"}', '{"t":null}', '{"t":"desconhecido"}']
+  for (const estado of ['ativo', 'expirado', 'ausente']) {
+    for (const bruto of frames) await t.test(`${estado}: ${JSON.stringify(bruto)}`, async () => {
+      const a = new Socket(), b = new Socket()
+      const exp = Math.floor(Date.now() / 1000) + 600
+      a.att = estado === 'ausente' ? null : { id: 'a', exp: estado === 'expirado' ? 1 : exp }
+      b.att = { id: 'b', exp }
+      const { s, ctx } = sala([a, b])
+      const chamadas = []
+      for (const nome of ['get', 'put', 'setAlarm', 'deleteAlarm']) {
+        const original = ctx.storage[nome].bind(ctx.storage)
+        ctx.storage[nome] = (...args) => { chamadas.push([nome, ...args]); return original(...args) }
+      }
+      const antes = structuredClone([a, b])
+      await s.webSocketMessage(a, bruto)
+      assert.deepEqual(structuredClone([a, b]), antes)
+      assert.deepEqual(chamadas, [])
+      assert.equal(ctx.storage.alarmAt, null)
+      assert.equal(ctx.storage.saved.size, 0)
+    })
+  }
+})
+
+test('signal mantém encaminhamento, destino desconhecido e recusa de remetente expirado ou ausente', async t => {
+  for (const estado of ['ativo', 'destino desconhecido', 'expirado', 'ausente']) {
+    await t.test(estado, async () => {
+      const a = new Socket(), b = new Socket(), c = new Socket()
+      const exp = Math.floor(Date.now() / 1000) + 600
+      a.att = estado === 'ausente' ? null : { id: 'a', exp: estado === 'expirado' ? 1 : exp }
+      b.att = { id: 'b', exp }
+      c.att = { id: 'c', exp }
+      const { s, ctx } = sala([a, b, c])
+      const chamadas = []
+      for (const nome of ['get', 'put', 'setAlarm', 'deleteAlarm']) {
+        const original = ctx.storage[nome].bind(ctx.storage)
+        ctx.storage[nome] = (...args) => { chamadas.push([nome, ...args]); return original(...args) }
+      }
+      const data = { candidate: 'ice sintético' }
+      await s.webSocketMessage(a, JSON.stringify({ t: 'signal', to: estado === 'destino desconhecido' ? 'x' : 'b', data }))
+      assert.deepEqual(a.msgs, [])
+      if (estado === 'expirado') {
+        assert.deepEqual(a.fechado, [1000, 'acesso expirado'])
+        assert.equal(a.att, null)
+        assert.deepEqual(b.msgs, [{ t: 'peer-left', id: 'a', volta: false }])
+        assert.deepEqual(c.msgs, b.msgs)
+        assert.deepEqual(chamadas, [['setAlarm', exp * 1000]])
+      } else {
+        assert.equal(a.fechado, undefined)
+        assert.deepEqual(b.msgs, estado === 'ativo' ? [{ t: 'signal', from: 'a', data }] : [])
+        assert.deepEqual(c.msgs, [])
+        assert.deepEqual(chamadas, [])
+      }
+      assert.equal(ctx.storage.saved.size, 0)
+    })
+  }
+})
+
 test('entrada comum: welcome para quem chega, peer-join para quem estava', async () => {
   const { s } = sala()
   const a = await s.entra({ nome: 'A', aba: 'aba-a' })

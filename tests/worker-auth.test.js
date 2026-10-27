@@ -163,6 +163,78 @@ test('sessão persistente guarda o refresh só em cookie HttpOnly e o logout rev
   }
 })
 
+test('os consumidores JSON normalizam o media type e preservam as recusas e seus efeitos', async t => {
+  const root = 'https://disgalm.galm.ai'
+  const originalFetch = globalThis.fetch
+  const cases = [
+    { name: 'canônico' },
+    { name: 'parâmetro', mime: 'application/json; charset=utf-8' },
+    { name: 'caixa mista', mime: 'Application/JSON' },
+    { name: 'maiúsculas', mime: 'APPLICATION/JSON' },
+    { name: 'espaço antes do parâmetro', mime: 'application/json ; charset=utf-8' },
+    { name: 'tab e parâmetros', mime: 'Application/Json\t; charset=UTF-8; profile="fixture"' },
+    ...[null, '', 'text/plain', 'application/problem+json', 'application/jsonp',
+      'application/json, text/plain', 'application/ json'].map(mime => ({ name: `tipo recusado ${mime}`, mime, status: 415 })),
+    { name: 'JSON truncado', body: '{', status: 400, guestStatus: 401 },
+    { name: 'JSON null', body: 'null', status: 400, guestStatus: 401 },
+    { name: 'campos ausentes', body: '{}', status: 400, guestStatus: 401 },
+    { name: 'campos de tipo errado', body: '{"code":1,"code_verifier":2,"token":true}', status: 400, guestStatus: 401 },
+    { name: 'origem diferente', origin: 'https://evil.example', status: 403 },
+    { name: 'sem origem', origin: null, status: 403 },
+    { name: 'método diferente', method: 'PUT', status: 405 },
+    { name: 'recusa remota', remoteStatus: 400, status: 401, calls: 1 },
+    { name: 'rate limit remoto', remoteStatus: 429, status: 401, calls: 1 },
+    { name: 'erro remoto', remoteStatus: 500, status: 502, guestStatus: 401, calls: 1 },
+    { name: 'sala diferente', room: 'other', status: 200, guestStatus: 401, calls: 1 },
+    { name: 'sala inválida', room: '', status: 200, guestStatus: 400, calls: 1, guestCalls: 0 },
+    { name: 'sem escopo', scope: '', status: 403, guestStatus: 200, calls: 2, guestCalls: 1 },
+  ]
+  try {
+    for (const path of ['/auth/code', '/guest/redeem']) {
+      const guest = path === '/guest/redeem'
+      for (const c of cases) await t.test(`${path}: ${c.name}`, async () => {
+        const calls = [], delegated = []
+        globalThis.fetch = async (url, init) => {
+          calls.push({ url: String(url), form: Object.fromEntries(new URLSearchParams(init.body)) })
+          return Response.json({ access_token: 'fixture-access', refresh_token: 'fixture-refresh-token',
+            scope: c.scope ?? 'disgalm:use', error_description: 'fixture refusal' }, { status: c.remoteStatus ?? 200 })
+        }
+        const env = { SALA: { idFromName: name => name, get: room => ({ fetch: request => {
+          delegated.push({ room, path: new URL(request.url).pathname, method: request.method,
+            token: request.headers.get('x-disgalm-guest-token') })
+          return room === 'galm' && !c.remoteStatus
+            ? Response.json({ exp: 2000000000 }) : new Response('fixture refusal', { status: c.remoteStatus ?? 401 })
+        } }) } }
+        const origin = c.origin === undefined ? root : c.origin
+        const mime = c.mime === undefined ? 'application/json' : c.mime
+        const request = new Request(`${root}${path}?sala=${c.room ?? 'galm'}`, {
+          method: c.method ?? 'POST', headers: { ...(origin && { Origin: origin }) },
+          body: c.body ?? JSON.stringify(guest ? { token: 'a'.repeat(64) } : { code: 'fixture-code', code_verifier: 'v'.repeat(43) }),
+        })
+        if (mime === null) request.headers.delete('content-type')
+        else request.headers.set('content-type', mime)
+        const response = await worker.fetch(request, env)
+        const status = (guest ? c.guestStatus : undefined) ?? c.status ?? 200
+        const count = (guest ? c.guestCalls : undefined) ?? c.calls ?? (status === 200 ? 1 : 0)
+        t.diagnostic(JSON.stringify({ path, case: c.name, status: response.status,
+          cookie: response.headers.get('set-cookie'), body: await response.text(), calls, delegated }))
+        assert.equal(response.status, status)
+        assert.equal(calls.length, guest ? 0 : count)
+        assert.equal(delegated.length, guest ? count : 0)
+        if (!count) assert.equal(response.headers.get('set-cookie'), null)
+        if (status === 200) {
+          assert.match(response.headers.get('set-cookie'), /HttpOnly; Secure; SameSite=/)
+          if (guest) assert.deepEqual(delegated, [{ room: 'galm', path: '/guest/check', method: 'POST', token: 'a'.repeat(64) }])
+          else assert.deepEqual(calls[0], { url: 'https://auth.galm.ai/token', form: {
+            grant_type: 'authorization_code', client_id: 'disgalm', code: 'fixture-code',
+            code_verifier: 'v'.repeat(43), redirect_uri: `${root}/auth/callback`,
+          } })
+        }
+      })
+    }
+  } finally { globalThis.fetch = originalFetch }
+})
+
 test('telemetria exige membro e origem, limpa o lote e repassa ao Better Stack com a sala e o sub', async () => {
   const originalFetch = globalThis.fetch
   const enviados = [], pendentes = []
@@ -204,4 +276,74 @@ test('telemetria exige membro e origem, limpa o lote e repassa ao Better Stack c
     assert.equal(linha.papel, 'member')
     assert.equal(linha.detalhe, '{"a":1}')
   } finally { globalThis.fetch = originalFetch; console.log = originalLog }
+})
+
+
+test('refresh preserva cookie em limitação transitória e mantém contrato do code', async t => {
+  const originalFetch = globalThis.fetch
+  const origin = 'https://disgalm.galm.ai'
+  const cookie = '__Host-disgalm_refresh=refresh-sintetico-xxxx'
+  const success = { access_token: 'a.b.c', refresh_token: 'refresh-rotacionado-xxxx',
+    token_type: 'Bearer', expires_in: 600, scope: 'disgalm:use' }
+  const cases = [
+    { name: '429', upstream: 429, refreshStatus: 502, codeStatus: 401 },
+    { name: '500', upstream: 500, refreshStatus: 502, codeStatus: 502 },
+    { name: '503', upstream: 503, refreshStatus: 502, codeStatus: 502 },
+    { name: '400', upstream: 400, refreshStatus: 401, codeStatus: 401, clear: true },
+    { name: '401', upstream: 401, refreshStatus: 401, codeStatus: 401, clear: true },
+    { name: 'rede', refreshStatus: 502, codeStatus: 502, network: true },
+    { name: 'JSON inválido', upstream: 200, refreshStatus: 502, codeStatus: 502, invalidJson: true },
+    { name: '429 JSON inválido', upstream: 429, refreshStatus: 502, codeStatus: 502, invalidJson: true },
+    { name: 'sucesso', upstream: 200, refreshStatus: 200, codeStatus: 200, body: success },
+    { name: 'sem scope', upstream: 200, refreshStatus: 403, codeStatus: 403,
+      body: { ...success, scope: 'other:use' }, clear: true, revoke: true },
+    { name: 'token inválido', upstream: 200, refreshStatus: 502, codeStatus: 502,
+      body: { ...success, refresh_token: 'curto' } },
+  ]
+  try {
+    for (const path of ['/auth/refresh', '/auth/code']) {
+      for (const c of cases) await t.test(`${path}: ${c.name}`, async () => {
+        const calls = []
+        globalThis.fetch = async (url, init) => {
+          calls.push({ url: String(url), method: init.method, form: Object.fromEntries(init.body) })
+          if (String(url).endsWith('/revoke')) return new Response(null, { status: 200 })
+          if (c.network) throw new Error('falha sintética')
+          return c.invalidJson ? new Response('{', { status: c.upstream })
+            : Response.json(c.body || { error_description: 'erro sintético' }, { status: c.upstream })
+        }
+        const code = path === '/auth/code'
+        const response = await worker.fetch(new Request(origin + path, { method: 'POST',
+          headers: { Origin: origin, cookie, ...(code && { 'content-type': 'application/json' }) },
+          ...(code && { body: JSON.stringify({ code: 'code-sintetico', code_verifier: 'v'.repeat(43) }) }) }), {})
+        const body = await response.json()
+        const setCookie = response.headers.get('set-cookie')
+        t.diagnostic(JSON.stringify({ path, case: c.name, status: response.status, setCookie, body, calls }))
+        assert.equal(response.status, code ? c.codeStatus : c.refreshStatus)
+        assert.equal(response.headers.get('cache-control'), 'no-store')
+        assert.equal(calls.length, c.revoke ? 2 : 1, 'sem retry ou acesso adicional')
+        assert.deepEqual(calls[0], { url: 'https://auth.galm.ai/token', method: 'POST', form: code
+          ? { client_id: 'disgalm', grant_type: 'authorization_code', code: 'code-sintetico',
+            code_verifier: 'v'.repeat(43), redirect_uri: origin + '/auth/callback' }
+          : { client_id: 'disgalm', grant_type: 'refresh_token', refresh_token: 'refresh-sintetico-xxxx' } })
+        if (response.status === 200) {
+          assert.deepEqual(body, { access_token: 'a.b.c', token_type: 'Bearer', expires_in: 600, scope: 'disgalm:use' })
+          assert.equal(setCookie, '__Host-disgalm_refresh=refresh-rotacionado-xxxx; Path=/; Max-Age=2592000; HttpOnly; Secure; SameSite=Strict')
+        } else {
+          assert.equal(body.access_token, undefined)
+          const clear = c.clear || (code && c.upstream === 429 && !c.invalidJson)
+          assert.equal(setCookie, clear
+            ? '__Host-disgalm_refresh=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Strict' : null)
+        }
+        if (c.revoke) assert.deepEqual(calls[1].form, { client_id: 'disgalm', token: success.refresh_token })
+      })
+    }
+    for (const path of ['/auth/refresh', '/auth/code']) {
+      globalThis.fetch = async () => { throw new Error('não deve consultar auth') }
+      for (const [method, from, status] of [['GET', origin, 405], ['POST', 'https://evil.example', 403], ['POST', '', 403]]) {
+        const response = await worker.fetch(new Request(origin + path, { method, headers: { Origin: from, cookie } }), {})
+        assert.equal(response.status, status)
+        assert.equal(response.headers.get('set-cookie'), null)
+      }
+    }
+  } finally { globalThis.fetch = originalFetch }
 })
