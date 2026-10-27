@@ -485,7 +485,7 @@ export default {
       if (!validRoom(room)) return new Response('sala inválida', { status: 400 })
       let token = guestCookie(req)
       if (redeem) {
-        if (req.headers.get('content-type')?.split(';')[0] !== 'application/json')
+        if (req.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json')
           return new Response('conteúdo inválido', { status: 415 })
         const body = await req.json().catch(() => null)
         token = body?.token
