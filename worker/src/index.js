@@ -433,7 +433,7 @@ export class Sala extends DurableObject {
   async webSocketMessage(ws, bruto) {
     let m
     try { m = JSON.parse(bruto) } catch { return }
-    if (m.t !== 'signal') return          // 'join' vem do cliente compartilhado; ignorar
+    if (m?.t !== 'signal') return          // 'join' vem do cliente compartilhado; ignorar
     const eu = ws.deserializeAttachment()
     if (!eu) return
     if (eu.exp <= Math.floor(Date.now() / 1000)) {
