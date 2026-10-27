@@ -111,7 +111,7 @@ export async function session(request, url) {
 
   let fields
   if (url.pathname === '/auth/code') {
-    if (request.headers.get('content-type')?.split(';')[0] !== 'application/json')
+    if (request.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json')
       return new Response('conteúdo inválido', { status: 415 })
     const body = await request.json().catch(() => null)
     if (typeof body?.code !== 'string' || typeof body?.code_verifier !== 'string')
