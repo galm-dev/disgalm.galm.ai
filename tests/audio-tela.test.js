@@ -645,6 +645,26 @@ test('volumes e o silêncio individual sobrevivem à recriação da pessoa', asy
   assert.equal(vozC.volume, 1)
 })
 
+// O F5 dá id novo à pessoa; o hash da aba que o servidor manda junto é o mesmo.
+test('F5 da pessoa: o id novo com o mesmo hash de aba volta com o volume escolhido', async () => {
+  const { f, receberEm, vol } = preparar()
+  const msg = m => f.run(`ws.onmessage({ data: ${JSON.stringify(JSON.stringify(m))} })`)
+  msg({ t: 'peer-join', id: 'dddd0004', name: 'D', abaHash: 'hash-d' })
+  receberEm('dddd0004', 'voz-d')
+  vol('dddd0004', 'voz', 0); vol('dddd0004', 'tela', 0.3)
+  msg({ t: 'peer-left', id: 'dddd0004', volta: false })
+  msg({ t: 'peer-join', id: 'eeee0005', name: 'D', abaHash: 'hash-d' })
+  assert.deepEqual(JSON.parse(f.run("JSON.stringify(pessoas.get('eeee0005').volumes)")), { voz: 0, tela: 0.3 })
+  assert.equal(f.doStream(receberEm('eeee0005', 'voz-d2')).volume, 0)
+  // Outra aba é outra pessoa: começa em 1, mesmo com o mesmo nome.
+  msg({ t: 'peer-join', id: 'ffff0006', name: 'D', abaHash: 'hash-f' })
+  assert.equal(f.run("pessoas.get('ffff0006').volumes.voz"), 1)
+  // Sair da sala esquece também o hash: o mesmo id volta em 1.
+  f.run('sairDaSala()')
+  f.run("novaPessoa('eeee0005', 'D')")
+  assert.equal(f.run("pessoas.get('eeee0005').volumes.voz"), 1)
+})
+
 test('sair da sala esquece os volumes escolhidos', async () => {
   const { f, receberEm, vol } = preparar()
   receberEm('bbbb0002', 'voz')

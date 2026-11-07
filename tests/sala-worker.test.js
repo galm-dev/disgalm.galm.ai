@@ -54,7 +54,7 @@ test('entrada comum: welcome para quem chega, peer-join para quem estava', async
   const a = await s.entra({ nome: 'A', aba: 'aba-a' })
   const b = await s.entra({ nome: 'B', aba: 'aba-b' })
   const idA = a.ultima('welcome').id
-  assert.deepEqual(b.ultima('welcome').peers, [{ id: idA, name: 'A' }])
+  assert.deepEqual(b.ultima('welcome').peers.map(({ id, name }) => ({ id, name })), [{ id: idA, name: 'A' }])
   assert.equal(b.ultima('welcome').retomada, false)
   assert.equal(a.ultima('peer-join').name, 'B')
 })
@@ -85,6 +85,36 @@ test('F5: a mesma aba sem o id tira o fantasma e entra como pessoa nova', async 
   assert.notEqual(b2.ultima('welcome').id, idB)
   assert.equal(b2.ultima('welcome').peers.length, 1)
   assert.equal(a.ultima('peer-join').id, b2.ultima('welcome').id)
+})
+
+// P11: o volume que A escolheu para B fica pela aba de B, que sobrevive ao F5.
+// Vai o hash, nunca a aba: com ela, qualquer um na sala substituiria B.
+test('F5: a aba nova de B chega aos outros com o mesmo hash, sem a aba crua', async () => {
+  const { s } = sala()
+  const a = await s.entra({ nome: 'A', aba: 'aba-a' })
+  const b = await s.entra({ nome: 'B', aba: 'aba-b' })
+  const hashB = a.ultima('peer-join').abaHash
+  assert.match(hashB, /^[0-9a-f]{16}$/)
+  assert.match(b.ultima('welcome').peers[0].abaHash, /^[0-9a-f]{16}$/)
+  await s.entra({ nome: 'B', aba: 'aba-b' })
+  assert.equal(a.ultima('peer-join').abaHash, hashB)
+  const c = await s.entra({ nome: 'C', aba: 'aba-c' })
+  assert.notEqual(a.ultima('peer-join').abaHash, hashB)
+  assert.deepEqual(c.ultima('welcome').peers.map(p => p.abaHash).slice(1), [hashB])
+  const tudo = JSON.stringify([...a.msgs, ...b.msgs, ...c.msgs])
+  assert.ok(!/aba-[abc]/.test(tudo), tudo)
+})
+
+test('o hash da aba muda de sala e falta sem aba', async () => {
+  const { s } = sala()
+  const a = await s.entra({ nome: 'A', aba: 'aba-a' })
+  await s.entra({ nome: 'B', aba: 'aba-b' })
+  const outra = sala().s
+  const x = await outra.entra({ nome: 'X', aba: 'aba-x', sala: 'outra' })
+  await outra.entra({ nome: 'B', aba: 'aba-b', sala: 'outra' })
+  assert.notEqual(x.ultima('peer-join').abaHash, a.ultima('peer-join').abaHash)
+  await s.entra({ nome: 'Antigo' })
+  assert.equal('abaHash' in a.ultima('peer-join'), false)
 })
 
 test('depois de reinício do objeto, o id volta mesmo sem ninguém na sala', async () => {

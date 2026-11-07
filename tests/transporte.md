@@ -93,9 +93,12 @@ acumulam áudio. Sem a correção, cada ciclo deixa mais um `voz`
 (`voz,voz,voz` → `voz,voz,voz,voz,voz`).
 
 Volumes por pessoa: os volumes de voz e tela que escolhi para alguém, inclusive
-o 0 que a silencia, ficam em `volumesDe`, por id, fora da mídia da pessoa. A
-pessoa recriada (F5 dela, oferta de instância nova) reaproveita o mesmo objeto,
-e sair da sala esquece todos. Antes voltavam a 1 a cada recriação. Coberto em
+o 0 que a silencia, ficam em `volumesDe`, fora da mídia da pessoa. A chave é
+o hash da aba dela, que o servidor manda com o id em `welcome`, `peer-join` e
+`peer-back` (`abaHash`); sem o hash, o id. O F5 troca o id e mantém a aba, então
+a pessoa recriada (F5 dela, oferta de instância nova) reaproveita o mesmo objeto,
+e sair da sala esquece todos. A aba crua nunca sai do servidor: com ela, outro
+cliente substituiria a conexão da pessoa. Antes voltavam a 1 a cada recriação. Coberto em
 `tests/audio-tela.test.js`, com os sliders do tile pelo DOM, o volume 0, a
 recriação durante o surdo, o surdo sem track de mic, a reentrega da track de
 tela durante o surdo, a track sem stream, o medidor da track retirada que volta
