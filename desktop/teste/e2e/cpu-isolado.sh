@@ -37,8 +37,14 @@ pipewire & sleep 1
 wireplumber & pipewire-pulse &
 for _ in $(seq 20); do pactl info >/dev/null 2>&1 && break; sleep 0.5; done
 pactl info | grep -q "$XDG_RUNTIME_DIR" || { echo "cpu-isolado: pulse não é o deste diretório" >&2; exit 4; }
-# O pulse responde a info antes de aceitar módulos.
-for _ in $(seq 20); do pactl load-module module-null-sink sink_name=nulo >/dev/null 2>&1 && break; sleep 0.5; done
-pactl set-default-sink nulo
+# O pulse responde a info antes de aceitar módulos, e o sink criado demora a
+# aparecer para set-default-sink.
+for _ in $(seq 40); do
+  pactl list short sinks 2>/dev/null | grep -q nulo ||
+    pactl load-module module-null-sink sink_name=nulo >/dev/null 2>&1 || true
+  pactl set-default-sink nulo >/dev/null 2>&1 && break
+  sleep 0.5
+done
+[ "$(pactl get-default-sink)" = nulo ] || { echo "cpu-isolado: sink nulo não ficou como padrão" >&2; exit 5; }
 
 node cpu.mjs "$@"
