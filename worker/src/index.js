@@ -13,7 +13,7 @@ export { Orcamento } from './orcamento.js'
 import { CAPACIDADE, catalogo, chamarApi, encerrarChamada, limparPessoa, novoEstado, operar, rotaSfu,
   salaEmEnsaio } from './sfu.js'
 
-const MAX = 4  // ver a conta de banda em PLANO-POC.md
+const MAX = 4  // em malha cada um sobe a tela para os outros 3; acima disso a subida não fecha
 const INVITE_SECONDS = 24 * 60 * 60
 const GUEST_COOKIE = '__Host-disgalm_guest'
 const noStore = { 'cache-control': 'no-store' }
@@ -307,7 +307,8 @@ export class Sala extends DurableObject {
     const [cliente, servidor] = Object.values(new WebSocketPair())
 
     // acceptWebSocket, não servidor.accept(): é o que permite hibernar.
-    // Medido em worker-poc: 0,02 GB-s contra 48,63 GB-s pelo outro caminho.
+    // Medido em 2026-08-17: 0,02 GB-s contra 48,63 GB-s por minuto de conexão
+    // com servidor.accept().
     this.ctx.acceptWebSocket(servidor)
 
     // Fantasmas: conexão meio aberta que o runtime ainda lista. Só vale para

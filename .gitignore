@@ -1,8 +1,5 @@
 local/
 public/tone.wav
-worker-poc/node_modules/
-worker-poc/.wrangler/
-worker-poc/.config/
 worker/node_modules/
 worker/.wrangler/
 .wrangler/
