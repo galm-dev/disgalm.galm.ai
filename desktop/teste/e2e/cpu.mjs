@@ -99,11 +99,52 @@ async function pagina(porta) {
   }
 }
 
+// --voz=sintetica troca o bipe do microfone falso por uma fala sintética:
+// sílabas harmônicas de 160 ms com 60 ms entre elas, 150 ms entre palavras e
+// 700 ms entre frases. O bipe tem pausas regulares mais longas que qualquer
+// folga do anel e o RNNoise o picota; a fala sintética é a mesma nos dois lados.
+const VOZ = opt('voz', 'bipe')
+
+function wav(amostras, taxa) {
+  const h = Buffer.alloc(44), dados = Buffer.alloc(amostras.length * 2)
+  amostras.forEach((v, i) => dados.writeInt16LE(Math.round(Math.max(-1, Math.min(1, v)) * 32767), i * 2))
+  h.write('RIFF', 0); h.writeUInt32LE(36 + dados.length, 4); h.write('WAVEfmt ', 8)
+  h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22); h.writeUInt32LE(taxa, 24)
+  h.writeUInt32LE(taxa * 2, 28); h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34)
+  h.write('data', 36); h.writeUInt32LE(dados.length, 40)
+  return Buffer.concat([h, dados])
+}
+
+function falaSintetica(arquivo) {
+  const taxa = 48000, ms = n => Math.round(n * taxa / 1000), saida = []
+  const silencio = n => { for (let i = 0; i < ms(n); i++) saida.push(0) }
+  let fase = 0
+  for (let frase = 0; frase < 6; frase++) {
+    for (let palavra = 0; palavra < 4; palavra++) {
+      for (let silaba = 0; silaba < 3; silaba++) {
+        const n = ms(160), f0 = 120 + 40 * Math.sin(frase + palavra + silaba)
+        for (let i = 0; i < n; i++) {
+          fase += 2 * Math.PI * f0 / taxa
+          let v = 0
+          for (let h = 1; h <= 12; h++) v += Math.sin(h * fase) / h
+          saida.push(0.25 * v * Math.sin(Math.PI * i / n))
+        }
+        silencio(60)
+      }
+      silencio(150)
+    }
+    silencio(700)
+  }
+  writeFileSync(arquivo, wav(saida, taxa))
+  return arquivo
+}
+
 function navegador(nome, porta) {
+  const voz = VOZ === 'sintetica' ? [`--use-file-for-fake-audio-capture=${falaSintetica(join(tmp, 'fala.wav'))}`] : []
   return iniciar(NAVEGADOR, [
     ...(JANELA ? ['--ozone-platform=wayland'] : ['--headless=new']), '--disable-extensions', '--password-store=basic', `--user-data-dir=${join(tmp, nome)}`, `--remote-debugging-port=${porta}`,
     '--no-first-run', '--no-default-browser-check', '--use-fake-ui-for-media-stream',
-    '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required',
+    '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required', ...voz,
     '--auto-accept-this-tab-capture', '--mute-audio', '--window-size=1600,900',
     `${ORIGEM}/?sala=${SALA}&nome=${nome}`])
 }
@@ -236,7 +277,7 @@ async function principal() {
   }
   log('pareados na sala', SALA)
 
-  const resultado = { sha: process.env.SHA || null, navegador: NAVEGADOR, janela: JANELA, segundos: SEGUNDOS,
+  const resultado = { sha: process.env.SHA || null, navegador: NAVEGADOR, janela: JANELA, voz: VOZ, segundos: SEGUNDOS,
                       aquecer: AQUECER, nucleos: (ler('/proc/cpuinfo').match(/^processor/gm) || []).length,
                       cenarios: [] }
   for (const nome of NOMES) {
