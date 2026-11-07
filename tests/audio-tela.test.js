@@ -51,7 +51,8 @@ function fixture() {
       return this.fonte
     }
   }
-  let frames = new Map(), proximo = 0
+  // Os ticks do medidor ficam em `frames`; os outros timers do cliente não rodam.
+  let frames = new Map(), proximo = 0, medidorMs = null, rafs = 0
   const sockets = []
   class WS {
     constructor(url) { this.url = new URL(url); this.readyState = 0; this.enviadas = []; sockets.push(this) }
@@ -61,9 +62,10 @@ function fixture() {
   let uuid = 0
   const state = {
     document: { getElementById: $, querySelector: () => null, addEventListener() {}, createElement },
-    addEventListener() {}, setInterval() {}, clearInterval() {}, setTimeout: () => 0, clearTimeout() {},
-    requestAnimationFrame: f => { frames.set(++proximo, f); return proximo },
-    cancelAnimationFrame: n => frames.delete(n),
+    addEventListener() {}, setInterval() {}, clearInterval() {},
+    setTimeout: (f, ms) => { if (ms !== medidorMs) return 0; frames.set(++proximo, f); return proximo },
+    clearTimeout: n => frames.delete(n),
+    requestAnimationFrame: () => ++rafs, cancelAnimationFrame() {},
     AudioContext, WebSocket: WS, RTCPeerConnection: PC,
     MediaStream: class { constructor(t = []) { this.t = t } getVideoTracks() { return [] } getAudioTracks() { return this.t } getTracks() { return this.t } },
     disgalmAuth: { currentToken: () => 'teste', accessToken: async () => 'teste', isGuest: () => false,
@@ -73,6 +75,7 @@ function fixture() {
     crypto: { randomUUID: () => `aba-${++uuid}` }, alert() {},
   }
   rodarCliente(state)
+  medidorMs = runInNewContext('typeof MEDIDOR_MS === "number" ? MEDIDOR_MS : null', state)
   for (const f of ['desenharTile', 'focar', 'classificarVideo', 'atualizarParticipantes', 'aplicarQualidade', 'redividir'])
     state[f] = () => {}
   const run = code => runInNewContext(code, state)
@@ -115,7 +118,7 @@ function fixture() {
   }
   const vivosDe = t => audios.filter(el => el.track === t && ligado(el)).length
   return { run, receber, anunciar, tipos, tamanho, vivos, ligado, doStream, audios, track,
-           quadro, pendentes, rodarQuadro, frames: () => frames.size, falando, contextos, abertos, recriar, associacoes, vivosDe }
+           quadro, pendentes, rodarQuadro, frames: () => frames.size, rafs: () => rafs, medidorMs, falando, contextos, abertos, recriar, associacoes, vivosDe }
 }
 
 test('parar a tela sem ended desliga o áudio dela e mantém a voz', async () => {
@@ -216,6 +219,39 @@ test('pessoa recriada sem a tela no anúncio esquece o stream que foi tela', asy
   f.receber(voz, 'S')                                // geração nova: S agora é só um stream
   assert.equal(f.tipos(), 'S:voz')
   assert.equal(f.ligado(f.doStream(voz)), true)
+})
+
+// O nível da voz oscila em volta do limiar; sem folga, o anel piscava várias
+// vezes por segundo e cada troca animava o tile: metade da CPU de uma chamada
+// só de voz.
+test('o anel acende na hora e só apaga depois da folga de silêncio', () => {
+  const f = fixture()
+  const voz = f.track(0)
+  f.receber(voz, 'voz')
+  const trocas = []
+  for (let i = 0; i < 40; i++) {
+    voz.nivel = i % 2 ? 0 : 1                        // oscila a cada medida
+    f.quadro()
+    if (trocas.at(-1) !== f.falando()) trocas.push(f.falando())
+  }
+  assert.deepEqual(trocas, [true])                   // acendeu uma vez e ficou
+  voz.nivel = 1
+  f.quadro()
+  voz.nivel = 0
+  const ticks = f.run('SEGURA_MS / MEDIDOR_MS')
+  for (let i = 1; i < ticks; i++) { f.quadro(); assert.equal(f.falando(), true, `apagou no tick ${i}`) }
+  f.quadro()
+  assert.equal(f.falando(), false)
+})
+
+test('o medidor de fala mede por timer, sem seguir o vsync', () => {
+  const f = fixture()
+  f.receber(f.track(1), 'voz')
+  for (let i = 0; i < 5; i++) f.quadro()
+  assert.equal(f.falando(), true)
+  assert.equal(f.rafs(), 0)
+  assert.equal(f.frames(), 1)
+  assert.ok(f.medidorMs >= 50, `medidor a cada ${f.medidorMs} ms`)
 })
 
 test('medidor da pessoa antiga para sozinho quando outra assume o id', () => {
