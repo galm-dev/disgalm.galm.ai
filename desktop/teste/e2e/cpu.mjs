@@ -52,6 +52,9 @@ const CENARIOS = {
   // Experimentos: `js` roda nas duas páginas e não se desfaz, então vão por último.
   'sem-stats':       { ruido: 'rnnoise', js: 'for (const p of pares.values()) clearInterval(p.timer)' },
   'sem-raf':         { ruido: 'rnnoise', js: 'window.requestAnimationFrame = () => 0' },
+  'sem-transicao':   { ruido: 'rnnoise', js: "document.head.insertAdjacentHTML('beforeend', '<style>*{transition:none!important}</style>')" },
+  // Silêncio nos dois lados: o anel de ninguém acende.
+  'mudo':            { ruido: 'rnnoise', js: 'micStream.getAudioTracks().forEach(t => t.enabled = false)' },
 }
 const NOMES = opt('cenarios', Object.keys(CENARIOS).join(',')).split(',')
 
@@ -200,6 +203,18 @@ const VIDEO = `(async () => {
   return o
 })()`
 
+// Quantas vezes por segundo a classe de um tile mudou (o anel de fala acende ou apaga).
+const TROCAS_ZERAR = `(() => {
+  window.__trocas = 0
+  if (!window.__observador) {
+    window.__observador = new MutationObserver(ms => {
+      for (const m of ms) if (m.target.classList?.contains('tile')) window.__trocas++
+    })
+    __observador.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['class'] })
+  }
+  return true
+})()`
+
 async function principal() {
   log('wrangler dev em', ORIGEM)
   iniciar(WRANGLER, ['dev', '-c', join(REPO, 'desktop', 'teste', 'e2e', 'wrangler.toml'),
@@ -232,18 +247,20 @@ async function principal() {
     log(nome, JSON.stringify(estado))
     await esperar(AQUECER * 1000)
     const inicio = new Date()
+    await a(TROCAS_ZERAR); await b(TROCAS_ZERAR)
     const v0A = await a(VIDEO), v0B = await b(VIDEO)
     const a0 = amostra(navA.pid), b0 = amostra(navB.pid), t0 = performance.now()
     await esperar(SEGUNDOS * 1000)
     const a1 = amostra(navA.pid), b1 = amostra(navB.pid), dt = (performance.now() - t0) / 1000
     const v1A = await a(VIDEO), v1B = await b(VIDEO)
+    const trocas = { A: +((await a('__trocas')) / dt).toFixed(1), B: +((await b('__trocas')) / dt).toFixed(1) }
     const pressao = ler('/proc/pressure/cpu')?.split('\n')[0]
     const r = { nome, cenario: c, estado, inicio: inicio.toISOString(), segundos: +dt.toFixed(1),
       A: diferenca(a0, a1, dt), B: diferenca(b0, b1, dt),
       video: { A: { ...v1A, fpsEnviado: +(((v1A.enviados || 0) - (v0A.enviados || 0)) / dt).toFixed(1) },
                B: { ...v1B, fpsRecebido: +(((v1B.recebidos || 0) - (v0B.recebidos || 0)) / dt).toFixed(1) } },
-      carga: ler('/proc/loadavg').trim(), pressaoCpu: pressao }
-    log(nome, 'A', r.A.total, '% B', r.B.total, '%', JSON.stringify(r.video))
+      trocasAnelPorSegundo: trocas, carga: ler('/proc/loadavg').trim(), pressaoCpu: pressao }
+    log(nome, 'A', r.A.total, '% B', r.B.total, '% trocas', JSON.stringify(trocas), JSON.stringify(r.video))
     resultado.cenarios.push(r)
   }
   return resultado
