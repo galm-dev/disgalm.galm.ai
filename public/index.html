@@ -1248,11 +1248,12 @@
       pessoas.set(id, { nome, foto: fotoValida(estado.foto),
                         // tela e câmera são as duas vídeo: só o streamId anunciado separa.
                         videos: new Map(), telas: new Map(), cam: new MediaStream(),
-                        audios: new Map(), volumes: { voz: 1, tela: 1 }, estado,
+                        audios: new Map(), volumes: volumesDe.get(chaveVolume(id)) ?? { voz: 1, tela: 1 }, estado,
                         // streams já anunciados como tela nesta conexão
                         jaTelas: new Set(idsTelas(estado)), medidor: null,
                         // áudio de tela retirada, sem tocar, à espera de voltar ao anúncio
                         retirados: new Map() })
+      volumesDe.set(chaveVolume(id), pessoas.get(id).volumes)
       desenharTile(id)
     }
 
@@ -1585,6 +1586,14 @@
 
     const nomes = new Map()         // id → nome, para recriar par sem o aviso de entrada
     const anunciados = new Map()    // id → último estado anunciado, que sobrevive à conexão refeita
+    // Volumes de voz e tela que escolhi para a pessoa. São preferência minha,
+    // não mídia: a conexão refeita (F5, instância nova) traz a mesma pessoa.
+    // O F5 troca o id; a aba dela não muda, e o servidor manda o hash da aba
+    // junto do id. Sem o hash (servidor antigo), a chave é o próprio id.
+    const volumesDe = new Map()     // hash da aba ou id → volumes
+    const abaDe = new Map()         // id → hash da aba
+    const chaveVolume = id => abaDe.get(id) ?? id
+    const lembrarAba = par => { if (typeof par.abaHash === 'string') abaDe.set(par.id, par.abaHash) }
     // O transporte acrescenta o id da conexão dele ao que é dele; o anúncio de
     // estado é da pessoa e vai sem.
     const sinalizar = (to, data) => ws?.readyState === 1 &&
@@ -1720,7 +1729,7 @@
       meuId = m.id
       fontes.definirDono(meuId)
       naSala.clear()
-      for (const par of m.peers) naSala.add(par.id)
+      for (const par of m.peers) { naSala.add(par.id); lembrarAba(par) }
       atualizarSinalizacao(true)
       const trocou = escolherTransporte(m)
       if (m.aviso) avisar(m.aviso)
@@ -1734,6 +1743,7 @@
 
     function voltou(m) {
       naSala.add(m.id)
+      lembrarAba(m)
       log(`${m.name} voltou à sinalização`)
       if (transporte.pessoaVoltou(m.id, m.name)) redividir()
       anunciar(m.id)
@@ -1753,6 +1763,7 @@
       if (m.t === 'peer-back') return voltou(m)
       if (m.t === 'peer-join') {
         naSala.add(m.id)
+        lembrarAba(m)
         transporte.pessoaEntrou(m.id, m.name)
         anunciar(m.id)
         redividir()
@@ -1875,6 +1886,8 @@
       tentativas = 0
       naSala.clear()
       nomes.clear()
+      volumesDe.clear()
+      abaDe.clear()
       pararTelas()
       pararCam()
       pararTesteMic()
