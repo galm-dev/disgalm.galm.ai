@@ -1207,6 +1207,13 @@
 
     // Anel verde de quem está falando, reaproveitando o medidor dos PoCs.
     // Devolve como parar; para sozinho quando as tracks acabam ou `vale` nega.
+    // O anel acende na hora e só apaga depois de SEGURA_MS abaixo do limiar.
+    // Sem essa folga, o nível da voz oscilando em volta do limiar acendia e
+    // apagava o anel várias vezes por segundo, e cada troca anima a borda do
+    // tile: a página redesenhava sem parar, e esse pisca era metade da CPU de
+    // uma chamada só de voz, quase toda no processo de GPU.
+    const MEDIDOR_MS = 100
+    const SEGURA_MS = 400
     function medirFala(id, stream, vale = () => true) {
       const ctx = new AudioContext()
       ctx.resume()
@@ -1215,11 +1222,11 @@
       const fonte = ctx.createMediaStreamSource(stream)
       fonte.connect(an)
       const buf = new Float32Array(an.fftSize)
-      let raf = null, parado = false
+      let proxima = null, parado = false, aceso = false, calado = 0
       const parar = () => {
         if (parado) return
         parado = true
-        cancelAnimationFrame(raf)
+        clearTimeout(proxima)
         fonte.disconnect()
         ctx.close()
         if (vale()) document.getElementById('t-' + id)?.classList.remove('falando')
@@ -1230,8 +1237,11 @@
         let s = 0
         for (const v of buf) s += v * v
         const db = 20 * Math.log10(Math.sqrt(s / buf.length) + 1e-12)
-        document.getElementById('t-' + id)?.classList.toggle('falando', db > -50)
-        raf = requestAnimationFrame(tick)
+        const fala = db > -50
+        calado = fala ? 0 : calado + MEDIDOR_MS
+        aceso = fala || (aceso && calado < SEGURA_MS)
+        document.getElementById('t-' + id)?.classList.toggle('falando', aceso)
+        proxima = setTimeout(tick, MEDIDOR_MS)
       }
       tick()
       return parar
