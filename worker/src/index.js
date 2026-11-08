@@ -411,7 +411,10 @@ export class Sala extends DurableObject {
     // hairpin ou de relay para se falarem. O IP fica em hash e nunca é logado.
     const ipHash = await this.#ipHash(req)
     const sub = role === 'member' ? req.headers.get('x-disgalm-sub') : null
-    servidor.serializeAttachment({ id, nome, aba, desde: agora, bate: q.has('aba'), exp, role, sub, ipHash, sala,
+    // A aba sobrevive ao F5; o id não. Os outros guardam o volume que escolheram
+    // para a pessoa por este hash, que não serve para se passar pela aba.
+    const abaHash = aba ? (await tokenHash(`volume:${sala}:${aba}`)).slice(0, 16) : null
+    servidor.serializeAttachment({ id, nome, aba, abaHash, desde: agora, bate: q.has('aba'), exp, role, sub, ipHash, sala,
       modo, ...(chave && { chaveSfu: await tokenHash(chave) }) })
     await this.#alarme()
     this.#registrar(retomada ? 'voltou' : 'entrou', { sala, id, papel: role, sub, naSala: jaEstavam.length + 1, modo,
@@ -419,13 +422,13 @@ export class Sala extends DurableObject {
 
     this.#envia(servidor, {
       t: 'welcome', id, retomada,
-      peers: jaEstavam.map(p => ({ id: p.a.id, name: p.a.nome })),
+      peers: jaEstavam.map(p => ({ id: p.a.id, name: p.a.nome, ...(p.a.abaHash && { abaHash: p.a.abaHash }) })),
       // Clientes antigos ignoram os campos abaixo e seguem na malha.
       protocolo: 1, modo, ...(sfu?.aviso && { aviso: sfu.aviso }),
       ...(chave && { sfu: { chave, versao: sfu.versao, fontes: catalogo(sfu) } }),
     })
     for (const p of jaEstavam)
-      this.#envia(p.ws, { t: retomada ? 'peer-back' : 'peer-join', id, name: nome })
+      this.#envia(p.ws, { t: retomada ? 'peer-back' : 'peer-join', id, name: nome, ...(abaHash && { abaHash }) })
 
     return aceitar()
   }
@@ -433,7 +436,7 @@ export class Sala extends DurableObject {
   async webSocketMessage(ws, bruto) {
     let m
     try { m = JSON.parse(bruto) } catch { return }
-    if (m.t !== 'signal') return          // 'join' vem do cliente compartilhado; ignorar
+    if (m?.t !== 'signal') return          // 'join' vem do cliente compartilhado; ignorar
     const eu = ws.deserializeAttachment()
     if (!eu) return
     if (eu.exp <= Math.floor(Date.now() / 1000)) {
@@ -485,7 +488,7 @@ export default {
       if (!validRoom(room)) return new Response('sala inválida', { status: 400 })
       let token = guestCookie(req)
       if (redeem) {
-        if (req.headers.get('content-type')?.split(';')[0] !== 'application/json')
+        if (req.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json')
           return new Response('conteúdo inválido', { status: 415 })
         const body = await req.json().catch(() => null)
         token = body?.token

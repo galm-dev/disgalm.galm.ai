@@ -49,12 +49,71 @@ test('batimento responde sem acordar o objeto', () => {
   assert.equal(ctx.auto.res, '{"t":"pong"}')
 })
 
+test('frames que não são signal são ignorados sem efeitos, mesmo com remetente expirado ou ausente', async t => {
+  const frames = ['{', '', 'null', 'false', 'true', '0', '42', '"signal"', '[]', '[null]',
+    '[{"t":"signal"}]', '{}', '{"t":"join"}', '{"t":null}', '{"t":"desconhecido"}']
+  for (const estado of ['ativo', 'expirado', 'ausente']) {
+    for (const bruto of frames) await t.test(`${estado}: ${JSON.stringify(bruto)}`, async () => {
+      const a = new Socket(), b = new Socket()
+      const exp = Math.floor(Date.now() / 1000) + 600
+      a.att = estado === 'ausente' ? null : { id: 'a', exp: estado === 'expirado' ? 1 : exp }
+      b.att = { id: 'b', exp }
+      const { s, ctx } = sala([a, b])
+      const chamadas = []
+      for (const nome of ['get', 'put', 'setAlarm', 'deleteAlarm']) {
+        const original = ctx.storage[nome].bind(ctx.storage)
+        ctx.storage[nome] = (...args) => { chamadas.push([nome, ...args]); return original(...args) }
+      }
+      const antes = structuredClone([a, b])
+      await s.webSocketMessage(a, bruto)
+      assert.deepEqual(structuredClone([a, b]), antes)
+      assert.deepEqual(chamadas, [])
+      assert.equal(ctx.storage.alarmAt, null)
+      assert.equal(ctx.storage.saved.size, 0)
+    })
+  }
+})
+
+test('signal mantém encaminhamento, destino desconhecido e recusa de remetente expirado ou ausente', async t => {
+  for (const estado of ['ativo', 'destino desconhecido', 'expirado', 'ausente']) {
+    await t.test(estado, async () => {
+      const a = new Socket(), b = new Socket(), c = new Socket()
+      const exp = Math.floor(Date.now() / 1000) + 600
+      a.att = estado === 'ausente' ? null : { id: 'a', exp: estado === 'expirado' ? 1 : exp }
+      b.att = { id: 'b', exp }
+      c.att = { id: 'c', exp }
+      const { s, ctx } = sala([a, b, c])
+      const chamadas = []
+      for (const nome of ['get', 'put', 'setAlarm', 'deleteAlarm']) {
+        const original = ctx.storage[nome].bind(ctx.storage)
+        ctx.storage[nome] = (...args) => { chamadas.push([nome, ...args]); return original(...args) }
+      }
+      const data = { candidate: 'ice sintético' }
+      await s.webSocketMessage(a, JSON.stringify({ t: 'signal', to: estado === 'destino desconhecido' ? 'x' : 'b', data }))
+      assert.deepEqual(a.msgs, [])
+      if (estado === 'expirado') {
+        assert.deepEqual(a.fechado, [1000, 'acesso expirado'])
+        assert.equal(a.att, null)
+        assert.deepEqual(b.msgs, [{ t: 'peer-left', id: 'a', volta: false }])
+        assert.deepEqual(c.msgs, b.msgs)
+        assert.deepEqual(chamadas, [['setAlarm', exp * 1000]])
+      } else {
+        assert.equal(a.fechado, undefined)
+        assert.deepEqual(b.msgs, estado === 'ativo' ? [{ t: 'signal', from: 'a', data }] : [])
+        assert.deepEqual(c.msgs, [])
+        assert.deepEqual(chamadas, [])
+      }
+      assert.equal(ctx.storage.saved.size, 0)
+    })
+  }
+})
+
 test('entrada comum: welcome para quem chega, peer-join para quem estava', async () => {
   const { s } = sala()
   const a = await s.entra({ nome: 'A', aba: 'aba-a' })
   const b = await s.entra({ nome: 'B', aba: 'aba-b' })
   const idA = a.ultima('welcome').id
-  assert.deepEqual(b.ultima('welcome').peers, [{ id: idA, name: 'A' }])
+  assert.deepEqual(b.ultima('welcome').peers.map(({ id, name }) => ({ id, name })), [{ id: idA, name: 'A' }])
   assert.equal(b.ultima('welcome').retomada, false)
   assert.equal(a.ultima('peer-join').name, 'B')
 })
@@ -85,6 +144,36 @@ test('F5: a mesma aba sem o id tira o fantasma e entra como pessoa nova', async 
   assert.notEqual(b2.ultima('welcome').id, idB)
   assert.equal(b2.ultima('welcome').peers.length, 1)
   assert.equal(a.ultima('peer-join').id, b2.ultima('welcome').id)
+})
+
+// P11: o volume que A escolheu para B fica pela aba de B, que sobrevive ao F5.
+// Vai o hash, nunca a aba: com ela, qualquer um na sala substituiria B.
+test('F5: a aba nova de B chega aos outros com o mesmo hash, sem a aba crua', async () => {
+  const { s } = sala()
+  const a = await s.entra({ nome: 'A', aba: 'aba-a' })
+  const b = await s.entra({ nome: 'B', aba: 'aba-b' })
+  const hashB = a.ultima('peer-join').abaHash
+  assert.match(hashB, /^[0-9a-f]{16}$/)
+  assert.match(b.ultima('welcome').peers[0].abaHash, /^[0-9a-f]{16}$/)
+  await s.entra({ nome: 'B', aba: 'aba-b' })
+  assert.equal(a.ultima('peer-join').abaHash, hashB)
+  const c = await s.entra({ nome: 'C', aba: 'aba-c' })
+  assert.notEqual(a.ultima('peer-join').abaHash, hashB)
+  assert.deepEqual(c.ultima('welcome').peers.map(p => p.abaHash).slice(1), [hashB])
+  const tudo = JSON.stringify([...a.msgs, ...b.msgs, ...c.msgs])
+  assert.ok(!/aba-[abc]/.test(tudo), tudo)
+})
+
+test('o hash da aba muda de sala e falta sem aba', async () => {
+  const { s } = sala()
+  const a = await s.entra({ nome: 'A', aba: 'aba-a' })
+  await s.entra({ nome: 'B', aba: 'aba-b' })
+  const outra = sala().s
+  const x = await outra.entra({ nome: 'X', aba: 'aba-x', sala: 'outra' })
+  await outra.entra({ nome: 'B', aba: 'aba-b', sala: 'outra' })
+  assert.notEqual(x.ultima('peer-join').abaHash, a.ultima('peer-join').abaHash)
+  await s.entra({ nome: 'Antigo' })
+  assert.equal('abaHash' in a.ultima('peer-join'), false)
 })
 
 test('depois de reinício do objeto, o id volta mesmo sem ninguém na sala', async () => {
