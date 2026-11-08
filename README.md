@@ -49,8 +49,7 @@ um convite antes do prazo, ainda é necessário remover seu registro no Durable
 Object da sala; não há botão de revogação na interface.
 
 Os arquivos estáticos são públicos, mas não concedem acesso à sala nem ao
-TURN sem conta ou convite. `server.js` é o servidor antigo para teste local e não tem essa proteção;
-não o publique na rede.
+TURN sem conta ou convite.
 
 ## Microfone
 

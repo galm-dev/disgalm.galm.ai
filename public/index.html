@@ -1157,7 +1157,7 @@
     function tocarAudio(id, p, streamId, track, tipo) {
       const el = document.createElement('audio')
       el.autoplay = true
-      el.srcObject = new MediaStream([track])   // uma track por elemento: ver PLANO-POC.md
+      el.srcObject = new MediaStream([track])   // um elemento de mídia toca só a 1ª track de cada tipo
       el.play?.().catch(e => { log(`autoplay bloqueado (${e.name}) — clique na página`); telemetria('autoplay_bloqueado', { par: id }) })
       const velho = p.audios.get(streamId)      // track nova no mesmo stream substitui a velha
       if (velho) desligarAudio(velho.el)
@@ -1671,8 +1671,8 @@
     }
 
     // Sala e nome vão na URL porque o Worker precisa deles ANTES do upgrade,
-    // para escolher o Durable Object. O server.js local ignora a query e usa a
-    // mensagem 'join'; o Worker ignora o 'join'. Um cliente serve aos dois.
+    // para escolher o Durable Object. A mensagem 'join' ao abrir vem do servidor
+    // local antigo, que já saiu; o Worker a ignora.
     function conectar() {
       clearTimeout(religar)
       if (!sala) return

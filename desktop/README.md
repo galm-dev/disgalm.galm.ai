@@ -4,10 +4,11 @@ Casca Electron do Disgalm. Compartilha a tela com o áudio do sistema **sem o
 Discord**, para que quem assiste não ouça a própria voz de volta. O navegador
 não consegue fazer isso: o `getDisplayMedia` leva o sistema inteiro.
 
-- A UI é a mesma da web (`../public`). A janela abre `https://disgalm.galm.ai`,
-  com login, `/ice` e `/ws` de produção, mas os arquivos estáticos saem deste
-  checkout. Assim o app usa a UI do branch sem publicar nada.
-  `DISGALM_UI_LOCAL=0` usa a UI publicada.
+- A UI é a mesma da web. A janela abre `https://disgalm.galm.ai`, com login,
+  `/ice` e `/ws` de produção. O app instalado usa a UI publicada; em
+  desenvolvimento (`npm start`), os arquivos estáticos saem de `../public`
+  deste checkout, para testar a UI do branch sem publicar nada.
+  `DISGALM_UI_LOCAL=1` ou `=0` força um dos dois.
 - `native/loopback.cpp` é um módulo N-API que captura por **WASAPI process
   loopback** (`ActivateAudioInterfaceAsync` com
   `PROCESS_LOOPBACK_MODE_EXCLUDE_TARGET_PROCESS_TREE`) e entrega float32

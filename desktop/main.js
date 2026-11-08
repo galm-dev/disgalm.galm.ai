@@ -2,9 +2,9 @@
 // o áudio do sistema sem o Discord, que o navegador não sabe capturar.
 //
 // A janela carrega https://disgalm.galm.ai (login, /ice e /ws são os de
-// produção), mas os arquivos estáticos saem de ../public deste checkout: assim
-// a UI do app é a do branch, sem precisar publicar nada. /_desktop/* sai de
-// ./renderer e só existe no app.
+// produção). Em desenvolvimento os arquivos estáticos saem de ../public deste
+// checkout, para testar a UI do branch sem publicar; instalado, vale a UI
+// publicada (UI_LOCAL abaixo). /_desktop/* sai de ./renderer e só existe no app.
 const { app, BrowserWindow, MessageChannelMain, desktopCapturer, ipcMain, nativeImage, net, protocol, session,
   shell, utilityProcess, webContents } = require('electron')
 const fs = require('node:fs')

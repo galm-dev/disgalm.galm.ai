@@ -45,6 +45,8 @@ enabled = true
 # Também exige os secrets SFU_APP_ID e SFU_APP_SECRET; ver README.
 SFU_SALAS = ""
 
-# TURN_HOST, TURN_PORT, TURN_USER e TURN_PASS entram como secrets, nunca aqui:
-#   ./wrangler.sh secret put TURN_HOST
-# Sem eles o /ice devolve só um STUN público e o relay não existe.
+# TURN entra por secrets, nunca aqui (./secrets.sh publica os de ../local/turn.env).
+# O principal é o TURN da Cloudflare, CF_TURN_KEY_ID e CF_TURN_API_TOKEN: o /ice
+# gera credenciais curtas quando o orçamento libera. TURN_HOST, TURN_PORT,
+# TURN_USER e TURN_PASS são o coturn de casa, opcional. Sem nenhum dos dois, o
+# /ice devolve só um STUN público e o relay não existe.
