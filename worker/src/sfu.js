@@ -390,7 +390,7 @@ export async function rotaSfu(req, env, { sala, mesmaOrigem, identificar, objeto
   if (req.method !== 'POST') return new Response('método inválido', { status: 405 })
   if (!mesmaOrigem) return new Response('origem inválida', { status: 403 })
   if (!salaEmEnsaio(env, sala)) return new Response('sala sem SFU', { status: 404 })
-  if (req.headers.get('content-type')?.split(';')[0] !== 'application/json')
+  if (req.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json')
     return new Response('conteúdo inválido', { status: 415 })
   const chave = req.headers.get('x-disgalm-sfu') || ''
   if (!/^[0-9a-f]{64}$/.test(chave)) return new Response('acesso negado', { status: 401 })

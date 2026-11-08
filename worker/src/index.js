@@ -433,7 +433,7 @@ export class Sala extends DurableObject {
   async webSocketMessage(ws, bruto) {
     let m
     try { m = JSON.parse(bruto) } catch { return }
-    if (m.t !== 'signal') return          // 'join' vem do cliente compartilhado; ignorar
+    if (m?.t !== 'signal') return          // 'join' vem do cliente compartilhado; ignorar
     const eu = ws.deserializeAttachment()
     if (!eu) return
     if (eu.exp <= Math.floor(Date.now() / 1000)) {
@@ -485,7 +485,7 @@ export default {
       if (!validRoom(room)) return new Response('sala inválida', { status: 400 })
       let token = guestCookie(req)
       if (redeem) {
-        if (req.headers.get('content-type')?.split(';')[0] !== 'application/json')
+        if (req.headers.get('content-type')?.split(';')[0].trim().toLowerCase() !== 'application/json')
           return new Response('conteúdo inválido', { status: 415 })
         const body = await req.json().catch(() => null)
         token = body?.token
