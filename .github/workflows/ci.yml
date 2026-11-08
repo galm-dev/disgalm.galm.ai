@@ -79,7 +79,7 @@ jobs:
   # Confere, nos PRs que mexem no desktop, que o app do Mac sai assinado com o
   # certificado do Disgalm (o mesmo do release). PR de fork não tem os secrets.
   assinatura-mac:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:
