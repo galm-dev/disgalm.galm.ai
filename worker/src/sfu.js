@@ -53,6 +53,7 @@ const sdpValido = (sdp, tipo) => sdp && typeof sdp === 'object' && sdp.type === 
   typeof sdp.sdp === 'string' && sdp.sdp.length > 0 && sdp.sdp.length <= LIMITES.sdp
 
 import { TAXAS } from './orcamento.js'
+import { lerCorpo } from './corpo.js'
 
 const resposta = (status, corpo) => ({ status, corpo })
 const erro = (status, motivo, extra) => resposta(status, { erro: motivo, ...extra })
@@ -394,8 +395,8 @@ export async function rotaSfu(req, env, { sala, mesmaOrigem, identificar, objeto
     return new Response('conteúdo inválido', { status: 415 })
   const chave = req.headers.get('x-disgalm-sfu') || ''
   if (!/^[0-9a-f]{64}$/.test(chave)) return new Response('acesso negado', { status: 401 })
-  const corpo = await req.text()
-  if (corpo.length > MAX_PEDIDO) return new Response('pedido grande demais', { status: 413 })
+  const corpo = await lerCorpo(req, MAX_PEDIDO)
+  if (corpo === null) return new Response('pedido grande demais', { status: 413 })
   const autor = await identificar()
   if (!autor) return new Response('acesso negado', { status: 401 })
   const headers = new Headers({ 'content-type': 'application/json', 'x-disgalm-sfu': chave,
