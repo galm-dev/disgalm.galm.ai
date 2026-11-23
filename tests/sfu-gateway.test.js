@@ -2,6 +2,7 @@ import { test, beforeEach, afterEach } from 'node:test'
 import { carregarWorker, criarOrcamento, retrato } from './worker.js'
 import assert from 'node:assert/strict'
 import { webcrypto } from 'node:crypto'
+import { text } from 'node:stream/consumers'
 
 globalThis.crypto ||= webcrypto
 
@@ -408,7 +409,7 @@ test('Worker: /sfu só em sala da lista, mesma origem, com chave e credencial', 
     assert.equal((await pede({ tipo })).status, 200, tipo)
     assert.equal(delegados.length, antes + 2)
     assert.equal(delegados.at(-1).headers.get('content-type'), 'application/json')
-    assert.equal(await delegados.at(-1).text(), '{"op":"sessao","id":"abcd1234"}')
+    assert.equal(await text(delegados.at(-1).body), '{"op":"sessao","id":"abcd1234"}')
   }
   const r = await pede()
   assert.equal(r.status, 200)
@@ -438,7 +439,7 @@ test('rota SFU: MIME exato normalizado preserva guardas, identidade e repasse', 
           : { papel: 'member', sub: 'membro-sintetico', exp: 2000000000 }
         const req = { method: caso === 'metodo' ? 'GET' : 'POST',
           headers: new Headers({ ...(tipo !== null && { 'content-type': tipo }),
-            'x-disgalm-sfu': caso === 'chave' ? 'invalida' : chave }), text: async () => corpo }
+            'x-disgalm-sfu': caso === 'chave' ? 'invalida' : chave }), body: new Blob([corpo]).stream() }
         const resposta = Response.json({ fixture: true }, { status: 202 })
         const r = await rotaSfu(req, caso === 'config' ? {} : ENV, {
           sala: caso === 'sala' ? 'fora' : 'ensaio', mesmaOrigem: caso !== 'origem', origem: 'https://fixture.invalid',
@@ -455,7 +456,7 @@ test('rota SFU: MIME exato normalizado preserva guardas, identidade e repasse', 
         const repasse = repasses[0]
         assert.equal(repasse.method, 'POST')
         assert.equal(repasse.url, 'https://fixture.invalid/sfu?sala=ensaio')
-        assert.equal(await repasse.text(), corpo)
+        assert.equal(await text(repasse.body), corpo)
         assert.deepEqual(Object.fromEntries(repasse.headers), {
           'content-type': 'application/json', 'x-disgalm-sfu': chave,
           'x-disgalm-role': autor.papel, 'x-disgalm-exp': String(autor.exp),
