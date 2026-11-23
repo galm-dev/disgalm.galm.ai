@@ -2,7 +2,6 @@ import { test, beforeEach, afterEach } from 'node:test'
 import { carregarWorker, criarOrcamento, retrato } from './worker.js'
 import assert from 'node:assert/strict'
 import { webcrypto } from 'node:crypto'
-import { text } from 'node:stream/consumers'
 
 globalThis.crypto ||= webcrypto
 
@@ -389,12 +388,9 @@ test('Worker: /sfu só em sala da lista, mesma origem, com chave e credencial', 
     if (new URL(req.url).pathname === '/guest/check') return Response.json({ exp: agoraS() + 900 })
     return Response.json({ ok: true })
   } }) } }
-  // Corpo como stream, como no runtime: o Worker lê com teto, sem req.text().
-  globalThis.Request = class { constructor(url, init = {}) { this.url = url; Object.assign(this, init); this.headers = new Headers(init.headers)
-    this.body = init.body == null ? null : new Blob([init.body]).stream() } }
   const pede = ({ sala = 'ensaio', origem = 'https://disgalm.galm.ai', chave = 'a'.repeat(64), cookie = `__Host-disgalm_guest=${convite}`,
     tipo = 'application/json', metodo = 'POST', corpo = '{"op":"sessao","id":"abcd1234"}' } = {}) =>
-    worker.fetch(new Request(`https://disgalm.galm.ai/sfu?sala=${sala}`, { method: metodo, body: corpo,
+    worker.fetch(new Request(`https://disgalm.galm.ai/sfu?sala=${sala}`, { method: metodo, ...(metodo !== 'GET' && { body: corpo }),
       headers: { origin: origem, 'content-type': tipo, ...(chave && { 'x-disgalm-sfu': chave }), ...(cookie && { cookie }) } }), env, {})
   assert.equal((await pede({ metodo: 'GET' })).status, 405)
   assert.equal((await pede({ origem: 'https://evil.example' })).status, 403)
@@ -409,7 +405,7 @@ test('Worker: /sfu só em sala da lista, mesma origem, com chave e credencial', 
     assert.equal((await pede({ tipo })).status, 200, tipo)
     assert.equal(delegados.length, antes + 2)
     assert.equal(delegados.at(-1).headers.get('content-type'), 'application/json')
-    assert.equal(await text(delegados.at(-1).body), '{"op":"sessao","id":"abcd1234"}')
+    assert.equal(await delegados.at(-1).text(), '{"op":"sessao","id":"abcd1234"}')
   }
   const r = await pede()
   assert.equal(r.status, 200)
@@ -456,7 +452,7 @@ test('rota SFU: MIME exato normalizado preserva guardas, identidade e repasse', 
         const repasse = repasses[0]
         assert.equal(repasse.method, 'POST')
         assert.equal(repasse.url, 'https://fixture.invalid/sfu?sala=ensaio')
-        assert.equal(await text(repasse.body), corpo)
+        assert.equal(await repasse.text(), corpo)
         assert.deepEqual(Object.fromEntries(repasse.headers), {
           'content-type': 'application/json', 'x-disgalm-sfu': chave,
           'x-disgalm-role': autor.papel, 'x-disgalm-exp': String(autor.exp),
