@@ -146,6 +146,9 @@ fonte, envio e recebimento) do navegador.
    npx wrangler secret put SFU_APP_SECRET
    ```
 
+   Com o valor no cofre (seção "Segredos", no fim), o comando passa a ser
+   `fleet secret publish segredos.json --var SFU_APP_SECRET`.
+
    Também podem ir em `local/turn.env` e subir com `./secrets.sh`.
 3. Escolha uma sala só para o ensaio, por exemplo `ensaio-sfu`, e ponha o nome
    em `SFU_SALAS` no `worker/wrangler.toml`. Use minúsculas, como na URL, e
@@ -285,3 +288,24 @@ cd worker
 
 O login GALM não adiciona nenhum
 secret no Disgalm. A configuração do client e dos grants fica no auth.
+
+## Segredos
+
+`segredos.json` lista os segredos de produção deste repositório: a referência de cada um no
+Bitwarden Secrets Manager (projeto `galm-producao`) e o destino onde o valor tem de estar. O arquivo
+não guarda valor. Quem opera é o `fleet secret`, no sirius, com as dependências instaladas no
+checkout de `publicacao.worker.cwd`:
+
+```sh
+fleet secret publish segredos.json --var NOME --dry-run   # mostra o destino; não lê valor nem grava
+fleet secret publish segredos.json --var NOME             # regrava o secret no Worker `disgalm`
+fleet secret materialize segredos.json                    # refaz as cópias locais em ~/.config (modo 600)
+```
+
+`publish` num destino `worker:` cria uma versão nova do Worker em produção na hora: só rode com a
+publicação autorizada. Sem `--var`, o comando recusa enquanto houver variável sem ref.
+
+- **Sem ref**, só entram no cofre na primeira rotação ou captura: `SFU_APP_ID`, `SFU_APP_SECRET`, `CF_TURN_KEY_ID`, `CF_TURN_API_TOKEN`, `TURN_USER`, `TURN_PASS`, `BETTERSTACK_TOKEN`.
+- **Fora do manifesto**: `CLOUDFLARE_API_TOKEN`, `CSC_LINK` e `CSC_KEY_PASSWORD` do GitHub Actions (deploy e assinatura do desktop) e os valores de configuração `TURN_HOST`, `TURN_PORT`, `TURN_REALM` e `BETTERSTACK_HOST`.
+
+Nenhum segredo do Disgalm tem cópia legível no sirius; as de `SFU_*` e do certificado estão no polaris. Para levar um valor ao cofre sem trocá-lo, declare-o sem ref e capture com `fleet secret wait <arquivo> --var NOME --host polaris --bw --vault-only --manifest segredos.json`. Até lá, `worker/secrets.sh` e `wrangler secret put` continuam valendo.
