@@ -388,12 +388,9 @@ test('Worker: /sfu só em sala da lista, mesma origem, com chave e credencial', 
     if (new URL(req.url).pathname === '/guest/check') return Response.json({ exp: agoraS() + 900 })
     return Response.json({ ok: true })
   } }) } }
-  // Corpo como stream, como no runtime: o Worker lê com teto, sem req.text().
-  globalThis.Request = class { constructor(url, init = {}) { this.url = url; Object.assign(this, init); this.headers = new Headers(init.headers)
-    this.body = init.body == null ? null : new Blob([init.body]).stream() } }
   const pede = ({ sala = 'ensaio', origem = 'https://disgalm.galm.ai', chave = 'a'.repeat(64), cookie = `__Host-disgalm_guest=${convite}`,
     tipo = 'application/json', metodo = 'POST', corpo = '{"op":"sessao","id":"abcd1234"}' } = {}) =>
-    worker.fetch(new Request(`https://disgalm.galm.ai/sfu?sala=${sala}`, { method: metodo, body: corpo,
+    worker.fetch(new Request(`https://disgalm.galm.ai/sfu?sala=${sala}`, { method: metodo, ...(metodo !== 'GET' && { body: corpo }),
       headers: { origin: origem, 'content-type': tipo, ...(chave && { 'x-disgalm-sfu': chave }), ...(cookie && { cookie }) } }), env, {})
   assert.equal((await pede({ metodo: 'GET' })).status, 405)
   assert.equal((await pede({ origem: 'https://evil.example' })).status, 403)
@@ -438,7 +435,7 @@ test('rota SFU: MIME exato normalizado preserva guardas, identidade e repasse', 
           : { papel: 'member', sub: 'membro-sintetico', exp: 2000000000 }
         const req = { method: caso === 'metodo' ? 'GET' : 'POST',
           headers: new Headers({ ...(tipo !== null && { 'content-type': tipo }),
-            'x-disgalm-sfu': caso === 'chave' ? 'invalida' : chave }), text: async () => corpo }
+            'x-disgalm-sfu': caso === 'chave' ? 'invalida' : chave }), body: new Blob([corpo]).stream() }
         const resposta = Response.json({ fixture: true }, { status: 202 })
         const r = await rotaSfu(req, caso === 'config' ? {} : ENV, {
           sala: caso === 'sala' ? 'fora' : 'ensaio', mesmaOrigem: caso !== 'origem', origem: 'https://fixture.invalid',
