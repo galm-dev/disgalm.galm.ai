@@ -1,0 +1,89 @@
+{
+  "versao": 1,
+  "bws": {
+    "token": "~/.config/fleet-segredos/bitwarden-galm-sm.env",
+    "projeto": "f5bfe1fa-ece2-41e0-83fb-b4de0022bf9e"
+  },
+  "publicacao": {
+    "worker": {
+      "account": "d7b9d3320fcf3246053d5333800c2e72",
+      "cwd": "/home/marucs/Development/GALM/disgalm.galm.ai/worker",
+      "command": [
+        "/home/marucs/Development/GALM/disgalm.galm.ai/worker/node_modules/.bin/wrangler"
+      ],
+      "token": "~/.config/fleet-segredos/cloudflare-llm-galm.env",
+      "var": "CLOUDFLARE_API_TOKEN"
+    }
+  },
+  "arquivos": {
+    "~/.config/disgalm/sfu.env": {
+      "SFU_APP_ID": {
+        "origem": "clipboard",
+        "classe": "cfg",
+        "host": "polaris",
+        "nota": "app do Cloudflare Realtime SFU; copia so no polaris; sem copia legivel no sirius: entra no cofre na primeira rotacao ou captura (F5)",
+        "destinos": [
+          "worker:disgalm"
+        ]
+      },
+      "SFU_APP_SECRET": {
+        "origem": "clipboard",
+        "classe": "P",
+        "host": "polaris",
+        "nota": "segredo do app SFU; copia so no polaris; sem copia legivel no sirius: entra no cofre na primeira rotacao ou captura (F5)",
+        "destinos": [
+          "worker:disgalm"
+        ]
+      }
+    },
+    "~/.config/disgalm/turn.env": {
+      "CF_TURN_KEY_ID": {
+        "origem": "clipboard",
+        "classe": "cfg",
+        "host": "polaris",
+        "nota": "chave TURN da Cloudflare; sem copia legivel no sirius: entra no cofre na primeira rotacao ou captura (F5)",
+        "destinos": [
+          "worker:disgalm"
+        ]
+      },
+      "CF_TURN_API_TOKEN": {
+        "origem": "clipboard",
+        "classe": "P",
+        "host": "polaris",
+        "nota": "token da chave TURN da Cloudflare; sem copia legivel no sirius: entra no cofre na primeira rotacao ou captura (F5)",
+        "destinos": [
+          "worker:disgalm"
+        ]
+      },
+      "TURN_USER": {
+        "origem": "clipboard",
+        "classe": "P",
+        "host": "polaris",
+        "nota": "usuario do TURN proprio; sem copia legivel no sirius: entra no cofre na primeira rotacao ou captura (F5)",
+        "destinos": [
+          "worker:disgalm"
+        ]
+      },
+      "TURN_PASS": {
+        "origem": "clipboard",
+        "classe": "P",
+        "host": "polaris",
+        "nota": "senha do TURN proprio; sem copia legivel no sirius: entra no cofre na primeira rotacao ou captura (F5)",
+        "destinos": [
+          "worker:disgalm"
+        ]
+      }
+    },
+    "~/.config/disgalm/betterstack.env": {
+      "BETTERSTACK_TOKEN": {
+        "origem": "clipboard",
+        "classe": "P",
+        "host": "polaris",
+        "nota": "token de fonte do Better Stack; sem copia legivel no sirius: entra no cofre na primeira rotacao ou captura (F5)",
+        "destinos": [
+          "worker:disgalm"
+        ]
+      }
+    }
+  }
+}
