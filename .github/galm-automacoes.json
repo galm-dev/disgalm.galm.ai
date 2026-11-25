@@ -1,0 +1,7 @@
+{
+  "base": "master",
+  "revisor": true,
+  "pr_updater": false,
+  "auto_fix": true,
+  "auto_merge": true
+}
